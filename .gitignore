@@ -1,0 +1,53 @@
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+config.yaml
+settings.json
+credentials*
+secrets*
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Runtime and customer data
+data/
+clients/
+*.db
+*.sqlite
+*.sqlite3
+*.log
+*.pdf
+
+# Python build and test artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+
+# Frontend dependencies and editor files
+node_modules/
+.idea/
+.vscode/
+
+# Generated archives
+*.zip
+*.7z
+*.tar
+*.tar.gz
+*.tgz
+
+# OS metadata
+.DS_Store
+Thumbs.db
+desktop.ini

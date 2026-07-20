@@ -1,0 +1,72 @@
+client:
+  name: "W.U.D.I. 默认实例"
+  id: "default"
+  brand: "W.U.D.I. A 股决策支持"
+  brand_sub: "RESEARCH COPILOT"
+
+server:
+  host: 127.0.0.1
+  port: 18869
+  data_dir: ./data
+
+hermes:
+  base_url: "http://127.0.0.1:8874/v1"
+  model: "hermes-agent"
+  autodiscover_local_gateway: false
+  timeout: 300
+  temperature: 0.4
+  max_tokens: 8000
+
+agent_runtime:
+  require_restricted_toolsets: true
+  allowed_toolsets: []
+  allowed_mcp_servers: []
+  allow_tool_events: false
+  require_profile_attestation: true
+  capability_cache_sec: 20
+
+mcp:
+  allow_write_tools: false
+  full_product_access: false
+  product_api_base: ""
+
+feishu:
+  webhook: "${FEISHU_WEBHOOK}"
+  secret: "${FEISHU_SECRET}"
+  app_id: "${FEISHU_APP_ID}"
+  app_secret: "${FEISHU_APP_SECRET}"
+
+schedule:
+  timezone: Asia/Shanghai
+  trading_days_only: true
+  morning: "08:50"
+  midday: "14:45"
+  tail: "14:52"
+  close: "15:30"
+  evening: "19:30"
+  archive: "22:00"
+
+push:
+  enabled: false
+  via: feishu
+  gateway:
+    targets: []
+
+data_source:
+  policy: free_only
+  deployment_profile: cn_home
+  eastmoney_direct: false
+
+capital_tracking:
+  enabled: false
+  interval_min: 15
+
+news_event_observation:
+  enabled: false
+  interval_min: 10
+
+official_longhu:
+  enabled: false
+
+knowledge:
+  auto_summarize: false

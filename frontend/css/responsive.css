@@ -1,0 +1,290 @@
+/* ============================================================
+   HERMES TRADING TERMINAL — 响应式 + 设计微调（增强层）
+   引入顺序：必须在 app.css 之后（覆盖增强，绝不改 app.css）
+   分三档：
+     · 手机  ≤768px  —— 侧栏变抽屉、单列、触控适配
+     · 平板  769–1024px —— 网格两列
+     · 桌面  ≥1025px  —— 克制地统一卡片阴影/圆角/标题层次
+   颜色一律走 app.css 既有 CSS 变量，双主题自洽。
+   ============================================================ */
+
+
+/* ============================================================
+   汉堡按钮 + 抽屉遮罩（基础件，所有断点共用，桌面默认隐藏）
+   ============================================================ */
+
+/* 顶栏汉堡：复用 .icon-btn 视觉；桌面隐藏，仅移动端显示（见 ≤768px 段） */
+.tb-menu { display: none; flex-shrink: 0; }
+.tb-menu svg { width: 17px; height: 17px; }
+.tb-menu .ph { font-size:17px; }
+
+/* 抽屉遮罩：默认不存在/不可见；nav-open 时淡入。点击由 app.js 关闭抽屉。 */
+.nav-scrim {
+  position: fixed; inset: 0; z-index: 49;   /* 低于 .sidebar(抽屉=60)，高于顶栏(40) */
+  background: var(--scrim);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+  opacity: 0; visibility: hidden; pointer-events: none;
+  transition: opacity var(--t), visibility var(--t);
+}
+#app.nav-open .nav-scrim {
+  opacity: 1; visibility: visible; pointer-events: auto;
+}
+
+
+/* ============================================================
+   手机：≤768px —— 侧栏抽屉化 + 单列 + 触控适配
+   ============================================================ */
+@media (max-width: 768px) {
+
+  /* —— 间距收紧（变量级生效，全站联动）—— */
+  :root {
+    --gap: 12px;
+    --topbar-h: 54px;
+    /* 抽屉展开宽度（不再受 app.css ≤1023px 的 56px 图标轨约束）*/
+    --sidebar-w: 252px;
+  }
+
+  /* —— 顶栏：让出汉堡位，标题区可收缩 —— */
+  .tb-menu { display: grid; }              /* 覆盖默认 none，移动端显示汉堡 */
+  .topbar { gap: 9px; padding: 0 12px; }
+  .tb-left { display: none; }
+  .tb-title { font-size: 15px; overflow: hidden; text-overflow: ellipsis; }
+  /* 中部时钟保留、行情带/指数让位（窄屏信息降噪）*/
+  .tb-mid { gap: 4px; flex: 1 1 auto; justify-content: center; overflow: visible; }
+  .tb-clock { flex-direction: column; align-items: flex-start; gap: 0; font-size: 12px; line-height: 1.25; text-shadow: none; }
+  .tb-clock-date { font-size: 12px; }
+  .tb-clock-meta { gap: 5px; }
+  .tb-clock-time { font-size: 12.5px; }
+  .tb-market-state { min-height: 0; padding: 0; border: 0; background: transparent; font-size: 12px; }
+  #tb-fresh { display: none; }
+  .mini-indexes { display: none; }         /* 窄屏隐藏顶栏迷你指数 */
+  .trade-badge { display: none; }          /* 状态过载，盘口状态交由底部/页内呈现 */
+  .tb-right { gap: 5px; }
+  .client-badge { display: none !important; }  /* 覆盖 JS 内联 display:'' */
+
+  /* —— 滚动行情带：窄屏隐藏（信息密度过高、无横向空间）—— */
+  .ticker-bar { display: none; }
+
+  /* —— 侧栏 → 抽屉 —— */
+  .sidebar {
+    position: fixed; top: 0; left: 0; bottom: 0;
+    width: var(--sidebar-w);
+    height: 100%; height: 100dvh;          /* 移动端动态视口高度，避开地址栏抖动 */
+    z-index: 60;                            /* 高于遮罩(49)/顶栏(40) */
+    transform: translateX(-100%);
+    transition: transform var(--t-slow);
+    box-shadow: var(--shadow-pop);
+    border-right: 1px solid var(--border-strong);
+    will-change: transform;
+    /* 抽屉内允许纵向滚动（导航项较多时）*/
+    overflow-y: auto;
+  }
+  /* 折叠态在移动端无意义：始终用抽屉全宽，覆盖 app-shell.nav-collapsed 的 68px */
+  .app-shell.nav-collapsed .sidebar { width: var(--sidebar-w); }
+  #app.nav-open .sidebar { transform: translateX(0); }
+
+  /* 抽屉内恢复 logo 文案 / 导航文字 / 折叠按钮文字（app.css ≤1023px 把它们 display:none 了）*/
+  .sidebar .logo-text,
+  .app-shell.nav-collapsed .logo-text { display: block; }
+  .sidebar .nav-label,
+  .app-shell.nav-collapsed .nav-item .nav-label { display: inline; }
+  .sidebar .nav-group-toggle { display: grid; }
+  .sidebar .nav-children:not([hidden]) { display: block; }
+  .sidebar .nav-children { padding-left: 42px; }
+  .sidebar .nav-child { min-height: 40px; font-size: 14px; }
+  .collapse-btn .c-label { display: inline; }
+  /* 抽屉里导航项恢复左对齐 + 大触控目标 */
+  .nav-item,
+  .app-shell.nav-collapsed .nav-item {
+    justify-content: flex-start;
+    padding: 13px 18px;
+    min-height: 48px;                       /* 触控目标 ≥44px */
+    font-size: 15px;
+  }
+  /* 移动端保留底部的「历史与知识 / 系统设置」，只隐藏无意义的折叠按钮。 */
+  .side-foot { display: block; }
+  .side-foot .collapse-btn { display: none; }
+
+  /* —— 主区：内容铺满、内距收紧 —— */
+  .main-wrap { padding-bottom: 0; }         /* 底部状态条本就隐藏 */
+  .view { padding: var(--space-3); }
+
+  /* —— 栅格：强制单列（覆盖 app.css ≤1023px 已有规则，统一到 12 跨度）—— */
+  .grid12 { gap: 12px; }
+  .sp-3, .sp-4, .sp-5, .sp-6, .sp-7, .sp-8, .sp-9, .sp-12 { grid-column: 1 / -1; }
+
+  /* 页内常见双/三列子栅格 → 单列或两列，避免横向溢出 */
+  .kpi-grid { grid-template-columns: repeat(2, 1fr); }
+  .quote-grid { grid-template-columns: repeat(2, 1fr); }
+  .sched-grid { grid-template-columns: 1fr; }
+  .sector-cols { grid-template-columns: 1fr; }
+  .ds-infra-grid { grid-template-columns: 1fr; }
+  .settings-grid { grid-template-columns: 1fr; }
+  .phase-cards { grid-template-columns: 1fr; }
+  .kn-masonry { columns: 1; }
+  .kn-layout, .ar-layout, .diy-layout, .ft-leaders-grid, .mkt-grid {
+    grid-template-columns: 1fr;
+  }
+  /* 防 flash-list/mkt-news 的 min-content 撑破 1fr 单列轨道导致手机横向溢出 */
+  .mkt-grid > * { min-width: 0; }
+
+  /* —— 卡片：字号/内距适配 —— */
+  .card-head { padding: var(--space-4) var(--space-4) 0; flex-wrap: wrap; align-items: flex-start; }
+  .card-head > .card-title { min-width: 0; flex: 1 1 180px; }
+  .card-head > .card-extra { width: 100%; min-width: 0; margin-left: 0; flex-wrap: wrap; }
+  .card-body { padding: var(--space-4); }
+  .card-title { font-size: var(--font-sm); line-height: 1.45; letter-spacing: .7px; }
+  .page-title { font-size: var(--font-lg); }
+  .page-head { gap: 9px; margin-bottom: 12px; }
+  .page-head .ph-extra { width: 100%; margin-left: 0; }  /* 操作区换行铺满，按钮不挤标题 */
+
+  /* —— 图表高度收一点，窄屏不至于过高 —— */
+  .hero-chart { height: 260px; }
+  .big-chart  { height: 300px; }
+  .heat-chart { height: 300px; }
+  .flow-chart { height: 260px; }
+  .gauge-wrap { flex-wrap: wrap; }
+
+  /* —— Hero 指数 tab：横向可滚动 + 紧凑，绝不换行/贴边/溢出 ——
+     桌面态 .idx-tab{flex:1} 把 4 指数等分挤窄，窄屏内容会换行/撑破。
+     这里改成横向滚动条：tab 不再拉伸(flex:0 0 auto)、给最小宽度容纳价/涨跌/额，
+     行内不换行(.it-px 等)，容器 overflow-x:auto + iOS 动量滚动。字号各收一档。 */
+  .hero-tabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;                  /* Firefox 隐藏滚动条，靠惯性/拖动 */
+  }
+  .hero-tabs::-webkit-scrollbar { display: none; }   /* WebKit 同上，避免占高 */
+  .idx-tab {
+    flex: 0 0 auto;                         /* 覆盖桌面 flex:1：不再等分拉伸 */
+    min-width: 116px;                       /* 容纳「现价 / 涨跌% / 成交额」不挤压换行 */
+    padding: 8px 11px;
+    white-space: nowrap;                    /* tab 内整体不换行 */
+  }
+  .idx-tab .it-name { letter-spacing: 0.5px; gap: 8px; }
+  .idx-tab .it-px  { font-size: 17px; }     /* 价格主数字收一档 */
+  .idx-tab .it-amt { margin-left: 5px; }
+
+  /* —— A/H/U 市场段控：窄屏铺满一行、可滚动，按钮触控目标足够 ——
+     (段控由 dashboard.js 以 .segmented.hero-mkt-seg 注入；无对应 JS 时本规则自然空转) */
+  .hero-mkt-seg {
+    display: flex;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    margin: 8px 12px 0;
+  }
+  .hero-mkt-seg::-webkit-scrollbar { display: none; }
+  .hero-mkt-seg .seg { flex: 1 0 auto; min-height: 40px; }
+
+  /* —— 表格：容器横向滚动 + iOS 动量滚动（双保险，含未包 .tbl-wrap 的散表）—— */
+  .tbl-wrap, .md-body { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .tbl { min-width: 560px; }                /* 列多时给一个最小宽度触发滚动，不挤压换行 */
+  .tbl th, .tbl td { padding: 9px 10px; }   /* 紧凑一档，仍 ≥ 触控行高 */
+
+  /* —— 触控目标 ≥44px：按钮/输入/分段/标签页/图标钮 —— */
+  .btn { min-height: 44px; padding: 11px 18px; }
+  .btn-sm { min-height: 40px; padding: 9px 14px; }
+  .icon-btn, .theme-toggle, .tb-menu { width: 44px; height: 44px; }
+  .tb-today { min-height: 44px; padding: 0 12px; }
+  .input, .select { min-height: 42px; }
+  .tab { padding: 11px 14px; }
+  .seg, .segmented .seg { padding: 9px 13px; }
+  .send-btn { width: 46px; height: 46px; }
+
+  /* —— 聊天：上下堆叠、占满可视高度（覆盖 app.css ≤1023px 的高度算式，去掉 ticker 项）—— */
+  .chat-layout { grid-template-columns: 1fr; height: auto; min-height: 0; }
+  .chat-main { height: calc(100dvh - var(--topbar-h) - 24px); min-height: 420px; }
+  .chat-side { max-height: none; }
+  .msg-bubble { max-width: 90%; font-size: 14.5px; }
+
+  /* —— Toast：贴边自适应宽度，避开汉堡/顶栏 —— */
+  .toast-root { top: calc(var(--topbar-h) + 8px); left: 10px; right: 10px; }
+  .toast { min-width: 0; max-width: none; }
+
+  /* —— Modal：留出安全边距 —— */
+  .modal-overlay { padding: 14px; }
+  .modal { max-height: 88vh; }
+
+  /* —— 报告正文：去掉桌面宽度上限，铺满 —— */
+  .report-body, #diy-output .report-body { max-width: 100%; }
+}
+
+@media (max-width: 420px) {
+  #tb-export-btn { display: none; }
+  .tb-today { width: 44px; padding: 0; }
+  .tb-today span { display: none; }
+  .workspace-nav { margin-bottom: 12px; }
+}
+
+/* 工作台页签在手机上优先保证主路径完整可横滑；次级能力单列，不遮住最后几个页签。 */
+@media (max-width: 760px) {
+  .workspace-nav { display: block; }
+  .workspace-tabs { margin-bottom: 6px; }
+  .workspace-more { display: flex; justify-content: flex-end; }
+  .workspace-more-trigger { height: auto; min-height: 34px; }
+}
+
+
+/* ============================================================
+   平板：769–1024px —— 网格两列（介于桌面12列与手机单列之间）
+   注：app.css 在 ≤1023px 把 .sp-* 全压成单列且侧栏变 56px 图标轨；
+       此处下界 769px 不触发抽屉，仅把主栅格放成两列，信息密度更合理。
+   ============================================================ */
+@media (min-width: 769px) and (max-width: 1024px) {
+
+  /* 二级能力已迁入侧栏，平板不能再退化成仅图标轨，否则子目录不可达。 */
+  :root { --sidebar-w: 220px; }
+  .app-shell:not(.nav-collapsed) .sidebar .logo-text,
+  .app-shell:not(.nav-collapsed) .sidebar .nav-label,
+  .app-shell:not(.nav-collapsed) .collapse-btn .c-label { display: block; }
+  .app-shell:not(.nav-collapsed) .nav-item { justify-content: flex-start; padding: 11px 16px; }
+  .app-shell:not(.nav-collapsed) .nav-group-toggle { display: grid; }
+  .app-shell:not(.nav-collapsed) .nav-children:not([hidden]) { display: block; }
+
+  /* 主 12 列栅格 → 等效两列（每项占 6 跨度）；整宽项仍整宽 */
+  .sp-3, .sp-4, .sp-5, .sp-6, .sp-7, .sp-8, .sp-9 { grid-column: span 6; }
+  .sp-12 { grid-column: span 12; }
+
+  /* 页内子栅格收成两列，避免三列在中屏过窄 */
+  .kpi-grid { grid-template-columns: repeat(2, 1fr); }
+  .quote-grid { grid-template-columns: repeat(2, 1fr); }
+  .ds-infra-grid { grid-template-columns: repeat(2, 1fr); }
+
+  /* 聊天右侧情报栏在中屏偏窄 → 收一档（app.css 此区间已是单列布局，这里仅微调间距）*/
+  .view { padding: 16px; }
+}
+
+
+/* ============================================================
+   桌面：≥1025px —— 克制地统一卡片阴影/圆角/标题层次（更清爽）
+   仅做轻量统一，不改色板、不动布局，避免破坏现有视觉签名。
+   ============================================================ */
+@media (min-width: 1025px) {
+
+  /* 圆角统一：卡片/模态/弹层走同一档，去掉零散圆角带来的细碎感 */
+  .card, .modal, .export-menu, .acc-item, .phase-card {
+    border-radius: var(--radius);
+  }
+
+  /* 卡片阴影统一为更轻的一档（默认态克制，hover 再抬升——hover 抬升已在 app.css 定义，此处不覆盖）*/
+  .card { box-shadow: var(--shadow-soft); }
+
+  /* 标题层次：卡片小标题与页面大标题拉开字距/字重对比，结构更清晰 */
+  .card-title { letter-spacing: 1px; }
+  .page-title { letter-spacing: .6px; }
+  /* 卡片头与正文之间留白略增，呼吸感更足（仅桌面，不影响移动紧凑）*/
+  .card-head { padding-top: var(--space-4); }
+
+  /* 大屏正文行宽适度收敛，长段落更易读（不影响表格/图表类卡片）*/
+  .report-body { max-width: 920px; }
+}
+
+
+/* ============================================================
+   动效无障碍：尊重"减少动态效果"偏好 —— 抽屉/遮罩瞬时切换
+   ============================================================ */
+@media (prefers-reduced-motion: reduce) {
+  .sidebar, .nav-scrim { transition: none; }
+}
