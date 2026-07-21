@@ -24,6 +24,13 @@ chmod 600 config.yaml .env
 
 默认访问地址：`http://127.0.0.1:18869`。
 
+### Windows 本地通达信 TQ 桥接
+
+如果本机通达信已开启 TQ HTTP 服务 `http://127.0.0.1:17709/`，可运行独立的
+只读兼容桥，让现有 TDX API 适配器复用本地实时行情、股票池、板块关系和基础财务，
+无需修改业务数据链路。配置、启动和能力边界见
+[`docs/TQ_TDX_BRIDGE.md`](docs/TQ_TDX_BRIDGE.md)。
+
 部署前必须按真实位置把 `data_source.deployment_profile` 明确设置为：
 
 - `cn_home`：国内家庭机。

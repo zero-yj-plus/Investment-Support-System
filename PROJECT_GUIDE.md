@@ -21,7 +21,7 @@
 | 层 | 技术 / 约定 |
 | --- | --- |
 | Web 后端 | Python、FastAPI、Uvicorn、APScheduler |
-| 数据处理 | AkShare、pandas、腾讯行情、客户授权 TDX HTTP API、交易所/公开网页适配器 |
+| 数据处理 | AkShare、pandas、腾讯行情、客户授权 TDX HTTP API、可选本地 TQ 只读兼容桥、交易所/公开网页适配器 |
 | 数据存储 | JSON/JSONL、SQLite/WAL、按客户 `data_dir` 隔离 |
 | AI 接入 | OpenAI 兼容 `/v1/chat/completions`；Hermes 网关为可选集成 |
 | Agent 工具 | FastMCP，只读工具为默认，维护型写入默认关闭 |
@@ -48,7 +48,7 @@ flowchart LR
     ENG --> AI["HermesClient，可选 AI 增强"]
     ENG --> PUSH["飞书或 Hermes home channel"]
 
-    DATA --> TDX["客户授权 TDX HTTP API"]
+    DATA --> TDX["客户授权 TDX HTTP API / 可选本地 TQ 只读兼容桥"]
     DATA --> TENCENT["腾讯行情"]
     DATA --> PUBLIC["交易所 / 新浪 / 同花顺 / AkShare / GDELT 等"]
     DATA --> EVIDENCE["EvidenceStore 点时证据"]
@@ -110,7 +110,7 @@ flowchart LR
 | --- | --- | --- |
 | `hermes_trader/` | 后端、分析、数据、Agent、任务、MCP、持久化 | 是，核心源码 |
 | `frontend/` | 原生 JS SPA、CSS、内置第三方前端库 | 自有源码可改；`vendor/` 谨慎 |
-| `tests/` | 79 个契约/回归测试文件 | 改功能时同步补测 |
+| `tests/` | 81 个契约/回归测试文件 | 改功能时同步补测 |
 | `scripts/` | 验收、备份、TDX 探测、受限 Hermes 启动脚本 | 运维逻辑，可改但需独立验证 |
 | `docs/` | API、MCP、安全审计说明 | 契约变化时必须同步 |
 | `examples/` | 示例目录占位 | 当前只有 `data/.gitkeep` |
@@ -385,6 +385,7 @@ flowchart LR
 | `restricted_hermes_proxy.py` | 启动受限 Hermes 子进程、环境变量白名单、HMAC 进程证明和受认证反向代理。 |
 | `run_restricted_hermes.sh` | 校验客户 profile 未漂移后启动受限代理。 |
 | `tdx_dataset_probe.py` | 凭据安全的 TDX 数据集探针；只输出计数、日期、覆盖率和一致性，不打印 URL/key/完整行。 |
+| `tq_tdx_bridge.py` | 仅监听本机的 TQ HTTP → TDX API v2.8 只读兼容桥；固定方法白名单并拒绝交易/账户能力。 |
 
 ## 10. 文档与示例
 
@@ -397,7 +398,7 @@ flowchart LR
 
 ## 11. 测试目录 `tests/`
 
-测试文件名基本与契约一一对应。以下说明覆盖当前全部 79 个测试文件。
+测试文件名基本与契约一一对应。以下说明覆盖当前全部 81 个测试文件。
 
 ### 11.1 决策、报告、推荐与交付
 
@@ -456,6 +457,7 @@ flowchart LR
 | `test_source_contract.py` | 数据源目录与实际字段路由、海外中继缺口。 |
 | `test_stock_progressive_contract.py` | 个股分段加载、TDX 板块和并发槽释放。 |
 | `test_tdx_api_source.py` | TDX v2.8 代码、单位、盘口、分页和完整股票池。 |
+| `test_tq_tdx_bridge.py` | 本地 TQ 兼容桥的鉴权、只读白名单、单位、分页、股票池、板块关系和显式不支持语义。 |
 | `test_trade_day_reconciliation.py` | 相邻交易日、回退和晚报目标日期。 |
 | `test_trading_calendar_gate.py` | 日历不可用时工作日未知、周末明确闭市。 |
 | `test_v8_source_safety.py` | 不可取消源、缓存锁和 MiniRacer 进程隔离。 |

@@ -308,7 +308,16 @@ class AdviceProposalLedger:
             pass
         fd = os.open(self.path, os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o600)
         try:
-            os.fchmod(fd, 0o600)
+            # Windows 没有 os.fchmod；权限收紧是 best-effort，不能让
+            # append-only 候选留痕因此失败并阻断整份报告。
+            fchmod = getattr(os, "fchmod", None)
+            try:
+                if fchmod is not None:
+                    fchmod(fd, 0o600)
+                else:
+                    os.chmod(self.path, 0o600)
+            except OSError:
+                pass
             remaining = memoryview(encoded.encode("utf-8"))
             while remaining:
                 written = os.write(fd, remaining)

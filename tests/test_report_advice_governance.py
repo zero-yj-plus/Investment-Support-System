@@ -8,6 +8,8 @@ from hermes_trader.analysis import engine as engine_module
 from hermes_trader.analysis.advice_proposal import proposal_ledger_for
 from hermes_trader.analysis.engine import (
     Engine,
+    _sanitize_blocked_report_advice_lines,
+    _sanitize_blocked_report_price_lines,
     _sanitize_unbound_report_price_lines,
     validate_report_advice_governance,
 )
@@ -26,6 +28,7 @@ def test_report_governance_blocks_direct_order_language_at_any_level() -> None:
 
     assert result["ok"] is False
     assert "direct_order_language" in result["errors"]
+    assert result["blocked_line_numbers"] == [1]
 
 
 def test_report_governance_blocks_any_positive_entry_at_risk_five() -> None:
@@ -45,7 +48,7 @@ def test_report_governance_allows_negated_or_proposal_language() -> None:
     assert proposal["ok"] is True
 
 
-def test_unbound_price_line_is_removed_before_revalidation() -> None:
+def test_blocked_price_line_is_removed_before_revalidation() -> None:
     content = "# 收盘复盘\n- 回踩 10.20 元后观察\n- 保持低仓位"
     sanitized, meta = _sanitize_unbound_report_price_lines(
         content,
@@ -65,10 +68,11 @@ def test_unbound_price_line_is_removed_before_revalidation() -> None:
     assert "保持低仓位" in sanitized
     assert meta == {
         "applied": True,
-        "reason": "unbound_stock_price_lines_removed",
+        "reason": "blocked_stock_price_lines_removed",
         "line_count": 1,
         "lines": [2],
         "original_blocked_count": 1,
+        "blocked_reasons": ["price_claim_not_bound_to_stock"],
     }
 
 
@@ -81,13 +85,44 @@ def test_unbound_price_line_is_removed_before_revalidation() -> None:
         "price_outside_stock_evidence_range",
     ],
 )
-def test_price_sanitizer_never_relaxes_other_claim_failures(reason: str) -> None:
+def test_price_sanitizer_removes_all_locally_blocked_claim_failures(reason: str) -> None:
     content = "- 000001 平安银行回踩 99.99 元后买入"
 
-    sanitized, meta = _sanitize_unbound_report_price_lines(
+    sanitized, meta = _sanitize_blocked_report_price_lines(
         content,
         {"claims": [{"line": 1, "status": "blocked", "reason": reason}]},
     )
+
+    assert "99.99" not in sanitized
+    assert "价格数据不足，暂不给点位" in sanitized
+    assert meta is not None
+    assert meta["blocked_reasons"] == [reason]
+
+
+def test_advice_sanitizer_removes_only_known_text_level_violations() -> None:
+    content = "# 盘前\n- 建议立即买入 000001\n- 保持观察"
+    governance = validate_report_advice_governance(content, _snapshot(2))
+
+    sanitized, meta = _sanitize_blocked_report_advice_lines(content, governance)
+
+    assert "立即买入" not in sanitized
+    assert "未授权的新增风险动作" in sanitized
+    assert "保持观察" in sanitized
+    assert meta == {
+        "applied": True,
+        "reason": "blocked_advice_lines_removed",
+        "line_count": 1,
+        "lines": [2],
+        "original_errors": ["direct_order_language"],
+    }
+    assert validate_report_advice_governance(sanitized, _snapshot(2))["ok"] is True
+
+
+def test_advice_sanitizer_cannot_bypass_missing_risk_snapshot() -> None:
+    content = "建议立即买入 000001"
+    governance = validate_report_advice_governance(content, None)
+
+    sanitized, meta = _sanitize_blocked_report_advice_lines(content, governance)
 
     assert sanitized == content
     assert meta is None
@@ -114,7 +149,7 @@ async def _collect(stream) -> list[dict]:
 
 
 @pytest.mark.asyncio
-async def test_report_does_not_leak_blocked_model_text_before_validation(
+async def test_report_degrades_direct_order_text_before_release(
     monkeypatch, tmp_path: Path,
 ) -> None:
     store = Store(tmp_path)
@@ -130,10 +165,15 @@ async def test_report_does_not_leak_blocked_model_text_before_validation(
     )
 
     events = await _collect(engine.generate_report_stream("morning"))
+    report = store.get_report("morning", "2026-07-13")
 
-    assert not any(event.get("delta") for event in events)
-    assert any("已阻止保存" in event.get("error", "") for event in events)
-    assert store.get_report("morning", "2026-07-13") is None
+    assert events[-1]["done"] is True
+    assert report is not None
+    assert "立即买入" not in report["content_md"]
+    assert "未授权的新增风险动作" in report["content_md"]
+    assert report["advice_governance"]["sanitation"]["line_count"] == 1
+    assert report["claim_validation"]["post_governance_revalidated"] is True
+    assert all("立即买入" not in event.get("delta", "") for event in events)
 
 
 @pytest.mark.asyncio
@@ -189,6 +229,44 @@ async def test_report_degrades_only_unbound_price_line_and_saves_audited_result(
     assert "价格数据不足，暂不给点位" in report["content_md"]
     assert report["claim_validation"]["status"] == "passed"
     assert report["claim_validation"]["sanitation"]["line_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_report_degrades_out_of_range_price_line_and_saves_audited_result(
+    monkeypatch, tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    content = "# 早盘内参\n- 国瓷材料 300285：回踩 150 元后观察\n- 保持低仓位。"
+    context = {
+        "今日日期": "2026-07-13",
+        "用户持仓": [{
+            "code": "300285",
+            "name": "国瓷材料",
+            "实时行情": {
+                "code": "300285",
+                "name": "国瓷材料",
+                "price": 80.80,
+                "high": 81.09,
+                "low": 74.00,
+                "prev_close": 74.60,
+            },
+        }],
+    }
+    engine = Engine(_Config(), store, _Hermes(content))
+    monkeypatch.setattr(
+        engine, "_context_for_report", lambda _rtype: _async_value(context),
+    )
+    monkeypatch.setattr(engine_module, "is_trade_day", lambda: False)
+
+    events = await _collect(engine.generate_report_stream("close"))
+    report = store.get_report("close", "2026-07-13")
+
+    assert events[-1]["done"] is True
+    assert report is not None
+    assert "150" not in report["content_md"]
+    assert "价格数据不足，暂不给点位" in report["content_md"]
+    sanitation = report["claim_validation"]["sanitation"]
+    assert sanitation["blocked_reasons"] == ["price_outside_stock_evidence_range"]
 
 
 async def _async_value(value):

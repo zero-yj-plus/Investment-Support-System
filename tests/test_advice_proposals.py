@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import stat
 
 import pytest
@@ -191,9 +192,16 @@ def test_ledger_uses_jsonl_mode_0600_and_fsyncs_file_and_directory(
     ledger = AdviceProposalLedger(tmp_path)
     event = ledger.record(_proposal())
 
-    assert stat.S_IMODE(ledger.path.stat().st_mode) == 0o600
-    assert stat.S_IMODE(ledger.path.parent.stat().st_mode) == 0o700
-    assert len(fsync_calls) >= 2
+    mode = stat.S_IMODE(ledger.path.stat().st_mode)
+    if os.name == "nt":
+        # Windows 只映射只读/可写位，stat 不会保留 POSIX 0600。
+        assert mode & stat.S_IWRITE
+        assert ledger.path.parent.is_dir()
+    else:
+        assert mode == 0o600
+        assert stat.S_IMODE(ledger.path.parent.stat().st_mode) == 0o700
+    # Windows 不能用 os.open 打开目录描述符，只能 fsync 事件文件。
+    assert len(fsync_calls) >= (1 if os.name == "nt" else 2)
     line = json.loads(ledger.path.read_text(encoding="utf-8").strip())
     assert line == event
 

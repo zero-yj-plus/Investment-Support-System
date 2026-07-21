@@ -279,7 +279,15 @@ class DeliveryReceiptStore:
             fd = os.open(self.path, os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o600)
             try:
                 # 即使文件曾被宽松 umask/人工操作改权限，下次写入也会收紧回 0600。
-                os.fchmod(fd, 0o600)
+                # Windows 没有 os.fchmod；回执追加不能因此失败。
+                fchmod = getattr(os, "fchmod", None)
+                try:
+                    if fchmod is not None:
+                        fchmod(fd, 0o600)
+                    else:
+                        os.chmod(self.path, 0o600)
+                except OSError:
+                    pass
                 payload = memoryview(encoded.encode("utf-8"))
                 while payload:
                     written = os.write(fd, payload)

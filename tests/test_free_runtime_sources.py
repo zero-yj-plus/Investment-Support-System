@@ -161,11 +161,25 @@ def test_isolated_worker_protocol_ignores_progress_noise(monkeypatch) -> None:
     assert seen["command"][1:] == ["-m", "hermes_trader.data.akshare_worker", "industry-flow"]
     assert "shell" not in seen["kwargs"]
     assert "env" in seen["kwargs"]
+    assert seen["kwargs"]["encoding"] == "utf-8"
+    assert seen["kwargs"]["errors"] == "replace"
     assert not any(
         token in key.lower()
         for key in seen["kwargs"]["env"]
         for token in ("token", "secret", "password", "webhook", "api_key")
     )
+
+
+def test_isolated_worker_env_keeps_windows_runtime_without_secrets(monkeypatch) -> None:
+    monkeypatch.setenv("SystemRoot", r"C:\Windows")
+    monkeypatch.setenv("WINDIR", r"C:\Windows")
+    monkeypatch.setenv("ACCESS_TOKEN", "must-not-leak")
+
+    env = akshare_isolated._worker_env()
+
+    assert env["SystemRoot"] == r"C:\Windows"
+    assert env["WINDIR"] == r"C:\Windows"
+    assert "ACCESS_TOKEN" not in env
 
 
 def test_market_flow_worker_uses_its_own_protocol_and_breaker(monkeypatch) -> None:

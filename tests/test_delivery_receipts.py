@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import stat
 from types import SimpleNamespace
 
@@ -38,7 +39,12 @@ def test_receipt_ledger_is_append_only_0600_and_increments_attempt(tmp_path) -> 
 
     assert final.startswith(original)
     assert len(final) > len(original)
-    assert stat.S_IMODE(ledger.path.stat().st_mode) == 0o600
+    mode = stat.S_IMODE(ledger.path.stat().st_mode)
+    if os.name == "nt":
+        # Windows 只映射只读/可写位，stat 不会保留 POSIX 0600。
+        assert mode & stat.S_IWRITE
+    else:
+        assert mode == 0o600
     assert first["attempt"] == 1
     assert second["attempt"] == 2
     assert second["status"] == "delivered"

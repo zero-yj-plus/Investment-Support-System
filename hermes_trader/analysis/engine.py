@@ -306,21 +306,19 @@ def _chain_sector_search_terms(industry: str) -> tuple[str, ...]:
     return industry_chain_mod.sector_search_terms(industry)
 
 
-def _sanitize_unbound_report_price_lines(content: str, validation: dict) -> tuple[str, dict | None]:
-    """将「完全未绑定股票」的交易价所在行整行移除。
+def _sanitize_blocked_report_price_lines(content: str, validation: dict) -> tuple[str, dict | None]:
+    """将所有未通过价格硬闸的模型行整行降级，再由原校验器重验。
 
-    这不是放宽价格硬闸：清理后会重新跑同一校验器，只有不再存在
-    任何无法核验的交易价才能定稿。未知股票、超出真实行情区间、
-    一行绑多股等其他错误仍 fail closed。
+    未绑定股票、未知股票、缺价格证据、一行绑多股或价位超出真实区间，
+    本质上都是「该行具体价位不可发布」。删除整行价位不会放宽硬闸；
+    调用方必须重新运行 ``validate_report_finalization``，只有零阻断 claim
+    才能定稿。截断等整份报告级错误不由本函数处理。
     """
     blocked = [
         claim for claim in (validation.get("claims") or [])
         if isinstance(claim, dict) and claim.get("status") == "blocked"
     ]
-    if not blocked or any(
-        claim.get("reason") != "price_claim_not_bound_to_stock"
-        for claim in blocked
-    ):
+    if not blocked:
         return content, None
     line_numbers = sorted({
         int(claim.get("line")) for claim in blocked
@@ -337,18 +335,26 @@ def _sanitize_unbound_report_price_lines(content: str, validation: dict) -> tupl
         indent = re.match(r"^\s*", lines[index]).group(0)
         lines[index] = (
             f"{indent}- 价格数据不足，暂不给点位"
-            "（原价位未绑定到对应股票，已由安全闸移除）"
+            "（原具体价位未通过真实行情校验，已由安全闸移除）"
         )
         replaced.append(line_number)
     if not replaced:
         return content, None
     return "\n".join(lines), {
         "applied": True,
-        "reason": "unbound_stock_price_lines_removed",
+        "reason": "blocked_stock_price_lines_removed",
         "line_count": len(replaced),
         "lines": replaced[:20],
         "original_blocked_count": len(blocked),
+        "blocked_reasons": sorted({
+            str(claim.get("reason") or "unknown") for claim in blocked
+        }),
     }
+
+
+def _sanitize_unbound_report_price_lines(content: str, validation: dict) -> tuple[str, dict | None]:
+    """兼容旧内部调用名；实际会清理全部未通过价格硬闸的模型行。"""
+    return _sanitize_blocked_report_price_lines(content, validation)
 
 
 def validate_report_advice_governance(content: str, cockpit_snapshot: dict | None) -> dict:
@@ -358,9 +364,10 @@ def validate_report_advice_governance(content: str, cockpit_snapshot: dict | Non
     level = command.get("risk_level") if command.get("risk_level") in {1, 2, 3, 4, 5} else None
     errors: list[str] = []
     blocked_lines: list[str] = []
+    blocked_line_numbers: list[int] = []
     if level is None:
         errors.append("risk_snapshot_missing")
-    for raw in str(content or "").splitlines():
+    for line_number, raw in enumerate(str(content or "").splitlines(), start=1):
         line = raw.strip()
         if not line or not _RISK_INCREASING_RE.search(line):
             continue
@@ -369,10 +376,12 @@ def validate_report_advice_governance(content: str, cockpit_snapshot: dict | Non
         if _DIRECT_ORDER_RE.search(line):
             errors.append("direct_order_language")
             blocked_lines.append(line[:180])
+            blocked_line_numbers.append(line_number)
             continue
         if level == 5:
             errors.append("risk_level_5_entry_proposal")
             blocked_lines.append(line[:180])
+            blocked_line_numbers.append(line_number)
     errors = list(dict.fromkeys(errors))
     return {
         "schema_version": "report-advice-governance.v1",
@@ -384,6 +393,50 @@ def validate_report_advice_governance(content: str, cockpit_snapshot: dict | Non
         "risk_as_of": (cockpit_snapshot or {}).get("as_of") if isinstance(cockpit_snapshot, dict) else None,
         "errors": errors,
         "blocked_lines": blocked_lines[:12],
+        "blocked_line_numbers": list(dict.fromkeys(blocked_line_numbers))[:20],
+    }
+
+
+def _sanitize_blocked_report_advice_lines(
+    content: str,
+    governance: dict,
+) -> tuple[str, dict | None]:
+    """移除模型生成的未授权新增风险动作行，保留系统级 fail-closed。
+
+    仅处理已知的文本级违规。风险快照缺失等系统错误不能靠改写正文绕过。
+    调用方必须用同一 ``validate_report_advice_governance`` 重新校验。
+    """
+    errors = {str(error) for error in (governance.get("errors") or [])}
+    degradable = {"direct_order_language", "risk_level_5_entry_proposal"}
+    if not errors or not errors.issubset(degradable):
+        return content, None
+    line_numbers = sorted({
+        int(line_number)
+        for line_number in (governance.get("blocked_line_numbers") or [])
+        if str(line_number or "").isdigit() and int(line_number) > 0
+    })
+    if not line_numbers:
+        return content, None
+    lines = str(content or "").splitlines()
+    replaced: list[int] = []
+    for line_number in line_numbers:
+        index = line_number - 1
+        if index >= len(lines):
+            continue
+        indent = re.match(r"^\s*", lines[index]).group(0)
+        lines[index] = (
+            f"{indent}- 原建议包含未授权的新增风险动作，已由安全闸移除；"
+            "仅保留观察，须等待结构化触发与风险闸确认。"
+        )
+        replaced.append(line_number)
+    if not replaced:
+        return content, None
+    return "\n".join(lines), {
+        "applied": True,
+        "reason": "blocked_advice_lines_removed",
+        "line_count": len(replaced),
+        "lines": replaced[:20],
+        "original_errors": sorted(errors),
     }
 
 
@@ -1178,12 +1231,11 @@ class Engine:
             log.exception("报告交易价格校验异常 [%s]，已阻止定稿", rtype)
             yield {"error": "交易价格校验异常，报告未保存、未推送；请重试或联系管理员。"}
             return
-        # 模型有时在一个已绑股票的大节下又起小标题，导致后续
-        # 价格行丢失逐行股票身份。这类价位不能放行，但也不应让
-        # 整份收盘/尾盘报告在三次重试后完全失败。只对「未绑定股票」
-        # 这一种错误删除整行价位，然后必须重跑原校验器。
+        # 局部错误价位不能放行，也不应让整份报告在多次模型成功后
+        # 完全失败。对所有被价格硬闸阻断的模型行整行降级，然后必须
+        # 重跑原校验器；截断等整份报告级错误仍直接阻断。
         if not claim_validation.get("ok") and not truncated:
-            sanitized_content, sanitation = _sanitize_unbound_report_price_lines(
+            sanitized_content, sanitation = _sanitize_blocked_report_price_lines(
                 content, claim_validation,
             )
             if sanitation:
@@ -1195,7 +1247,7 @@ class Engine:
                 )
                 if sanitized_validation.get("ok"):
                     log.warning(
-                        "报告 %s 移除 %s 行未绑定股票的价位，以数据降级定稿",
+                        "报告 %s 移除 %s 行未通过真实行情校验的价位，以数据降级定稿",
                         rtype, sanitation.get("line_count"),
                     )
                     content = sanitized_content
@@ -1215,6 +1267,54 @@ class Engine:
                 yield {"error": "报告包含无法由对应股票真实行情支撑的具体交易价；已阻止保存和推送。请改为「价格数据不足，暂不给点位」后重试。"}
             return
         advice_governance = validate_report_advice_governance(content, cockpit_snap)
+        if not advice_governance.get("ok"):
+            sanitized_content, advice_sanitation = _sanitize_blocked_report_advice_lines(
+                content,
+                advice_governance,
+            )
+            if advice_sanitation:
+                sanitized_governance = validate_report_advice_governance(
+                    sanitized_content,
+                    cockpit_snap,
+                )
+                if sanitized_governance.get("ok"):
+                    try:
+                        final_claim_validation = await asyncio.to_thread(
+                            validate_report_finalization,
+                            sanitized_content,
+                            data,
+                            stream_meta.get("finish_reason"),
+                        )
+                    except Exception:  # noqa: BLE001 — 最终正文必须重新过价格硬闸
+                        log.exception("报告治理降级后价格复验异常 [%s]", rtype)
+                        yield {
+                            "error": "报告治理降级后的交易价格复验异常，"
+                            "报告未保存、未推送；请重试或联系管理员。"
+                        }
+                        return
+                    if not final_claim_validation.get("ok"):
+                        log.warning(
+                            "报告治理降级后价格复验未通过 [%s]",
+                            rtype,
+                        )
+                        yield {
+                            "error": "报告治理降级后仍包含无法核验的交易价；"
+                            "已阻止保存和推送。"
+                        }
+                        return
+                    log.warning(
+                        "报告 %s 移除 %s 行未授权新增风险动作，以治理降级定稿",
+                        rtype,
+                        advice_sanitation.get("line_count"),
+                    )
+                    content = sanitized_content
+                    previous_price_sanitation = claim_validation.get("sanitation")
+                    claim_validation = dict(final_claim_validation)
+                    if previous_price_sanitation:
+                        claim_validation["sanitation"] = previous_price_sanitation
+                    claim_validation["post_governance_revalidated"] = True
+                    advice_governance = dict(sanitized_governance)
+                    advice_governance["sanitation"] = advice_sanitation
         if not advice_governance.get("ok"):
             log.warning(
                 "报告建议治理未通过 [%s]: %s",
