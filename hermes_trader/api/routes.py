@@ -51,7 +51,8 @@ def _core_fp() -> str:
 from ..analysis import (sentiment as senti, features, timing as timing_mod, quant, screener,  # noqa: E402
                         diagnosis as diagnosis_mod, cockpit as cockpit_mod, recommend as recommend_mod,
                         advice_proposal as proposal_mod, mainline_timeline, mainline_runtime,
-                        engine as engine_mod, stock_analysis_contract)
+                        engine as engine_mod, stock_analysis_contract,
+                        watchlist_zones as watchlist_zones_mod)
 from ..jobs.scheduler import JOB_NAMES, apply_schedule, task_center_status  # noqa: E402
 from ..product_state import build_market_context, route_lifecycle_contract  # noqa: E402
 from ..decision.risk_gate import evaluate_risk_gate  # noqa: E402
@@ -3250,7 +3251,23 @@ def _watch_grade(price, low, high, abandon_price):
         if price >= low * 0.98:
             return "D", "逼近下沿，风险升高"
         return "D", "低于下沿，风险升高"
-    return "B", "继续观察（未设完整区间）"
+    return None, "理想买入区间缺失"
+
+
+def _queue_watchlist_zone_refresh(store, code: str | None = None) -> None:
+    """写接口只排后台计算，不把两路历史行情延迟塞进用户请求。"""
+    async def _run() -> None:
+        try:
+            if code:
+                await asyncio.to_thread(watchlist_zones_mod.refresh_one, store, code)
+            else:
+                await asyncio.to_thread(watchlist_zones_mod.refresh_all, store)
+        except Exception:  # noqa: BLE001 - 派生区间失败不影响观察池事实写入
+            log.exception("观察池自动区间后台计算失败 code=%s", code or "ALL")
+
+    task = asyncio.create_task(_run())
+    _bg_tasks.add(task)
+    task.add_done_callback(_bg_tasks.discard)
 
 
 @router.get("/watchlist")
@@ -3260,6 +3277,7 @@ async def get_watchlist(request: Request):
     stock_detail（那是观察池"加载很慢"的元凶：N 票×7s 串行）。单只失败标 missing 不抛（取不到标缺，绝不编）。"""
     st = _state(request)
     items = st.store.watchlist()
+    zone_map = st.store.watchlist_zones() if hasattr(st.store, "watchlist_zones") else {}
     codes = [str(it.get("code", "")).strip() for it in items]
     # TDX API 热集上限400码：观察池必须合并成一次批量请求，不逐只轮询。
     quote_map = await asyncio.to_thread(stock.quick_quotes, codes)
@@ -3269,12 +3287,23 @@ async def get_watchlist(request: Request):
         quote = None
         missing: list[str] = []
         if isinstance(q, dict) and q.get("price") is not None:
-            quote = {"name": q.get("name") or it.get("name") or "", "price": q.get("price"), "change_pct": q.get("change_pct")}
+            quote = {
+                "name": q.get("name") or it.get("name") or "",
+                "price": q.get("price"), "change_pct": q.get("change_pct"),
+                "as_of": q.get("as_of"), "stale": q.get("stale"), "source": q.get("source"),
+            }
         else:
             missing.append("现价")
+        merged = watchlist_zones_mod.enrich_watch_item(
+            it, zone_map.get(str(it.get("code", "")).strip().zfill(6)), quote,
+        )
         price = quote.get("price") if quote else None
-        grade, status = _watch_grade(price, it.get("target_low"), it.get("target_high"), it.get("abandon_price"))
-        out.append({**it, "quote": quote, "grade": grade, "status": status, "missing": missing})
+        grade, status = _watch_grade(
+            price, merged.get("target_low"), merged.get("target_high"), merged.get("abandon_price")
+        )
+        if merged.get("target_source") == "missing":
+            missing.append("理想买入区间")
+        out.append({**merged, "quote": quote, "grade": grade, "status": status, "missing": missing})
     return {"ok": True, "ts": st.store.now_str(), "items": out, "missing": []}
 
 
@@ -3290,7 +3319,15 @@ async def add_watchlist(request: Request):
         wid = st.store.add_watch(body)
     except ValueError as e:
         return JSONResponse({"ok": False, "error": f"观察池条目不合法：{e}"}, status_code=400)
-    return {"ok": True, "id": wid}
+    _queue_watchlist_zone_refresh(st.store, str(body.get("code") or ""))
+    return {"ok": True, "id": wid, "zone_status": "queued"}
+
+
+@router.post("/watchlist/recalculate")
+async def recalculate_watchlist(request: Request):
+    """显式触发全观察池重算；实际采集在后台执行，避免请求超时。"""
+    _queue_watchlist_zone_refresh(_state(request).store)
+    return {"ok": True, "zone_status": "queued"}
 
 
 @router.put("/watchlist/{wid}")
@@ -3307,12 +3344,24 @@ async def update_watchlist(wid: str, request: Request):
         return JSONResponse({"ok": False, "error": f"观察池条目不合法：{e}"}, status_code=400)
     if not ok:
         return {"ok": False, "error": "条目不存在"}
-    return {"ok": True}
+    code = str(body.get("code") or "").strip()
+    if not code:
+        hit = next((item for item in st.store.watchlist() if item.get("id") == wid), {})
+        code = str(hit.get("code") or "")
+    _queue_watchlist_zone_refresh(st.store, code)
+    return {"ok": True, "zone_status": "queued"}
 
 
 @router.delete("/watchlist/{wid}")
 async def delete_watchlist(wid: str, request: Request):
-    if _state(request).store.delete_watch(wid):
+    store = _state(request).store
+    existing = next((item for item in store.watchlist() if item.get("id") == wid), None)
+    if store.delete_watch(wid):
+        code = str((existing or {}).get("code") or "").strip().zfill(6)
+        if code and hasattr(store, "delete_watchlist_zone"):
+            still_used = any(str(item.get("code") or "").strip().zfill(6) == code for item in store.watchlist())
+            if not still_used:
+                store.delete_watchlist_zone(code)
         return {"ok": True}
     return {"ok": False, "error": "条目不存在"}
 

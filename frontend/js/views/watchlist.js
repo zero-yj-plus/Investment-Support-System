@@ -10,7 +10,8 @@
      绝不用理想区间端点反推一个"假装的现价"，绝不编数字。
    - A–E 评级 / 今日状态 / 建议动作是后端确定性价格逻辑算出来的（现价 vs 理想买入区间），
      本视图只渲染、不二次计算、不调 AI 改写。前端仅做色标/排序/文案映射。
-   - 理想买入区间 / 放弃价 = 用户录入（元）；本视图原样回显，不做任何"优化"。 */
+   - 双周期理想区间由后端纯数字算法计算；用户手填区间存在时只作为明确覆盖值。
+   - 前端不计算价格、不调用 AI，不用旧交易日超短区间冒充当日结果。 */
 
 import { api, fmtPrice, fmtPct, pctClass, isTradingTime } from '../api.js';
 import { icon, escapeHtml, toast, emptyState, skeleton, dataStamp, confirmModal, openModal, closeModal } from '../ui.js';
@@ -67,6 +68,11 @@ function injectStyle() {
   .wl-px .pk{font-size:11px;color:var(--text-3)}
   .wl-px .pv{font-size:21px;font-weight:800;font-family:var(--mono,monospace);color:var(--text)}
   .wl-px .pv.na{font-size:14px;color:var(--text-3)}
+  .wl-auto-zones{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}
+  .wl-auto-zone{padding:7px 9px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--panel-2)}
+  .wl-auto-zone .zk{display:flex;justify-content:space-between;gap:8px;font-size:11px;color:var(--text-3)}
+  .wl-auto-zone .zv{margin-top:3px;font:700 14px var(--mono,monospace);color:var(--text)}
+  .wl-auto-zone .zv.missing{font-family:inherit;font-weight:500;font-size:12px;color:var(--text-3)}
   .wl-px .pchg{font-family:var(--mono,monospace);font-size:13px;font-weight:700}
   .wl-px .pband{margin-left:auto;text-align:right}
   .wl-px .pband .bk{font-size:11px;color:var(--text-3)}
@@ -101,6 +107,7 @@ function injectStyle() {
   @media (max-width:760px){
     .wl-grid{grid-template-columns:1fr}
     .wl-form{grid-template-columns:1fr}
+    .wl-auto-zones{grid-template-columns:1fr}
     .wl-px .pband{margin-left:0;width:100%;text-align:left;margin-top:4px}
   }`;
   const tag = document.createElement('style');
@@ -126,6 +133,22 @@ function bandText(it) {
   return '未设区间';
 }
 
+function zoneText(zone) {
+  const has = (v) => v !== null && v !== undefined && isFinite(Number(v));
+  if (has(zone?.low) && has(zone?.high)) return `${fmtPrice(zone.low)} ~ ${fmtPrice(zone.high)}`;
+  const reasons = Array.isArray(zone?.missing) ? zone.missing.filter(Boolean) : [];
+  return reasons[0] || '等待自动计算';
+}
+
+function zoneCard(label, zone) {
+  const complete = zone && ['complete', 'degraded'].includes(zone.state) && zone.low != null && zone.high != null;
+  const state = zone?.state === 'degraded' ? '同日最近结果' : (zone?.data_date || '数据不足');
+  return `<div class="wl-auto-zone">
+    <div class="zk"><span>${label}</span><span>${escapeHtml(state)}</span></div>
+    <div class="zv ${complete ? '' : 'missing'}" title="${escapeHtml(zoneText(zone))}">${escapeHtml(zoneText(zone))}</div>
+  </div>`;
+}
+
 function renderCard(it) {
   const g = it.grade;                         // 后端确定性评级：A–E 或 null
   const meta = gradeMeta(g);
@@ -137,6 +160,8 @@ function renderCard(it) {
   const risk = Number(it.risk_level) || 3;
   const rkColor = RISK_COLOR[risk] || 'var(--flat)';
   const missing = Array.isArray(it.missing) ? it.missing : [];
+  const zones = it.ideal_buy_zones || {};
+  const sourceLabel = it.target_source === 'manual_override' ? '手工覆盖' : (it.target_source === 'auto_ultra' ? '自动·超短线' : '待计算');
 
   // 建议动作：优先后端给的 status/grade 推导文案；缺现价时给「等待真实行情」而非编造。
   const actTxt = meta ? meta.act : (hasPrice ? '继续观察，等条件明确' : '现价缺失，待行情恢复再判断，暂不动作');
@@ -178,9 +203,14 @@ function renderCard(it) {
         </div>
       </div>
       <div class="pband">
-        <div class="bk">理想买入区间（元）</div>
+        <div class="bk">生效理想买入区间（${sourceLabel}）</div>
         <div class="bv">${bandText(it)}</div>
       </div>
+    </div>
+
+    <div class="wl-auto-zones">
+      ${zoneCard('超短线 · 1—3日', zones.ultra)}
+      ${zoneCard('波段 · 3—10日', zones.swing)}
     </div>
 
     <div class="wl-rows">
@@ -258,6 +288,9 @@ function num(v) { const s = String(v ?? '').trim(); if (s === '') return ''; con
 
 function formBody(it = {}) {
   const v = (x) => (x === null || x === undefined ? '' : escapeHtml(String(x)));
+  const hasManualFields = Object.prototype.hasOwnProperty.call(it, 'manual_target_low');
+  const manualLow = hasManualFields ? it.manual_target_low : it.target_low;
+  const manualHigh = hasManualFields ? it.manual_target_high : it.target_high;
   return `
   <div class="wl-form">
     <div class="ff">
@@ -286,11 +319,11 @@ function formBody(it = {}) {
     <div class="ff full">
       <label>理想买入区间（元）</label>
       <div class="wl-band2">
-        <input id="wf-low" inputmode="decimal" placeholder="下沿 如 10.50" value="${v(it.target_low)}">
+        <input id="wf-low" inputmode="decimal" placeholder="下沿 如 10.50" value="${v(manualLow)}">
         <span>~</span>
-        <input id="wf-high" inputmode="decimal" placeholder="上沿 如 11.80" value="${v(it.target_high)}">
+        <input id="wf-high" inputmode="decimal" placeholder="上沿 如 11.80" value="${v(manualHigh)}">
       </div>
-      <span class="hint">现价落进 [下沿, 上沿] 才评 A（到买点）。两端可只填一个；都不填则只能"继续观察"。绝不凭空生成数字。</span>
+      <span class="hint">留空则使用系统每 5 分钟计算的超短线区间评级；填写任一端即启用手工覆盖。波段区间始终单独展示。</span>
     </div>
     <div class="ff full">
       <label>买入触发条件</label>
@@ -415,10 +448,11 @@ export function mount(el) {
   el.innerHTML = `
     <div class="page-head">
       <h2 class="page-title">观察池</h2>
-      <span class="page-sub">想买还没买的票 · 等价格触发再买 · A→E 按价格条件每日排序</span>
+      <span class="page-sub">双周期纯数字区间 · 超短线自动评级 · 手工区间可覆盖</span>
       <div class="ph-extra">
         <span id="wl-stamp"></span>
         <button class="btn btn-sm" id="wl-refresh">${icon('refresh')}刷新现价</button>
+        <button class="btn btn-sm" id="wl-recalc">重算区间</button>
         <button class="btn btn-primary" id="wl-add">${icon('plus')}添加观察</button>
       </div>
     </div>
@@ -428,6 +462,15 @@ export function mount(el) {
   el.querySelector('#wl-refresh').addEventListener('click', async () => {
     await load();
     toast('现价已刷新', 'success');
+  });
+  el.querySelector('#wl-recalc').addEventListener('click', async () => {
+    try {
+      const result = await api.post('/watchlist/recalculate', {});
+      if (result?.ok === false) throw new Error(result.error || '触发失败');
+      toast('双周期区间已进入后台重算', 'success');
+    } catch (e) {
+      toast('重算失败：' + e.message, 'error');
+    }
   });
 
   // 卡片内事件委托：编辑 / 删除 / 点代码跳诊断

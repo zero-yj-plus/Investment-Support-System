@@ -27,6 +27,10 @@ export function mount(el) {
   gen += 1;
   root = el;
   root.innerHTML = `
+    <div class="page-head">
+      <h2 class="page-title">主线深研</h2>
+      <p class="page-sub">交叉验证题材赚钱效应、交易拥挤度、持续性与龙头梯队，识别当日主线与分歧风险</p>
+    </div>
     <div class="card ft-workbench-card">
       <div class="card-head">
         <span class="card-title">主线结构深研 · MARKET STRUCTURE</span>

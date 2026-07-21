@@ -191,6 +191,7 @@ flowchart LR
 | `analysis/sentinel.py` | 数据/推送运行哨兵；确定性自检、告警和对已定稿未送达报告的补推。 |
 | `analysis/stock_analysis_contract.py` | 冻结“规则选股 → 受治理诊断 → AI 仅解释”的共享执行契约。 |
 | `analysis/timing.py` | 价量均线四区域择时和五因子贪恐温度计。 |
+| `analysis/watchlist_zones.py` | 观察池双周期纯数字区间；用前复权日线与 5 分钟 OHLCV/成交额确定性计算超短线、波段区间，并管理同交易日降级快照。 |
 
 ### 7.4 `api/`：HTTP 接口层
 
@@ -508,6 +509,8 @@ data/
 ├─ sentiment/history.json
 ├─ knowledge/items.json
 ├─ holdings.json
+├─ watchlist.json
+├─ watchlist_zones.json
 ├─ settings.json
 ├─ simulation.sqlite3
 ├─ evidence/market_data.sqlite3

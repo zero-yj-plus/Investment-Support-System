@@ -1,4 +1,4 @@
-/* views/tail.js — 交易节奏工作站「尾盘策略」(母文档 §24，14:45/14:50)
+/* views/tail.js — 交易节奏工作站「尾盘决策」(母文档 §24，14:45/14:50)
    ------------------------------------------------------------------
    §24 尾盘的第一判断是「今天能不能做」——要敢于说「今日无高质量尾盘机会，建议休息」。
    本页 = 报告正文(AI 按真实数据流式生成) + 该时点的真实结构化面板：
@@ -32,8 +32,7 @@ const GRADE_COLOR = { A: '#0f766e', B: '#1d4ed8', C: '#475569', D: '#a16207', E:
 
 const view = makeReportView({
   rtype: 'tail',
-  title: '尾盘策略',
-  sub: '14:45/14:50 · 先判断今天能不能做尾盘',
+  title: '尾盘决策',
   notBefore: '14:45',
   topRender,
   bottomRender,
@@ -61,10 +60,10 @@ function topRender(host, ctx) {
   const c = (snap && snap.command) || null;
   if (!c || c.risk_level == null) {
     const generated = !!(ctx.report && ctx.report.content_md);
-    const title = generated ? '本期报告无定格风险闸' : '尾盘策略生成后显示今日风险闸';
+    const title = generated ? '本期报告无定格风险闸' : '尾盘决策生成后显示今日风险闸';
     const text = generated
       ? '本期报告生成于「风险闸时点锁定」上线前，无定格风险闸。下一期起，此处按生成时点（14:45）定格今日「能不能做尾盘」的判断，当日锁死不随盘变。'
-      : '「尾盘策略」每交易日 14:45 按当刻信息生成并定格今日「能不能做尾盘」的判断（当日锁死、不随盘变）。生成后此处显示。';
+      : '「尾盘决策」每交易日 14:45 按当刻信息生成并定格今日「能不能做尾盘」的判断（当日锁死、不随盘变）。生成后此处显示。';
     host.innerHTML = `<div class="tail-gate gate-unknown">
       <div class="tg-head"><span class="tg-icn">${icon('info')}</span>
         <span class="tg-title">${title}</span></div>

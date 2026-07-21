@@ -5,6 +5,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 APP = ROOT / "frontend" / "js" / "app.js"
+NAVIGATION = ROOT / "frontend" / "js" / "navigation.js"
 COCKPIT = ROOT / "frontend" / "js" / "views" / "cockpit.js"
 HOLDINGS = ROOT / "frontend" / "js" / "views" / "holdings.js"
 FEATURES = ROOT / "frontend" / "js" / "views" / "features.js"
@@ -47,12 +48,46 @@ def test_workspace_children_live_in_a_collapsible_sidebar_without_duplicate_top_
     assert 'class="tabs workspace-tabs"' not in source
 
 
-def test_all_workspace_groups_are_visible_by_default_and_remain_collapsible() -> None:
+def test_sidebar_starts_collapsed_and_only_expands_the_active_group() -> None:
     source = APP.read_text(encoding="utf-8")
 
-    assert "const DEFAULT_OPEN_SIDEBAR_GROUPS = [...BUSINESS_NAV, ...UTILITY_NAV]" in source
-    assert "lsGet('hermes.nav.groups.v2', DEFAULT_OPEN_SIDEBAR_GROUPS)" in source
-    assert "lsSet('hermes.nav.groups.v2', [...sidebarOpenGroups])" in source
+    assert "let sidebarOpenGroups = new Set();" in source
+    assert "workspace.classList.toggle('open', active);" in source
+    assert "children.hidden = !active;" in source
+    assert "if (active) sidebarOpenGroups.add(workspace.dataset.navGroup);" in source
+    assert "el.querySelectorAll('.nav-workspace.open').forEach((other) =>" in source
+    assert "activate(workspace.querySelector('.nav-parent'));" in source
+    assert "hermes.nav.groups.v3" not in source
+
+
+def test_sidebar_uses_the_requested_module_groups_labels_and_order() -> None:
+    source = NAVIGATION.read_text(encoding="utf-8")
+    sidebar = source[source.index("export const SIDEBAR_NAV") : source.index("// 旧页面不删")]
+
+    labels = [
+        "今日决策", "决策总览", "盘前报告", "尾盘决策", "今日复盘", "次日策略",
+        "市场结构", "涨停题材", "主线深研", "资金追踪", "资金择时", "主力结构", "舆情事件",
+        "持仓风控", "我的持仓", "观察池", "模拟执行",
+        "研究中心", "问股", "个股诊断", "条件选股", "每日量化选股", "事件掘金",
+        "产业链分析", "公司研究", "海外市场", "重组拆解", "宏观风险",
+        "历史与知识", "全部报告", "知识库",
+    ]
+    positions = [sidebar.index(f"'{label}'") for label in labels]
+    assert positions == sorted(positions)
+    assert "sidebarChild('research', 'restructuring', '重组拆解', { placement: 'more' })" in sidebar
+    assert "sidebarChild('research', 'macro', '宏观风险', { placement: 'more' })" in sidebar
+
+
+def test_topbar_shows_the_active_large_module_instead_of_leaf_page_names() -> None:
+    app = APP.read_text(encoding="utf-8")
+    navigation = NAVIGATION.read_text(encoding="utf-8")
+
+    assert "export function moduleLabelForRoute(" in navigation
+    assert "const moduleLabel = moduleLabelForRoute(r.path, currentTab, navLabels);" in app
+    assert "title.textContent = moduleLabel" in app
+    assert app.count("document.title = `${moduleLabel} · ${brandTitle}`") == 2
+    assert "title.textContent = r.label" not in app
+    assert "document.title = `${r.label} · ${brandTitle}`" not in app
 
 
 def test_topbar_reports_connection_without_claiming_every_field_is_realtime() -> None:
@@ -64,6 +99,22 @@ def test_topbar_reports_connection_without_claiming_every_field_is_realtime() ->
     assert "尚未完成首次行情连接检查" in source
     assert "timeZone: 'Asia/Shanghai'" in source
     assert "<span class=\"live-dot\"></span>实时" not in source
+
+
+def test_mainline_research_has_a_page_title_and_decision_oriented_subtitle() -> None:
+    source = FEATURES.read_text(encoding="utf-8")
+
+    assert '<h2 class="page-title">主线深研</h2>' in source
+    assert "交叉验证题材赚钱效应、交易拥挤度、持续性与龙头梯队" in source
+    assert "识别当日主线与分歧风险" in source
+
+
+def test_topbar_clock_displays_beijing_time_to_the_second() -> None:
+    source = APP.read_text(encoding="utf-8")
+
+    assert "--点--分--秒" in source
+    assert "`${p(c.hh)}点${p(c.mm)}分${p(c.ss)}秒`" in source
+    assert "setInterval(tickClock, 1000);" in source
 
 
 def test_boot_renders_route_before_background_status_and_reapplies_brand() -> None:
@@ -179,11 +230,14 @@ def test_cockpit_mainline_panel_uses_fixed_market_structure_roles() -> None:
     assert "今日行业主线 · 主线 / 次主线 / 活口 / 情绪链" in source
     assert "今日行业主线（容量 × 强度 × 宽度 × 梯队）" not in source
     assert "function timedMainlineLabel(role)" in source
-    assert "持续主线样本" in source
+    assert "持续主线样本" not in source
     assert "主线（成交额 × 涨停家数）" not in source
     assert "const raw = d?.roles || d?.sectors || d?.mainlines || [];" in source
     assert "status === 'unformed'" in source
-    assert "净流入权重 0" in source
+    assert "净流入权重 0" not in source
+    assert "形成2档 / 降级1档 / 撤销2档" not in source
+    assert '${dataStamp(d)}<span class="ck2-mainline-regime">' in source
+    assert ".ck2-ml-rule" not in source
     assert "grid-template-columns:repeat(5,minmax(178px,1fr))" in source
     assert "grid-template-columns:repeat(6,minmax(0,1fr))" in source
     assert ".ck2-ml .ml-card:nth-child(n+4){grid-column:span 3}" in source

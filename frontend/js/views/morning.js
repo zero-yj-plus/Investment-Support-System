@@ -30,7 +30,6 @@ const LV_COLOR = { 1: '#1d4ed8', 2: '#0f766e', 3: '#a16207', 4: '#c2410c', 5: '#
 const view = makeReportView({
   rtype: 'morning',
   title: '盘前报告',
-  sub: '08:50 · 今天能不能做 + 重点方向',
   notBefore: '08:50',
   topRender,
 });

@@ -1,7 +1,8 @@
-/* navigation.js — Phase 1 交易工作台的纯路由契约
+/* navigation.js — 交易工作台的纯路由与侧栏信息架构契约
  *
  * 这里只放信息架构和 hash 解析，不依赖 DOM：
- * - 一级入口固定为 6 个业务入口 + 2 个工具入口；
+ * - BUSINESS_NAV / UTILITY_NAV 保持既有路由契约；
+ * - SIDEBAR_NAV 只负责左侧展示分组，可跨工作台编排现有页签；
  * - 旧 hash 保留查询参数并定位到新入口的对应页签；
  * - 页签只引用旧 view path，具体 mount/unmount 由 app.js 统一代理。
  */
@@ -73,7 +74,7 @@ export const WORKSPACES = Object.freeze({
     defaultTab: 'close',
     tabs: Object.freeze([
       tab('close', '今日复盘', 'close'),
-      tab('tomorrow', '明日预案', 'evening'),
+      tab('tomorrow', '次日策略', 'evening'),
     ]),
   }),
   research: Object.freeze({
@@ -83,7 +84,7 @@ export const WORKSPACES = Object.freeze({
       tab('ask', '问股', 'chat'),
       tab('diagnosis', '个股诊断', 'diagnosis'),
       tab('screener', '条件筛选', 'screener'),
-      tab('quant-pick', '量化选股', 'quant_pick'),
+      tab('quant-pick', '量化选股', 'quant'),
       tab('events', '事件掘金', 'forecast'),
       tab('company', '公司研究', 'company', { placement: 'more' }),
       tab('chain', '产业链', 'chain', { placement: 'more' }),
@@ -107,6 +108,85 @@ export const WORKSPACES = Object.freeze({
     tabs: Object.freeze([tab('system', '系统设置', '__settings_view')]),
   }),
 });
+
+// 左侧导航只是现有页面的展示编排，不改变 WORKSPACES、hash 或页面生命周期。
+// 一级入口默认打开本组首项，所有子项均精确指向原页签。
+const sidebarChild = (path, tabId, label, { placement = 'primary' } = {}) => Object.freeze({
+  path,
+  tab: tabId,
+  label,
+  placement,
+});
+
+export const SIDEBAR_NAV = Object.freeze([
+  Object.freeze({
+    id: 'today', label: '今日决策', icon: 'dashboard', path: 'today', tab: 'decision',
+    children: Object.freeze([
+      sidebarChild('today', 'decision', '决策总览'),
+      sidebarChild('premarket', 'report', '盘前报告'),
+      sidebarChild('tail', 'decision', '尾盘决策'),
+      sidebarChild('review', 'close', '今日复盘'),
+      sidebarChild('review', 'tomorrow', '次日策略'),
+    ]),
+  }),
+  Object.freeze({
+    id: 'market', label: '市场结构', icon: 'sentiment', path: 'today', tab: 'hotboard',
+    children: Object.freeze([
+      sidebarChild('today', 'hotboard', '涨停题材'),
+      sidebarChild('today', 'mainline', '主线深研'),
+      sidebarChild('today', 'capital', '资金追踪'),
+      sidebarChild('today', 'timing', '资金择时'),
+      sidebarChild('today', 'mainforce', '主力结构'),
+      sidebarChild('today', 'news', '舆情事件'),
+    ]),
+  }),
+  Object.freeze({
+    id: 'risk', label: '持仓风控', icon: 'holdings', path: 'risk', tab: 'holdings',
+    children: Object.freeze([
+      sidebarChild('risk', 'holdings', '我的持仓'),
+      sidebarChild('risk', 'watchlist', '观察池'),
+      sidebarChild('risk', 'simulation', '模拟执行'),
+    ]),
+  }),
+  Object.freeze({
+    id: 'research', label: '研究中心', icon: 'search', path: 'research', tab: 'ask', extensionWorkspace: 'research',
+    children: Object.freeze([
+      sidebarChild('research', 'ask', '问股'),
+      sidebarChild('research', 'diagnosis', '个股诊断'),
+      sidebarChild('research', 'screener', '条件选股'),
+      sidebarChild('research', 'quant-pick', '每日量化选股'),
+      sidebarChild('research', 'events', '事件掘金'),
+      sidebarChild('research', 'chain', '产业链分析'),
+      sidebarChild('research', 'company', '公司研究'),
+      sidebarChild('research', 'overseas', '海外市场'),
+      sidebarChild('research', 'restructuring', '重组拆解', { placement: 'more' }),
+      sidebarChild('research', 'macro', '宏观风险', { placement: 'more' }),
+    ]),
+  }),
+  Object.freeze({
+    id: 'history', label: '历史与知识', icon: 'knowledge', path: 'history', tab: 'reports',
+    children: Object.freeze([
+      sidebarChild('history', 'reports', '全部报告'),
+      sidebarChild('history', 'knowledge', '知识库'),
+    ]),
+  }),
+]);
+
+// 顶栏只显示当前页面所属的一级模块名，不随二级页面标题切换。
+// 优先按精确的 path + tab 匹配侧栏分组；扩展页没有固定子项时按工作台归属回退。
+export function moduleLabelForRoute(path, requestedTab = '', labelOverrides = {}) {
+  const workspace = WORKSPACES[path] || WORKSPACES.today;
+  const tabId = requestedTab || workspace.defaultTab || '';
+  const exactGroup = SIDEBAR_NAV.find((group) => {
+    const groupTab = group.tab || WORKSPACES[group.path]?.defaultTab || '';
+    if (group.path === path && groupTab === tabId) return true;
+    return (group.children || []).some((child) => child.path === path && child.tab === tabId);
+  });
+  const group = exactGroup
+    || SIDEBAR_NAV.find((item) => item.id === path || item.path === path);
+  const labelKey = group?.id || path;
+  return labelOverrides[labelKey] || group?.label || workspace.label || '今日决策';
+}
 
 // 旧页面不删：将原 path 映射到新工作台的精确页签。
 // preserveQuery 默认为 true，确保 diagnosis?code=... 等收藏链接继续可用。

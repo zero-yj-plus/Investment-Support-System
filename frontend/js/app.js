@@ -6,9 +6,11 @@ import { refreshChartTheme } from './charts.js';
 import { downloadPdf } from './export.js';
 import {
   BUSINESS_NAV,
+  SIDEBAR_NAV,
   UTILITY_NAV,
   WORKSPACES,
   buildHash,
+  moduleLabelForRoute,
   normalizeRecommendedRoute,
   parseHash,
   redirectsFromStatus,
@@ -155,7 +157,11 @@ let statusRedirects = {};
 let extensionRedirects = {};
 const extensionWorkspaceTabs = new Map();
 // 品牌名（用于浏览器标题/状态栏等"名号"处）；随 /status 的 client 配置刷新，默认产品名
-let brandTitle = 'W.U.D.I. 投研决策';
+let brandTitle = '投研决策';
+
+function withoutWudi(value) {
+  return String(value || '').replace(/W\.U\.D\.I\.\s*/gi, '').trim();
+}
 // 客户级导航偏好只控制 6+2 一级工作台；绝不能把具体业务功能一起藏掉。
 // 叶子功能由 WORKSPACES 的 primary / more 分组管理，既收敛信息架构也保持可达。
 let navHidden = new Set();
@@ -170,38 +176,40 @@ let _navLabelsSig = '';
 // 流式生成中(.typing-cursor 在场)缓刷，避免打断问股/报告输出。
 let _coreFp = '';
 let _reloadArmed = false;
-// v2 改为“全部能力默认可见、允许用户逐组收起”。使用新 key 是为了清除旧版只记住
-// `today` 的折叠状态；否则升级后能力仍会像被删除一样消失。
-const DEFAULT_OPEN_SIDEBAR_GROUPS = [...BUSINESS_NAV, ...UTILITY_NAV].map((item) => item.path);
-const storedSidebarGroups = lsGet('hermes.nav.groups.v2', DEFAULT_OPEN_SIDEBAR_GROUPS);
-let sidebarOpenGroups = new Set(
-  Array.isArray(storedSidebarGroups) ? storedSidebarGroups : DEFAULT_OPEN_SIDEBAR_GROUPS,
-);
+// 侧栏采用手风琴模式：首屏先全部折叠，路由就绪后只展开当前页面所属分组。
+let sidebarOpenGroups = new Set();
 
 /* ---------------- 侧边导航 ---------------- */
 
 function buildSidebar() {
   const el = document.getElementById('sidebar');
-  const workspaceTabs = (path) => {
-    const workspace = WORKSPACES[path];
-    if (!workspace) return [];
-    return [
-      ...workspace.tabs,
-      ...(extensionWorkspaceTabs.get(path) || []),
-    ].map(tabWithView).filter((item) => item && item.navigation !== false);
+  const sidebarChildren = (group) => {
+    const fixed = [...(group.children || [])];
+    const extensions = group.extensionWorkspace
+      ? (extensionWorkspaceTabs.get(group.extensionWorkspace) || [])
+        .map(tabWithView)
+        .filter((item) => item && item.navigation !== false)
+        .map((item) => ({
+          path: group.extensionWorkspace,
+          tab: item.id,
+          label: item.label,
+          placement: item.placement || 'more',
+        }))
+      : [];
+    return [...fixed, ...extensions];
   };
   const renderItem = (r) => {
-    const label = navLabels[r.path] || r.label;
-    const tabs = workspaceTabs(r.path);
-    const hasChildren = tabs.length > 1;
-    const open = hasChildren && sidebarOpenGroups.has(r.path);
-    const primary = tabs.filter((item) => item.placement !== 'more');
-    const more = tabs.filter((item) => item.placement === 'more');
-    const childrenId = `nav-children-${r.path}`;
+    const label = navLabels[r.id] || r.label;
+    const children = sidebarChildren(r);
+    const hasChildren = children.length > 0;
+    const open = hasChildren && sidebarOpenGroups.has(r.id);
+    const primary = children.filter((item) => item.placement !== 'more');
+    const more = children.filter((item) => item.placement === 'more');
+    const childrenId = `nav-children-${r.id}`;
     const childButtons = (items) => items.map((item) => `<button class="nav-child" type="button"
-      data-path="${r.path}" data-tab="${item.id}" title="${escapeHtml(item.label)}">${escapeHtml(item.label)}</button>`).join('');
-    return `<div class="nav-workspace${open ? ' open' : ''}" data-workspace-path="${r.path}">
-      <div class="nav-item nav-parent" data-path="${r.path}" title="${escapeHtml(label)}" role="link" tabindex="0">
+      data-path="${item.path}" data-tab="${item.tab}" title="${escapeHtml(item.label)}">${escapeHtml(item.label)}</button>`).join('');
+    return `<div class="nav-workspace${open ? ' open' : ''}" data-nav-group="${r.id}">
+      <div class="nav-item nav-parent" data-path="${r.path}" data-tab="${r.tab || ''}" title="${escapeHtml(label)}" role="link" tabindex="0">
         ${icon(r.icon)}<span class="nav-label">${escapeHtml(label)}</span>
         ${hasChildren ? `<button class="nav-group-toggle" type="button" aria-label="${open ? '收起' : '展开'}${escapeHtml(label)}子目录"
           aria-expanded="${open ? 'true' : 'false'}" aria-controls="${childrenId}">${icon('chevR')}</button>` : ''}
@@ -212,12 +220,14 @@ function buildSidebar() {
       </div>` : ''}
     </div>`;
   };
-  const businessItems = BUSINESS_NAV.filter((r) => !navHidden.has(r.path));
-  const utilityItems = UTILITY_NAV.filter((r) => !navHidden.has(r.path));
+  const businessItems = SIDEBAR_NAV.filter((r) => !navHidden.has(r.id));
+  const utilityItems = UTILITY_NAV
+    .filter((r) => r.path === 'settings' && !navHidden.has(r.path))
+    .map((r) => ({ ...r, id: r.path, tab: '', children: [] }));
   el.innerHTML = `
     <div class="side-logo" id="side-logo" role="link" tabindex="0" title="返回决策首页">
       <div class="logo-mark">${icon('logo')}</div>
-      <div class="logo-text"><div class="t1">W.U.D.I. 投研决策</div><div class="t2">A-SHARE DECISION</div></div>
+      <div class="logo-text"><div class="t1">投研决策</div><div class="t2">A-SHARE DECISION</div></div>
     </div>
     <nav class="side-nav">
       <div class="nav-group">
@@ -230,7 +240,6 @@ function buildSidebar() {
       <button class="collapse-btn" id="nav-collapse" title="折叠导航">${icon('chevL')}<span class="c-label">折叠</span></button>
     </div>`;
 
-  const persistOpenGroups = () => lsSet('hermes.nav.groups.v2', [...sidebarOpenGroups]);
   const setSidebarCollapsed = (collapsed) => {
     const shell = document.getElementById('app');
     const button = el.querySelector('#nav-collapse');
@@ -242,19 +251,34 @@ function buildSidebar() {
     const label = button.querySelector('.c-label');
     if (label) label.textContent = collapsed ? '展开' : '折叠';
   };
-  const setGroupOpen = (workspace, open, persist = true) => {
+  const setGroupOpen = (workspace, open) => {
     if (!workspace) return;
-    const path = workspace.dataset.workspacePath;
+    const groupId = workspace.dataset.navGroup;
+    if (open) {
+      el.querySelectorAll('.nav-workspace.open').forEach((other) => {
+        if (other === workspace) return;
+        const otherChildren = other.querySelector('.nav-children');
+        const otherToggle = other.querySelector('.nav-group-toggle');
+        other.classList.remove('open');
+        if (otherChildren) otherChildren.hidden = true;
+        if (otherToggle) {
+          const otherLabel = other.querySelector('.nav-label')?.textContent || '';
+          otherToggle.setAttribute('aria-expanded', 'false');
+          otherToggle.setAttribute('aria-label', `展开${otherLabel}子目录`);
+        }
+        sidebarOpenGroups.delete(other.dataset.navGroup);
+      });
+    }
     const children = workspace.querySelector('.nav-children');
     const toggle = workspace.querySelector('.nav-group-toggle');
     if (!children || !toggle) return;
     workspace.classList.toggle('open', open);
     children.hidden = !open;
     toggle.setAttribute('aria-expanded', String(open));
-    toggle.setAttribute('aria-label', `${open ? '收起' : '展开'}${navLabels[path] || WORKSPACES[path]?.label || ''}子目录`);
-    if (open) sidebarOpenGroups.add(path);
-    else sidebarOpenGroups.delete(path);
-    if (persist) persistOpenGroups();
+    const label = workspace.querySelector('.nav-label')?.textContent || '';
+    toggle.setAttribute('aria-label', `${open ? '收起' : '展开'}${label}子目录`);
+    if (open) sidebarOpenGroups.add(groupId);
+    else sidebarOpenGroups.delete(groupId);
   };
   const activate = (item) => {
     if (!item) return;
@@ -275,6 +299,10 @@ function buildSidebar() {
     if (toggle) {
       e.stopPropagation();
       const workspace = toggle.closest('.nav-workspace');
+      if (!workspace.querySelector('.nav-parent.active')) {
+        activate(workspace.querySelector('.nav-parent'));
+        return;
+      }
       setGroupOpen(workspace, !workspace.classList.contains('open'));
       return;
     }
@@ -299,19 +327,28 @@ function buildSidebar() {
 
 function updateNav() {
   const currentTab = parseHash(location.hash).params.get('tab') || WORKSPACES[currentPath]?.defaultTab || '';
-  document.querySelectorAll('.nav-item').forEach((n) => n.classList.toggle('active', n.dataset.path === currentPath));
   document.querySelectorAll('.nav-child').forEach((n) => {
     n.classList.toggle('active', n.dataset.path === currentPath && n.dataset.tab === currentTab);
   });
-  const activeWorkspace = document.querySelector(`.nav-workspace[data-workspace-path="${currentPath}"]`);
-  const children = activeWorkspace?.querySelector('.nav-children');
-  const toggle = activeWorkspace?.querySelector('.nav-group-toggle');
-  if (children && toggle && children.hidden) {
-    activeWorkspace.classList.add('open');
-    children.hidden = false;
-    toggle.setAttribute('aria-expanded', 'true');
-    toggle.setAttribute('aria-label', `收起${navLabels[currentPath] || WORKSPACES[currentPath]?.label || ''}子目录`);
-  }
+  document.querySelectorAll('.nav-workspace').forEach((workspace) => {
+    const parent = workspace.querySelector('.nav-parent');
+    const direct = parent?.dataset.path === currentPath
+      && (!parent.dataset.tab || parent.dataset.tab === currentTab);
+    parent?.classList.toggle('active', Boolean(direct || workspace.querySelector('.nav-child.active')));
+  });
+  document.querySelectorAll('.nav-workspace').forEach((workspace) => {
+    const active = Boolean(workspace.querySelector('.nav-parent.active'));
+    const children = workspace.querySelector('.nav-children');
+    const toggle = workspace.querySelector('.nav-group-toggle');
+    if (!children || !toggle) return;
+    workspace.classList.toggle('open', active);
+    children.hidden = !active;
+    toggle.setAttribute('aria-expanded', String(active));
+    const label = workspace.querySelector('.nav-label')?.textContent || '';
+    toggle.setAttribute('aria-label', `${active ? '收起' : '展开'}${label}子目录`);
+    if (active) sidebarOpenGroups.add(workspace.dataset.navGroup);
+    else sidebarOpenGroups.delete(workspace.dataset.navGroup);
+  });
 }
 
 function navigateRecommended() {
@@ -347,7 +384,7 @@ function buildTopbar() {
     <div class="tb-mid">
       <time class="tb-clock" id="tb-clock" datetime="">
         <span class="tb-clock-date">----年--月--日 星期-</span>
-        <span class="tb-clock-meta"><span class="tb-clock-time num">--点--分</span><span class="tb-market-state" id="tb-market-state">状态确认中</span></span>
+        <span class="tb-clock-meta"><span class="tb-clock-time num">--点--分--秒</span><span class="tb-market-state" id="tb-market-state">状态确认中</span></span>
       </time>
       <span class="num" id="tb-fresh" title="最近一次成功取数距今；后端失联会变黄提醒" style="font-size:11px;margin-left:8px"></span>
     </div>
@@ -452,7 +489,7 @@ function tickClock() {
   if (dateEl) dateEl.textContent = compactMobile
     ? `${p(Number(c.m))}-${p(Number(c.d))} 周${'日一二三四五六'[c.day]}`
     : `${c.y}年${Number(c.m)}月${Number(c.d)}日 ${weeks[c.day]}`;
-  if (timeEl) timeEl.textContent = `${p(c.hh)}点${p(c.mm)}分`;
+  if (timeEl) timeEl.textContent = `${p(c.hh)}点${p(c.mm)}分${p(c.ss)}秒`;
   el.setAttribute('datetime', iso);
 
   const isTradeDay = appState.status ? appState.status.is_trade_day !== false : ![0, 6].includes(c.day);
@@ -671,15 +708,17 @@ function updateBrand(s) {
   // 左上角主标题/副标题（按客户配置）；副标题为空则隐藏，标题为单行
   const t1 = document.querySelector('.side-logo .t1');
   const t2 = document.querySelector('.side-logo .t2');
-  if (t1 && c.brand) t1.textContent = c.brand;
+  if (t1 && c.brand) t1.textContent = withoutWudi(c.brand);
   if (t2) {
     if (c.brand_sub) { t2.textContent = c.brand_sub; t2.style.display = ''; }
     else if (c.brand) { t2.style.display = 'none'; }
   }
   // 其余"名号"处用 client.name（无则退回产品名）
-  brandTitle = c.name || brandTitle;
+  brandTitle = withoutWudi(c.name) || brandTitle;
   const r = ROUTES.find((x) => x.path === currentPath) || ROUTES[0];
-  document.title = `${r.label} · ${brandTitle}`;
+  const currentTab = parseHash(location.hash).params.get('tab') || WORKSPACES[r.path]?.defaultTab || '';
+  const moduleLabel = moduleLabelForRoute(r.path, currentTab, navLabels);
+  document.title = `${moduleLabel} · ${brandTitle}`;
 }
 
 function updateStatusbar() {
@@ -887,9 +926,11 @@ function route(forceRemount = false) {
   currentView = r.view;
   updateNav();
 
+  const currentTab = resolved.params.get('tab') || WORKSPACES[r.path]?.defaultTab || '';
+  const moduleLabel = moduleLabelForRoute(r.path, currentTab, navLabels);
   const title = document.getElementById('tb-page-title');
-  if (title) title.textContent = r.label;
-  document.title = `${r.label} · ${brandTitle}`;
+  if (title) title.textContent = moduleLabel;
+  document.title = `${moduleLabel} · ${brandTitle}`;
 
   const main = document.getElementById('view');
   main.innerHTML = '';

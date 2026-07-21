@@ -48,8 +48,8 @@ def _kline_payload(*, key: str = "qfqday") -> str:
         "data": {
             "sz000001": {
                 key: [
-                    ["2026-07-09", "10.55", "10.49", "10.59", "10.43", "747191.00", {}, "0.38"],
-                    ["2026-07-10", "10.50", "10.45", "10.51", "10.40", "957320.00", {}, "0.49"],
+                    ["2026-07-09", "10.55", "10.49", "10.59", "10.43", "747191.00", {}, "0.38", "78321.45"],
+                    ["2026-07-10", "10.50", "10.45", "10.51", "10.40", "957320.00", {}, "0.49", "100123.45"],
                 ]
             }
         },
@@ -69,16 +69,41 @@ def test_tencent_daily_parser_preserves_ohlc_and_sixth_column() -> None:
         "h": 10.51,
         "l": 10.4,
         "v": 957_320.0,  # 腾讯数组第 6 列，没有×100，也没有换成成交额
+        "v_shares": 95_732_000.0,
+        "amount": 1_001_234_500.0,
         "source": "腾讯财经·前复权日K",
         "as_of": "2026-07-10",
         "fetched_at": "2026-07-12T12:00:00+08:00",
         "adjustment": "qfq",
-        "volume_unit": "腾讯K线第6列原量纲",
+        "volume_unit": "手",
+        "amount_unit": "元",
     }
     # 请求前复权时，未复权 day 不能被当成 qfqday。
     assert tencent_source._parse_daily_kline_payload(
         _kline_payload(key="day"), "sz000001", adjust="qfq"
     ) == []
+
+
+def test_tencent_daily_parser_normalizes_main_board_and_star_volume_units() -> None:
+    payload = {
+        "code": 0,
+        "data": {
+            "sh688001": {
+                "qfqday": [[
+                    "2026-07-20", "55.76", "47.80", "56.96", "45.89",
+                    "14234671.00", {}, "3.02", "70315.99", "",
+                ]],
+            },
+        },
+    }
+    row = tencent_source._parse_daily_kline_payload(
+        "kline_dayqfq=" + json.dumps(payload), "sh688001", adjust="qfq"
+    )[0]
+
+    assert row["volume_unit"] == "股"
+    assert row["v_shares"] == 14_234_671
+    assert row["amount"] == 703_159_900
+    assert row["amount"] / row["v_shares"] == pytest.approx(49.3977, rel=1e-4)
 
 
 def test_free_and_timing_daily_paths_use_pure_tencent_adapter(monkeypatch) -> None:

@@ -179,6 +179,9 @@ function injectStyle() {
   .ck2-top-row>.card{min-width:0}
   .ck2-top-row>.ck2-full{grid-column:1/-1}
   .ck2-mainline-card{margin-bottom:var(--gap)}
+  .ck2-mainline-card .card-head{flex-wrap:wrap}
+  #ck2-mainline-stamp{flex-wrap:wrap;justify-content:flex-end}
+  .ck2-mainline-regime{display:inline-flex;align-items:center;min-height:22px;padding:1px 7px;font-size:12px;font-weight:700;line-height:1.45;white-space:nowrap;color:var(--amber);background:var(--amber-dim,transparent);border:1px solid var(--amber-line,var(--amber));border-radius:var(--radius-sm)}
 
   .ck2-idx-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
   .ck2-idx{border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--panel-2);padding:8px 10px;min-width:0}
@@ -271,9 +274,6 @@ function injectStyle() {
   .ck2-sf .it:last-child{border-bottom:none} .ck2-sf .it:hover{background:var(--panel-2)}
   .ck2-sf .it .nm{font-weight:600;color:var(--text)} .ck2-sf .it .vv{font-family:var(--mono,monospace);font-weight:700}
 
-  .ck2-ml-rule{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:-1px 0 10px;padding:0 1px 9px;border-bottom:1px solid var(--border)}
-  .ck2-ml-rule .formula{font-size:13px;line-height:1.5;color:var(--text-3)}
-  .ck2-ml-rule .regime{flex:0 0 auto;font-size:12px;font-weight:700;color:var(--amber);background:var(--amber-dim,transparent);border:1px solid var(--amber-line,var(--amber));border-radius:4px;padding:2px 7px}
   .ck2-ml-withdraw{font-size:12px;line-height:1.5;color:var(--amber);background:var(--panel);border:1px dashed var(--amber-line,var(--amber));border-radius:5px;padding:6px 8px;margin:-2px 0 9px}
   .ck2-ml{display:grid;grid-template-columns:repeat(5,minmax(178px,1fr));gap:10px;overflow-x:auto;padding-bottom:2px}
   .ck2-ml .ml-card{display:flex;flex-direction:column;min-width:0;border:1px solid var(--border);border-top:3px solid var(--accent);border-radius:var(--radius-sm);background:var(--panel-2);padding:10px 11px}
@@ -342,6 +342,8 @@ function injectStyle() {
     .ck2-do-cell[data-kind="action"],.ck2-do-cell[data-kind="position"],.ck2-do-cell[data-kind="principle"]{border-left:0;border-top:1px solid var(--border);padding-left:0}
   }
   @media (max-width:760px){
+    .ck2-mainline-card .card-head{flex-direction:column}
+    #ck2-mainline-stamp{justify-content:flex-start;margin-left:14px}
     .ck2-sum-r{width:100%;justify-content:space-around}
     .ck2-do{padding:15px 15px 16px 19px}
     .ck2-do-head{align-items:flex-start}
@@ -354,7 +356,6 @@ function injectStyle() {
     .ck2-top-row,.ck2-limit-row{grid-template-columns:1fr}
     .ck2-idx-grid,.ck2-ls{grid-template-columns:repeat(2,1fr)}
     .ck2-sf{grid-template-columns:1fr}
-    .ck2-ml-rule{align-items:flex-start;flex-direction:column;gap:6px}
     .ck2-ml{grid-template-columns:1fr;overflow:visible}
     .ck2-ml .ml-card,.ck2-ml .ml-card:nth-child(n+4){grid-column:auto;min-width:0}
   }
@@ -975,8 +976,12 @@ async function loadMainlines() {
   clearTimeout(slow);
   if (g !== gen || !root) return;
   renderDownPool(d);
+  const marketState = d?.market_state || {};
+  const upRatio = marketState.up_ratio != null ? ` · 上涨宽度 ${fmtNum(Number(marketState.up_ratio) * 100, 0)}%` : '';
   const stamp = root.querySelector('#ck2-mainline-stamp');
-  if (stamp && d) stamp.innerHTML = dataStamp(d);
+  if (stamp && d) {
+    stamp.innerHTML = `${dataStamp(d)}<span class="ck2-mainline-regime">${escapeHtml(marketState.state || '环境待确认')}${upRatio}</span>`;
+  }
   const title = root.querySelector('#ck2-mainline-title');
   const productLabel = d?.time_scope?.product_label || '今日行业主线';
   if (title) title.textContent = `${productLabel} · 主线 / 次主线 / 活口 / 情绪链`;
@@ -987,22 +992,11 @@ async function loadMainlines() {
     body.innerHTML = emptyState('主线数据不足', why);
     return;
   }
-  const algo = d?.algorithm || {};
-  const marketState = d?.market_state || {};
-  const upRatio = marketState.up_ratio != null ? ` · 上涨宽度 ${fmtNum(Number(marketState.up_ratio) * 100, 0)}%` : '';
-  const sessionLabel = d?.time_scope?.session_label || '时点待确认';
-  const persistence = d?.persistence || {};
-  const persistenceText = persistence.status === 'accumulating'
-    ? `持续主线样本 ${fmtNum(persistence.covered_days || 0)}/${fmtNum(persistence.minimum_days || 3)} 日`
-    : `持续主线 ${Array.isArray(d?.persistent_mainlines) && d.persistent_mainlines.length ? '已确认' : '暂无'}`;
   const withdrawn = Array.isArray(d?.withdrawn_mainlines) ? d.withdrawn_mainlines : [];
   const withdrawnHtml = withdrawn.length
     ? `<div class="ck2-ml-withdraw">${withdrawn.map((item) => `${escapeHtml(item.status_label || '撤销观察')} · ${escapeHtml(item.name || '')}（${escapeHtml(item.reason || '')}）`).join('；')}</div>`
     : '';
-  body.innerHTML = `<div class="ck2-ml-rule">
-    <span class="formula" title="${escapeHtml([algo.mainline_gate, algo.secondary_gate, algo.active_gate, algo.emotion_gate, d?.time_scope?.confirmation_rule, d?.time_scope?.downgrade_rule, d?.time_scope?.revocation_rule, d?.time_scope?.role_change_rule, d?.catalyst_layer?.rule].filter(Boolean).join('；'))}">判定：容量25% · 相对强度25% · 宽度20% · 涨停梯队30% · 净流入权重 0 · 催化权重 0<br>${escapeHtml(sessionLabel)} · ${escapeHtml(persistenceText)} · 形成2档 / 降级1档 / 撤销2档</span>
-    <span class="regime">${escapeHtml(marketState.state || '环境待确认')}${upRatio}</span>
-  </div>${withdrawnHtml}<div class="ck2-ml">${sectors.map((s) => {
+  body.innerHTML = `${withdrawnHtml}<div class="ck2-ml">${sectors.map((s) => {
     const status = s?.status || 'formed';
     const kind = mainlineKind(s?.label, status);
     const cls = pctClass(s.change_pct);

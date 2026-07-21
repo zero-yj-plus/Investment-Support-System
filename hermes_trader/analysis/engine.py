@@ -864,8 +864,19 @@ class Engine:
             wl = self.store.watchlist()
             if wl:
                 def _enrich_watch():
-                    return [{**w, "实时行情": stock.quick_quote(w.get("code", "")) or "数据不全"}
-                            for w in wl[:20]]
+                    from . import watchlist_zones  # noqa: PLC0415
+
+                    selected = wl[:20]
+                    quotes = stock.quick_quotes([w.get("code", "") for w in selected])
+                    zones = self.store.watchlist_zones() if hasattr(self.store, "watchlist_zones") else {}
+                    enriched = []
+                    for item in selected:
+                        code = str(item.get("code") or "").strip().zfill(6)
+                        quote = quotes.get(code)
+                        merged = watchlist_zones.enrich_watch_item(item, zones.get(code), quote)
+                        merged["实时行情"] = quote or "数据不全"
+                        enriched.append(merged)
+                    return enriched
                 ctx["用户观察池(含理想买入区间/放弃价+实时价·据此排序与给触发条件)"] = await asyncio.to_thread(_enrich_watch)
             else:
                 ctx["用户观察池"] = "空（用户尚未添加任何观察标的）——本段须如实说明「观察池为空」，绝不编造观察标的"

@@ -1,4 +1,4 @@
-/* views/close.js — 交易节奏工作站「收盘复盘」(rtype=close · 母文档 §25)
+/* views/close.js — 交易节奏工作站「今日复盘」(rtype=close · 母文档 §25)
    ------------------------------------------------------------------
    收盘复盘不是复述行情，而是**验证与修正**：今日判断对不对 / 主线是否验证 /
    赚钱亏钱效应 / **昨日推荐是否有效** / AI 自我纠错 / 明日修正。
@@ -28,8 +28,7 @@ import {
 
 const view = makeReportView({
   rtype: 'close',
-  title: '收盘复盘',
-  sub: '15:30 · 验证今日判断 + 昨日推荐回验',
+  title: '今日复盘',
   notBefore: '15:30',
   topRender,
   bottomRender,
@@ -154,7 +153,7 @@ async function loadAdviceReview(host, alive) {
     box.innerHTML = `<div class="crv-soon">
       <div class="icn">${icon('check')}</div>
       <div class="st">还没有可回检的昨日建议</div>
-      <div class="sd">每个交易日收盘会按规则给你的持仓记一份处理倾向快照，<b>次日起</b>用真实价对账是否兑现、长期沉淀命中率。先去『持仓分析』保存持仓，并生成一次『收盘复盘』即可开启。</div>
+      <div class="sd">每个交易日收盘会按规则给你的持仓记一份处理倾向快照，<b>次日起</b>用真实价对账是否兑现、长期沉淀命中率。先去『持仓分析』保存持仓，并生成一次『今日复盘』即可开启。</div>
     </div>`;
     return;
   }

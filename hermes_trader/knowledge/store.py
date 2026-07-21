@@ -1406,6 +1406,37 @@ class Store:
     def watchlist(self) -> list[dict]:
         return self._read_json(self._watchlist_path, [])
 
+    @property
+    def _watchlist_zones_path(self) -> Path:
+        return self.root / "watchlist_zones.json"
+
+    def watchlist_zones(self) -> dict[str, dict]:
+        """当前派生区间快照；不是用户输入，也不覆盖观察池事实。"""
+        payload = self._read_json(self._watchlist_zones_path, {})
+        return payload if isinstance(payload, dict) else {}
+
+    def save_watchlist_zones(self, zones: dict[str, dict]) -> None:
+        clean = {
+            str(code).strip().zfill(6): row
+            for code, row in (zones or {}).items()
+            if isinstance(row, dict)
+        }
+        self._write_json(self._watchlist_zones_path, clean)
+
+    def upsert_watchlist_zone(self, code: str, zone: dict) -> None:
+        with self._lock:
+            zones = self.watchlist_zones()
+            zones[str(code).strip().zfill(6)] = zone
+            self._write_json(self._watchlist_zones_path, zones)
+
+    def delete_watchlist_zone(self, code: str) -> None:
+        normalized = str(code).strip().zfill(6)
+        with self._lock:
+            zones = self.watchlist_zones()
+            if normalized in zones:
+                zones.pop(normalized, None)
+                self._write_json(self._watchlist_zones_path, zones)
+
     def add_watch(self, item: dict) -> str:
         if not isinstance(item, dict):
             raise ValueError("观察池条目应为对象")

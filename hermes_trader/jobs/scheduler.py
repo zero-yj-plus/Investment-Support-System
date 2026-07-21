@@ -263,6 +263,46 @@ def build_scheduler(config, engine) -> AsyncIOScheduler:
             id="capital_snapshot", replace_existing=True, misfire_grace_time=120,
         )
 
+    # 观察池纯数字双周期区间：后台每 5 分钟刷新，普通 GET 只读快照，避免页面加载触发
+    # 每只股票两路历史行情的重型 N+1。波段计算会自动排除 15:05 前未收盘的当日日 K；
+    # 超短区间在新交易日生成前不会沿用旧结果。
+    async def _watchlist_zone_refresh() -> None:
+        if not store or not hasattr(store, "watchlist") or not hasattr(store, "save_watchlist_zones"):
+            return
+        if not await asyncio.to_thread(is_trade_day):
+            return
+        started = time.monotonic()
+        now = now_cn().strftime("%Y-%m-%d %H:%M:%S")
+        if hasattr(store, "record_job"):
+            store.record_job("watchlist_zones", last_run=now, last_status="running", last_error=None)
+        try:
+            from ..analysis import watchlist_zones  # noqa: PLC0415
+
+            result = await asyncio.to_thread(watchlist_zones.refresh_all, store)
+            if hasattr(store, "record_job"):
+                finished = now_cn().strftime("%Y-%m-%d %H:%M:%S")
+                store.record_job(
+                    "watchlist_zones", last_status="ok", last_ok=finished,
+                    last_finished=finished, last_duration_ms=_elapsed_ms(started),
+                    last_error=None, last_result=result,
+                )
+        except Exception as exc:  # noqa: BLE001 - 派生区间不能阻断主调度器
+            log.warning("观察池双周期区间刷新失败: %s", str(exc)[:180])
+            if hasattr(store, "record_job"):
+                store.record_job(
+                    "watchlist_zones", last_status="error",
+                    last_finished=now_cn().strftime("%Y-%m-%d %H:%M:%S"),
+                    last_duration_ms=_elapsed_ms(started), last_error=str(exc)[:300],
+                )
+
+    scheduler.add_job(
+        _watchlist_zone_refresh,
+        CronTrigger(day_of_week="mon-fri", hour="9-15", minute="*/5", timezone=config.timezone),
+        id="watchlist_zones", name="观察池双周期区间·每5分钟",
+        replace_existing=True, misfire_grace_time=120, coalesce=True, max_instances=1,
+        next_run_time=now_cn(),
+    )
+
     # 业绩预告掘金每日推送（config `forecast_mining.push_enabled` 门控，off-by-default → 未配置
     # 的客户零影响）。默认 20:30：预告公告集中在晚间落库，晚推能带上当晚新增；时点可 config 改。
     _fm = config.section("forecast_mining") if hasattr(config, "section") else {}

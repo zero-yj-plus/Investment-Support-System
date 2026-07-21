@@ -217,11 +217,12 @@ button { font-family: inherit; }
 .nav-item {
   position: relative;
   display: flex; align-items: center; gap: 14px;
-  padding: 13px 18px; margin: 2px 0;
+  min-height: 52px;
+  padding: 14px 18px; margin: 3px 0;
   color: var(--text-2);
   cursor: pointer;
   white-space: nowrap;
-  font-size: 14px;
+  font-size: 15px;
   border-left: 2px solid transparent;
   transition: background 0.13s, color 0.13s, border-color 0.13s;
   user-select: none;

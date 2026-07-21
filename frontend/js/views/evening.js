@@ -71,7 +71,6 @@ function injectStyle() {
 const view = makeReportView({
   rtype: 'evening',
   title: '次日策略',
-  sub: '19:30 · 明日计划 + 观察池排序',
   notBefore: '19:30',
   bottomRender,
 });

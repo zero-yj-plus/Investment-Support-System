@@ -22,3 +22,22 @@ def test_hotboard_is_lazy_loaded_as_a_visible_today_module() -> None:
 
     assert "hotboard: lazyView(() => import('./views/hotboard.js'), '涨停题材')" in source
     assert "import * as hotboard" not in source
+
+
+def test_hotboard_supports_descending_first_numeric_column_sorting() -> None:
+    source = VIEW.read_text(encoding="utf-8")
+
+    for field, label in [
+        ("price", "现价"),
+        ("board_count", "几天几板"),
+        ("suc_rate_pct", "封板率"),
+        ("seal_amount", "封单额"),
+    ]:
+        assert f"sortableHead('{field}', '{label}')" in source
+    assert "else { sortKey = key; sortDir = -1; }" in source
+    assert "if (left == null) return 1" in source
+    assert "if (right == null) return -1" in source
+    assert "aria-sort=" in source
+    assert "if (key === 'board_count') return boardCount(stock)" in source
+    assert "'↕'" in source
+    assert "hb-sort.is-active" in source

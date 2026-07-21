@@ -9,6 +9,8 @@ let root = null;
 let timers = [];
 let lastGood = null;
 let themeFilter = '';
+let sortKey = null;
+let sortDir = -1; // -1=降序 / 1=升序；新列首次点击按从高到低
 
 function injectStyle() {
   if (document.getElementById('hotboard-style')) return;
@@ -26,6 +28,18 @@ function injectStyle() {
   .hb-table-wrap{width:100%;overflow:auto}
   .hb-table{min-width:980px}
   .hb-table td,.hb-table th{padding:8px 10px;font-size:13px;white-space:nowrap}
+  .hb-table th.hb-sort-head{padding:4px 5px}
+  .hb-sort{appearance:none;display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:30px;
+    padding:4px 9px;border:1px solid var(--border-strong);border-radius:7px;background:var(--panel-2);color:var(--text-2);
+    font:inherit;font-weight:700;line-height:1;cursor:pointer;white-space:nowrap;box-shadow:0 1px 2px rgba(0,0,0,.12);
+    transition:border-color var(--t-fast),background var(--t-fast),color var(--t-fast),transform var(--t-fast)}
+  .hb-sort-icon{display:inline-grid;place-items:center;min-width:17px;height:17px;border-radius:4px;background:var(--panel-3);
+    color:var(--text-3);font-size:12px;font-family:var(--mono,monospace);line-height:1}
+  .hb-sort:hover{border-color:var(--amber-line);background:var(--accent-weak);color:var(--accent);transform:translateY(-1px)}
+  .hb-sort:hover .hb-sort-icon{color:var(--accent)}
+  .hb-sort.is-active{border-color:var(--amber-line);background:var(--accent-weak);color:var(--accent);box-shadow:0 0 0 1px var(--amber-line)}
+  .hb-sort.is-active .hb-sort-icon{background:var(--amber-line);color:var(--text)}
+  .hb-sort:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
   .hb-board{display:inline-flex;padding:2px 7px;border-radius:5px;background:var(--panel-2);font-size:12px}
   .hb-board.warm{color:var(--amber);background:var(--amber-dim)}
   .hb-board.hot{color:var(--up);background:var(--up-bg);font-weight:750}
@@ -67,6 +81,8 @@ export function unmount() {
   timers = [];
   root = null;
   themeFilter = '';
+  sortKey = null;
+  sortDir = -1;
 }
 
 function openDiagnosis(code) {
@@ -131,17 +147,49 @@ function boardCount(stock) {
   return match ? Number(match[1]) : 1;
 }
 
+function numericValue(stock, key) {
+  if (key === 'board_count') return boardCount(stock);
+  const raw = stock?.[key];
+  if (raw == null || (typeof raw === 'string' && !raw.trim())) return null;
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : null;
+}
+
+function defaultStockOrder(a, b) {
+  return boardCount(b) - boardCount(a)
+    || (numericValue(b, 'seal_amount') ?? -Infinity) - (numericValue(a, 'seal_amount') ?? -Infinity);
+}
+
+function sortedStocks(stocks) {
+  const rows = stocks.slice().sort(defaultStockOrder);
+  if (!sortKey) return rows;
+  return rows.sort((a, b) => {
+    const left = numericValue(a, sortKey);
+    const right = numericValue(b, sortKey);
+    if (left == null && right == null) return defaultStockOrder(a, b);
+    if (left == null) return 1;
+    if (right == null) return -1;
+    return sortDir * (left - right) || defaultStockOrder(a, b);
+  });
+}
+
+function sortableHead(key, label) {
+  const active = sortKey === key;
+  const ariaSort = active ? (sortDir < 0 ? 'descending' : 'ascending') : 'none';
+  const arrow = active ? (sortDir < 0 ? '↓' : '↑') : '↕';
+  const state = active ? `当前${sortDir < 0 ? '降序' : '升序'}` : '可排序';
+  return `<th class="hb-sort-head" aria-sort="${ariaSort}"><button class="hb-sort${active ? ' is-active' : ''}" type="button" data-sort="${key}" title="点击排序；首次按从高到低" aria-label="${label}排序，${state}"><span>${label}</span><span class="hb-sort-icon" aria-hidden="true">${arrow}</span></button></th>`;
+}
+
 function renderTable(stocks) {
   const body = root?.querySelector('#hb-body');
   const count = root?.querySelector('#hb-count');
   if (!body) return;
-  const rows = stocks
-    .filter((stock) => !themeFilter || splitThemes(stock.reason_type).includes(themeFilter))
-    .slice()
-    .sort((a, b) => boardCount(b) - boardCount(a) || (b.seal_amount || 0) - (a.seal_amount || 0));
+  const rows = sortedStocks(stocks
+    .filter((stock) => !themeFilter || splitThemes(stock.reason_type).includes(themeFilter)));
   if (count) count.textContent = `${rows.length} 只${themeFilter ? ` · ${themeFilter}` : ''}`;
   body.innerHTML = `<div class="hb-table-wrap"><table class="tbl hb-table">
-    <thead><tr><th class="l">代码</th><th class="l">名称</th><th>现价</th><th>涨幅</th><th>几天几板</th><th>板型</th><th>封板率</th><th>首封</th><th>封单额</th><th class="l">题材</th></tr></thead>
+    <thead><tr><th class="l">代码</th><th class="l">名称</th>${sortableHead('price', '现价')}<th>涨幅</th>${sortableHead('board_count', '几天几板')}<th>板型</th>${sortableHead('suc_rate_pct', '封板率')}<th>首封</th>${sortableHead('seal_amount', '封单额')}<th class="l">题材</th></tr></thead>
     <tbody>${rows.map((stock) => {
       const boards = boardCount(stock);
       const boardClass = boards >= 3 ? 'hot' : boards === 2 ? 'warm' : '';
@@ -158,5 +206,11 @@ function renderTable(stocks) {
         <td class="l hb-reason" title="${escapeHtml(stock.reason_type || '')}">${escapeHtml(stock.reason_type || '—')}</td>
       </tr>`;
     }).join('')}</tbody></table></div>`;
+  body.querySelectorAll('[data-sort]').forEach((button) => button.addEventListener('click', () => {
+    const key = button.dataset.sort;
+    if (sortKey === key) sortDir = -sortDir;
+    else { sortKey = key; sortDir = -1; }
+    renderTable(lastGood?.stocks || []);
+  }));
   body.querySelectorAll('[data-code]').forEach((button) => button.addEventListener('click', () => openDiagnosis(button.dataset.code)));
 }

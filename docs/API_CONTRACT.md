@@ -807,7 +807,25 @@ body `{"template_id":"d_xxx"}` 或 `{"prompt_template":"..."}`，加 `{"target_t
 
 status ∈ {ok, down, idle(尚未采集)}；`idle` 不代表不可用，只代表本进程尚未调用该类字段；`down` 表示最近一次调用失败，业务页应显示降级或缺失。channel 可为直连、境内中继、系统代理、TDX API 或腾讯直连；latency_ms 为最近一次调用耗时。
 
-## 16. 模拟执行 simulation
+## 16. 观察池双周期理想买入区间
+
+### GET /api/watchlist
+
+列表仍返回观察条目、实时 `quote`、确定性 `grade/status`，并新增：
+
+- `manual_target_low/manual_target_high`：用户原始手工覆盖值；均为空时才采用自动区间。
+- `target_low/target_high` 与 `effective_target_low/effective_target_high`：当前生效区间。手工任一端有值时来源为 `manual_override`，否则使用完整的自动超短线区间，来源为 `auto_ultra`；两者均不可用时为 `missing`。
+- `ideal_buy_zones.ultra`：1—3 个交易日超短线区间；盘中后台每 5 分钟重算。新交易日行情日期晚于快照日期时，旧超短区间立即失效，不自动沿用。
+- `ideal_buy_zones.swing`：3—10 个交易日波段区间；15:05 前排除尚未收盘的当日日 K。
+- 两个周期均返回 `state ∈ {complete,degraded,missing}`、`low/high`、`position ∈ {ABOVE_ZONE,IN_ZONE,BELOW_ZONE}`、`data_date`、`missing` 和可复算 `metrics`。数据不足 60 根完整前复权日线或 3 个交易日 5 分钟线时，对应区间必须为 `missing`，不得用 0 或猜测值补齐。
+
+自动算法只使用腾讯前复权日 K 与新浪 5 分钟 OHLCV/成交额；日 K 成交额从万元统一为元，成交量按科创板“股”、其他 A 股“手”归一为股。AI 不参与区间、位置或评级计算。
+
+### POST /api/watchlist/recalculate
+
+触发全观察池后台重算，立即返回 `{"ok":true,"zone_status":"queued"}`。新增或编辑观察条目也会自动排队计算；普通列表 GET 只读派生快照，不触发逐股历史行情 N+1。
+
+## 17. 模拟执行 simulation
 
 模拟执行只写客户数据目录下的本地 SQLite/WAL 账本，不包含券商适配器、账户凭据或真实委托接口。页面和接口始终返回 `simulation_only=true`、`broker_connected=false`。
 
@@ -845,7 +863,7 @@ status ∈ {ok, down, idle(尚未采集)}；`idle` 不代表不可用，只代�
 
 所有写接口都要求 8–160 位 `client_request_id` 并提供幂等重放；同一 ID 用于不同操作或不同内容返回 `409 idempotency_conflict`。
 
-## 17. 只读生产验收门禁
+## 18. 只读生产验收门禁
 
 运行：
 
@@ -855,7 +873,7 @@ python3 scripts/production_acceptance.py --base-url 127.0.0.1:18869
 
 脚本只发 GET，不触发任务、生成报告或发送消息。它核验服务与 8 个核心路由、`free_only`、付费源/Token、Agent 最小权限与最近完整运行、外部交付、北京时间/交易日、数据新鲜度和股票池完整性。退出码 `0` 表示所有阻断项通过，`2` 表示仍有上线阻断，`1` 表示验收程序自身失败；不能把 `warn` 或部分成功解释成完整上线就绪。
 
-## 18. 备份与恢复演练
+## 19. 备份与恢复演练
 
 工具只对显式绝对路径工作，备份带逐文件 SHA-256 清单；SQLite 使用在线快照，恢复只允许新的或空的目录，并在完成哈希与 `PRAGMA quick_check` 后原子落位。
 
