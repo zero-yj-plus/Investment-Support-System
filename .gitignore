@@ -12,7 +12,7 @@ secrets*
 *.pfx
 
 # Runtime and customer data
-data/
+/data/
 clients/
 *.db
 *.sqlite

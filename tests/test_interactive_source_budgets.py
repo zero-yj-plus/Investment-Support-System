@@ -113,6 +113,56 @@ def test_index_timing_prefers_bounded_tencent_kline(monkeypatch) -> None:
     assert timing._index_bars("sh000001") == rows
 
 
+def test_legu_market_activity_has_shared_budget_and_normalized_contract(monkeypatch) -> None:
+    class Frame:
+        empty = False
+
+        def iterrows(self):
+            rows = [
+                {"item": "上涨", "value": 2870},
+                {"item": "下跌", "value": 2219},
+                {"item": "平盘", "value": 109},
+                {"item": "涨停", "value": 120},
+                {"item": "跌停", "value": 28},
+                {"item": "统计日期", "value": "2026-07-21 15:00:00"},
+            ]
+            return iter(enumerate(rows))
+
+    class Ak:
+        @staticmethod
+        def stock_market_activity_legu():
+            return Frame()
+
+    captured = {}
+
+    def bounded(fn, *args, **kwargs):
+        captured.update(kwargs)
+        return fn(*args)
+
+    monkeypatch.setattr(market, "get_ak", lambda: Ak())
+    monkeypatch.setattr(market, "safe", bounded)
+
+    result = market.market_activity_legu.__wrapped__()
+
+    assert captured == {"label": "市场活跃度(乐咕)", "timeout": 10}
+    assert result == {
+        "up": 2870,
+        "down": 2219,
+        "flat": 109,
+        "limit_up": 120,
+        "limit_down": 28,
+        "data_time": "2026-07-21 15:00:00",
+        "source": "legulegu_market_activity",
+    }
+
+
+def test_timing_reuses_shared_legu_market_activity(monkeypatch) -> None:
+    expected = {"up": 10, "down": 5, "flat": 1, "limit_up": 2, "limit_down": 1}
+    monkeypatch.setattr(market, "market_activity_legu", lambda: expected)
+
+    assert timing._legu_breadth() is expected
+
+
 def test_fear_greed_consumes_only_existing_fundflow_snapshot(monkeypatch) -> None:
     monkeypatch.setattr(timing, "_legu_breadth", lambda: None)
     monkeypatch.setattr(timing, "_index_vol_factors", lambda: {

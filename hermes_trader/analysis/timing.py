@@ -33,7 +33,7 @@ import time
 from typing import Any
 
 from ..data import market
-from ..data.base import get_ak, safe, to_float, to_int, ts_str, ttl_cache, log
+from ..data.base import to_float, ts_str, ttl_cache, log
 from ..data import tencent_source as tc
 from ..data import tdx_api_source as tdxapi
 
@@ -301,26 +301,9 @@ def stock_timing(code: str) -> dict:
 
 # ----------------------------- 贪恐五因子（市场级） -----------------------------
 
-@ttl_cache(60, fail_seconds=600, offhours_seconds=6 * 3600)
 def _legu_breadth() -> dict | None:
-    """乐咕市场活跃度：涨跌家数 + 涨停/跌停（免费、独立东财）。失败 None。"""
-    ak = get_ak()
-    if ak is None:
-        return None
-    df = safe(ak.stock_market_activity_legu, label="市场活跃度(乐咕)", timeout=3)
-    if df is None or df.empty:
-        return None
-    try:
-        kv = {str(r["item"]): r["value"] for _, r in df.iterrows()}
-    except Exception:
-        return None
-    return {
-        "up": to_int(kv.get("上涨")),
-        "down": to_int(kv.get("下跌")),
-        "flat": to_int(kv.get("平盘")),
-        "limit_up": to_int(kv.get("涨停")),
-        "limit_down": to_int(kv.get("跌停")),
-    }
+    """复用市场层乐咕快照，避免 3 秒短预算污染共享数据源熔断器。"""
+    return market.market_activity_legu()
 
 
 def _index_vol_factors() -> dict:
