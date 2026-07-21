@@ -1,4 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
+import os
+import stat
 
 from hermes_trader.analysis.report_lineage import build_lineage, report_ref
 from hermes_trader.knowledge.store import Store
@@ -20,7 +22,11 @@ def test_report_store_is_create_once_and_records_content_fingerprint(tmp_path) -
     assert len(first["input_context_hash"]) == 64
     snapshot = tmp_path / first["input_snapshot_file"]
     assert snapshot.is_file()
-    assert snapshot.stat().st_mode & 0o777 == 0o600
+    mode = stat.S_IMODE(snapshot.stat().st_mode)
+    if os.name == "nt":
+        assert mode & stat.S_IWRITE
+    else:
+        assert mode == 0o600
     assert store.get_report("close", "2026-07-13")["content_md"] == "首版事实"
 
 
