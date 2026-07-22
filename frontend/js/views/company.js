@@ -508,6 +508,10 @@ export function mount(container) {
   managementInteractionsLoading = false;
 
   container.innerHTML = `
+    <div class="page-head">
+      <h2 class="page-title">公司研究</h2>
+      <span class="page-sub">结合公告、互动、行情与财务证据，开展单公司结构化深度研究</span>
+    </div>
     <div class="grid12">
       <section class="card sp-12">
         <div class="chain-hero">

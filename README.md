@@ -51,3 +51,5 @@ uv run --with pytest --with pytest-asyncio \
 文件完整性使用 `RELEASE_FILES.sha256` 校验；压缩包校验值见同目录的 `.sha256` 文件。
 
 uv run --with-requirements requirements.txt python -m hermes_trader --config config.yaml
+
+$env:TQ_BRIDGE_API_KEY='换成你自己的随机长字符串'

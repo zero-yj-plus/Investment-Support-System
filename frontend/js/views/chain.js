@@ -743,6 +743,10 @@ export function mount(container) {
   curStage = '';
 
   container.innerHTML = `${pageStyles()}
+    <div class="page-head">
+      <h2 class="page-title">产业链分析</h2>
+      <span class="page-sub">拆解需求、价值分配与产业卡点，映射相关公司及兑现证据</span>
+    </div>
     <div id="chain-v2" data-research-contract="${escapeHtml(CHAIN_RESEARCH_CONTRACT_VERSION)}">
       <section class="card">
         <div class="chain-hero">

@@ -122,7 +122,7 @@ export function mount(el) {
   injectStyle();
   root.innerHTML = `
     <div class="page-head">
-      <h2 class="page-title">盘中事件</h2>
+      <h2 class="page-title">舆情事件</h2>
       <span class="page-sub" id="senti-sub">看事件、关联A股和盘面状态</span>
       <div class="ph-extra"><span class="data-stamp" id="senti-stamp"></span></div>
     </div>

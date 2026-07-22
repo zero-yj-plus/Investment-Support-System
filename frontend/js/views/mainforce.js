@@ -19,6 +19,10 @@ export function mount(el) {
   root = el;
   injectMainforceStyle();
   root.innerHTML = `
+    <div class="page-head">
+      <h2 class="page-title">主力结构</h2>
+      <span class="page-sub">盘后交叉观察龙虎榜机构净买与行业资金流向，识别主力参与方向</span>
+    </div>
     <div class="grid12">
       <div class="card sp-12" id="mf-inst">
         <div class="card-head"><span class="card-title">龙虎榜机构净买 · INSTITUTION</span><span class="card-extra" id="mf-inst-stamp"></span></div>

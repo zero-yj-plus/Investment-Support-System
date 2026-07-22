@@ -228,6 +228,10 @@ export function mount(container) {
   root = container;
   injectStyle();
   container.innerHTML = `
+    <div class="page-head">
+      <h2 class="page-title">海外市场</h2>
+      <span class="page-sub">查询美股、港股实时行情与基础财务，辅助跨市场比较</span>
+    </div>
     <div class="card" style="padding:14px 16px">
       <div class="ov-bar" id="ov-bar"></div>
       <div class="ov-samples" id="ov-samples"></div>

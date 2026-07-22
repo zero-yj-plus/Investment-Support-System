@@ -570,6 +570,10 @@ export function mount(container) {
   ensureStyle();
 
   container.innerHTML = `
+    <div class="page-head">
+      <h2 class="page-title">个股诊断</h2>
+      <span class="page-sub">综合趋势、量价、动量、资金、行业与财务证据，形成条件化结论</span>
+    </div>
     <div class="dg-wrap">
       <section class="card" style="padding:16px 18px">
         <div class="dg-bar">

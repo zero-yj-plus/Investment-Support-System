@@ -193,6 +193,10 @@ export function mount(container) {
   curContent = '';
 
   container.innerHTML = `
+    <div class="page-head">
+      <h2 class="page-title">重组拆解</h2>
+      <span class="page-sub">基于公告或消息原文拆解交易方案、整合逻辑、估值影响与风险</span>
+    </div>
     <div class="grid12">
       <section class="card sp-12">
         <div class="chain-hero">

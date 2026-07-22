@@ -832,7 +832,7 @@ export function mount(container) {
 
   container.innerHTML = `
     <style>
-      #chat-phase5 { display:flex; gap:14px; height:calc(100dvh - var(--topbar-h) - var(--statusbar-h,0px) - 108px); min-height:640px; position:relative; }
+      #chat-phase5 { display:flex; gap:14px; height:calc(100dvh - var(--topbar-h) - var(--statusbar-h,0px) - 157px); min-height:640px; position:relative; }
       #chat-phase5 .chat-convs {
         flex:0 0 220px; width:220px; display:flex; flex-direction:column; min-height:0;
         background:var(--panel,#14161c); border:1px solid var(--border); border-radius:12px;
@@ -951,7 +951,7 @@ export function mount(container) {
         }
       }
       @media (max-width:768px) {
-        #chat-phase5 { gap:0; height:calc(100dvh - var(--topbar-h) - 24px); min-height:0; }
+        #chat-phase5 { gap:0; height:calc(100dvh - var(--topbar-h) - 84px); min-height:0; }
         #chat-phase5 .chat-convs {
           position:absolute; z-index:20; left:8px; top:8px; bottom:8px;
           width:min(300px,calc(100% - 16px)); flex-basis:min(300px,calc(100% - 16px));
@@ -989,6 +989,10 @@ export function mount(container) {
         #chat-phase5 .send-btn span { display:none; }
       }
     </style>
+    <div class="page-head">
+      <h2 class="page-title">问股</h2>
+      <span class="page-sub">结合真实行情与治理证据，回答个股、持仓及市场问题</span>
+    </div>
     <div class="chat-shell history-collapsed" id="chat-phase5">
       <aside class="chat-convs" id="chat-convs" aria-label="历史对话">
         <div class="conv-head">

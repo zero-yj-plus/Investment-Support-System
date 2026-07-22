@@ -9,8 +9,15 @@ NAVIGATION = ROOT / "frontend" / "js" / "navigation.js"
 COCKPIT = ROOT / "frontend" / "js" / "views" / "cockpit.js"
 HOLDINGS = ROOT / "frontend" / "js" / "views" / "holdings.js"
 FEATURES = ROOT / "frontend" / "js" / "views" / "features.js"
+CAPITAL = ROOT / "frontend" / "js" / "views" / "capital.js"
+MAINFORCE = ROOT / "frontend" / "js" / "views" / "mainforce.js"
+SENTI = ROOT / "frontend" / "js" / "views" / "senti.js"
 CHAT = ROOT / "frontend" / "js" / "views" / "chat.js"
 DIAGNOSIS = ROOT / "frontend" / "js" / "views" / "diagnosis.js"
+CHAIN = ROOT / "frontend" / "js" / "views" / "chain.js"
+COMPANY = ROOT / "frontend" / "js" / "views" / "company.js"
+OVERSEAS = ROOT / "frontend" / "js" / "views" / "overseas.js"
+RESTRUCTURING = ROOT / "frontend" / "js" / "views" / "restructuring.js"
 
 
 def test_background_freshness_never_remounts_the_current_workspace() -> None:
@@ -107,6 +114,39 @@ def test_mainline_research_has_a_page_title_and_decision_oriented_subtitle() -> 
     assert '<h2 class="page-title">主线深研</h2>' in source
     assert "交叉验证题材赚钱效应、交易拥挤度、持续性与龙头梯队" in source
     assert "识别当日主线与分歧风险" in source
+
+
+def test_capital_and_mainforce_views_have_page_titles_and_explanatory_subtitles() -> None:
+    capital = CAPITAL.read_text(encoding="utf-8")
+    mainforce = MAINFORCE.read_text(encoding="utf-8")
+
+    assert '<h2 class="page-title">资金追踪</h2>' in capital
+    assert "追踪板块与热门股的主力资金日内流向" in capital
+    assert '<h2 class="page-title">主力结构</h2>' in mainforce
+    assert "盘后交叉观察龙虎榜机构净买与行业资金流向" in mainforce
+
+
+def test_sentiment_event_view_uses_the_navigation_label_as_its_page_title() -> None:
+    source = SENTI.read_text(encoding="utf-8")
+
+    assert '<h2 class="page-title">舆情事件</h2>' in source
+    assert '<h2 class="page-title">盘中事件</h2>' not in source
+
+
+def test_research_center_views_have_page_titles_and_explanatory_subtitles() -> None:
+    pages = (
+        (CHAT, "问股", "结合真实行情与治理证据"),
+        (DIAGNOSIS, "个股诊断", "综合趋势、量价、动量、资金、行业与财务证据"),
+        (CHAIN, "产业链分析", "拆解需求、价值分配与产业卡点"),
+        (COMPANY, "公司研究", "结合公告、互动、行情与财务证据"),
+        (OVERSEAS, "海外市场", "查询美股、港股实时行情与基础财务"),
+        (RESTRUCTURING, "重组拆解", "基于公告或消息原文拆解交易方案"),
+    )
+
+    for path, title, subtitle in pages:
+        source = path.read_text(encoding="utf-8")
+        assert f'<h2 class="page-title">{title}</h2>' in source
+        assert subtitle in source
 
 
 def test_topbar_clock_displays_beijing_time_to_the_second() -> None:

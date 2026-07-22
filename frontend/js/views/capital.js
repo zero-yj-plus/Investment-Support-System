@@ -23,6 +23,10 @@ export function mount(el) {
   mode = 'sectors';
   lastData = null;
   root.innerHTML = `
+    <div class="page-head">
+      <h2 class="page-title">资金追踪</h2>
+      <span class="page-sub">追踪板块与热门股的主力资金日内流向，识别资金聚焦、扩散与分歧</span>
+    </div>
     <div class="grid12">
       <div class="card sp-12" id="cap-chart-card">
         <div class="card-head">
