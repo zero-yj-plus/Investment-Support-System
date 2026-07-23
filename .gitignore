@@ -38,6 +38,7 @@ build/
 
 # Frontend dependencies and editor files
 node_modules/
+frontend-vue/audit-output/
 .idea/
 .vscode/
 

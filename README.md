@@ -6,6 +6,8 @@
 
 - `hermes_trader/`：FastAPI 后端、确定性分析、数据契约、任务与可选 AI 网关。
 - `frontend/`：原生 JavaScript SPA。
+- `frontend-vue/`：Vue 3 + TypeScript 决策总览重构试验；尚未替换生产静态前端。
+- `design-system/`：重构页面的设计令牌、组件规则和页面级约束。
 - `scripts/`：数据探测、备份恢复、受限模型网关与生产验收脚本。
 - `tests/`：不依赖任何现有客户扩展的母版测试。
 - `docs/`：通用 API、MCP 与审计说明。
@@ -23,6 +25,24 @@ chmod 600 config.yaml .env
 ```
 
 默认访问地址：`http://127.0.0.1:18869`。
+
+### Vue 决策总览（并行试验）
+
+先启动 FastAPI 后端，再在另一个终端运行：
+
+```bash
+cd frontend-vue
+npm install
+npm run dev
+```
+
+开发地址为 `http://127.0.0.1:5173`，Vite 会把 `/api` 代理到
+`http://127.0.0.1:18869`。该目录当前用于逐页迁移和验收，不改变生产入口 `frontend/`。
+
+```bash
+npm run build
+npm run audit:ui
+```
 
 ### Windows 本地通达信 TQ 桥接
 

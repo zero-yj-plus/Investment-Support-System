@@ -26,6 +26,7 @@
 | AI 接入 | OpenAI 兼容 `/v1/chat/completions`；Hermes 网关为可选集成 |
 | Agent 工具 | FastMCP，只读工具为默认，维护型写入默认关闭 |
 | 前端 | 原生 ES Modules、Hash Router、ECharts、Marked、html2canvas、jsPDF |
+| Vue 重构试验 | `frontend-vue/`：Vue 3、TypeScript、Vite；已迁移决策总览、盘前、尾盘、复盘与涨停题材，尚未接管生产入口 |
 | 测试 | pytest、pytest-asyncio；大量契约测试直接检查 Python、API 和前端源码语义 |
 | 部署脚本 | 主要是 Bash/Linux 形态；另有跨平台 Python 运维脚本 |
 
@@ -110,6 +111,8 @@ flowchart LR
 | --- | --- | --- |
 | `hermes_trader/` | 后端、分析、数据、Agent、任务、MCP、持久化 | 是，核心源码 |
 | `frontend/` | 原生 JS SPA、CSS、内置第三方前端库 | 自有源码可改；`vendor/` 谨慎 |
+| `frontend-vue/` | Vue 决策总览并行重构、类型定义和 UI 自动审计 | 可改；迁移完成前不得直接替换 `frontend/` |
+| `design-system/` | Vue 重构的设计令牌、组件规则和页面覆盖 | 视觉或交互规则变化时同步更新 |
 | `tests/` | 81 个契约/回归测试文件 | 改功能时同步补测 |
 | `scripts/` | 验收、备份、TDX 探测、受限 Hermes 启动脚本 | 运维逻辑，可改但需独立验证 |
 | `docs/` | API、MCP、安全审计说明 | 契约变化时必须同步 |
@@ -372,6 +375,34 @@ flowchart LR
 | `phosphor/LICENSE` | Phosphor 许可文本。 |
 
 不要手工格式化或局部修改压缩库；升级应替换完整上游文件并核对许可证、版本和 `index.html` 缓存参数。
+
+### 8.5 Vue 决策工作台试验 `frontend-vue/`
+
+该目录与生产 `frontend/` 并存，目前不由 FastAPI 静态挂载。技术栈为 Vue 3、TypeScript、
+Vite。首屏继续复用 `/api/shell-status`、`/api/pulse`、`/api/market/overview_cached`、`/api/sysrisk` 和
+`/api/market/mainlines`；视口附近按需加载 `/api/sentiment/today`、`/api/market/flow`、
+`/api/market/stockflow`、`/api/market/sectors` 和 `/api/market/multiperiod`。盘前页读取定稿
+`/api/reports/morning` 与独立的 `/api/market/flow` 盘中验证，并保留生成/推送能力。接口失败必须局部降级且不得生成示例数字。
+今日复盘页读取 `/api/reports/close`、`/api/holdings/advice-review` 与追加式推荐回验接口，分别呈现收盘风险定格、昨日建议对账和 T0/T1/T2/T5 留痕；各请求独立降级。
+涨停题材页只读取独立口径 `/api/market/limitup/themes`，展示题材可复核计数和涨停股明细，不与驾驶舱主涨停池混算；加载、真实空数组、降级和接口失败分别呈现。
+
+| 文件 / 目录 | 说明 |
+| --- | --- |
+| `src/App.vue` | 决策工作台应用壳、Hash 页面切换、导航和主题。 |
+| `src/components/` | 决策总览卡片、盘前定格快照、安全 Markdown 报告、章节目录和共享图标/状态组件。 |
+| `src/components/CloseReview*.vue`、`CloseAdviceReview.vue`、`CloseRecommendationReview.vue` | 今日复盘的收盘结论、持仓建议对账、推荐留痕和正式报告工作区。 |
+| `src/components/Hotboard*.vue` | 涨停题材结论、题材筛选和响应式涨停股明细。 |
+| `src/composables/useDecisionOverview.ts` | 并行请求、超时、刷新、可见性恢复和卸载清理。 |
+| `src/composables/useMarketEvidence.ts` | 盘面证据与深度结构的延迟请求、独立降级、刷新和卸载清理。 |
+| `src/composables/usePremarketReport.ts` | 盘前报告读取、资金验证、SSE 生成、推送和独立请求/定时器清理。 |
+| `src/composables/useCloseReview.ts` | 今日复盘报告、策略自证与推荐回验的独立请求、SSE 动作、局部降级和卸载清理。 |
+| `src/composables/useHotboard.ts` | 涨停题材独立请求、刷新、可见性恢复、缺失语义和卸载清理。 |
+| `src/utils/reportMarkdown.ts` | 把受治理报告 Markdown 解析为安全的 Vue 渲染块和章节目录，不使用原始 HTML 注入。 |
+| `src/styles.css` | 深浅主题、响应式断点、焦点和 reduced-motion 规则。 |
+| `scripts/audit-ui.mjs` | 使用本机 Chrome + axe-core 检查已迁移页面的 375/768/1024/1440 布局、深浅主题、关键状态和 WCAG。 |
+
+设计来源见 `design-system/wudi-decision-console/MASTER.md` 和页面覆盖文件。
+构建运行 `npm run build`；自动 UI 审计运行 `npm run audit:ui`。
 
 ## 9. 运维脚本 `scripts/`
 
