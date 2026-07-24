@@ -26,7 +26,7 @@
 | AI 接入 | OpenAI 兼容 `/v1/chat/completions`；Hermes 网关为可选集成 |
 | Agent 工具 | FastMCP，只读工具为默认，维护型写入默认关闭 |
 | 前端 | 原生 ES Modules、Hash Router、ECharts、Marked、html2canvas、jsPDF |
-| Vue 重构试验 | `frontend-vue/`：Vue 3、TypeScript、Vite；已迁移决策总览、盘前、尾盘、复盘与涨停题材，尚未接管生产入口 |
+| Vue 重构试验 | `frontend-vue/`：Vue 3、TypeScript、Vite；已迁移决策总览、盘前、尾盘、复盘、次日策略与涨停题材，尚未接管生产入口 |
 | 测试 | pytest、pytest-asyncio；大量契约测试直接检查 Python、API 和前端源码语义 |
 | 部署脚本 | 主要是 Bash/Linux 形态；另有跨平台 Python 运维脚本 |
 
@@ -387,6 +387,7 @@ Vite。首屏继续复用 `/api/shell-status`、`/api/pulse`、`/api/market/over
 `/api/market/stockflow`、`/api/market/sectors` 和 `/api/market/multiperiod`。盘前页读取定稿
 `/api/reports/morning` 与独立的 `/api/market/flow` 盘中验证，并保留生成/推送能力。接口失败必须局部降级且不得生成示例数字。
 今日复盘页读取 `/api/reports/close`、`/api/holdings/advice-review` 与追加式推荐回验接口，分别呈现收盘风险定格、昨日建议对账和 T0/T1/T2/T5 留痕；各请求独立降级。
+次日策略页读取 `/api/reports/evening` 与 `/api/watchlist`，展示 19:30 风险底座、明日观察池触发条件、尾盘/收盘定稿 lineage 和正式报告；不在浏览器中重算风险、评级或价格区间。
 涨停题材页只读取独立口径 `/api/market/limitup/themes`，展示题材可复核计数和涨停股明细，不与驾驶舱主涨停池混算；加载、真实空数组、降级和接口失败分别呈现。
 
 | 文件 / 目录 | 说明 |
@@ -394,6 +395,7 @@ Vite。首屏继续复用 `/api/shell-status`、`/api/pulse`、`/api/market/over
 | `src/App.vue` | 决策工作台应用壳、Hash 页面切换、导航和主题。 |
 | `src/components/` | 决策总览卡片、盘前定格快照、安全 Markdown 报告、章节目录和共享图标/状态组件。 |
 | `src/components/CloseReview*.vue`、`CloseAdviceReview.vue`、`CloseRecommendationReview.vue` | 今日复盘的收盘结论、持仓建议对账、推荐留痕和正式报告工作区。 |
+| `src/components/Tomorrow*.vue`、`src/composables/useTomorrowStrategy.ts` | 次日策略的风险底座、观察池、上游定稿来源锁、正式报告和独立请求生命周期。 |
 | `src/components/Hotboard*.vue` | 涨停题材结论、题材筛选和响应式涨停股明细。 |
 | `src/composables/useDecisionOverview.ts` | 并行请求、超时、刷新、可见性恢复和卸载清理。 |
 | `src/composables/useMarketEvidence.ts` | 盘面证据与深度结构的延迟请求、独立降级、刷新和卸载清理。 |

@@ -13,6 +13,7 @@ import RiskOverview from './components/RiskOverview.vue'
 import SidebarNavigation from './components/SidebarNavigation.vue'
 import TailReportPage from './components/TailReportPage.vue'
 import TimingPage from './components/TimingPage.vue'
+import TomorrowStrategyPage from './components/TomorrowStrategyPage.vue'
 import { useDecisionOverview } from './composables/useDecisionOverview'
 import { findActiveNavigation } from './navigation'
 
@@ -26,6 +27,7 @@ const tailPage = ref<InstanceType<typeof TailReportPage> | null>(null)
 const closeReviewPage = ref<InstanceType<typeof CloseReviewPage> | null>(null)
 const hotboardPage = ref<InstanceType<typeof HotboardPage> | null>(null)
 const timingPage = ref<InstanceType<typeof TimingPage> | null>(null)
+const tomorrowPage = ref<InstanceType<typeof TomorrowStrategyPage> | null>(null)
 const routePath = ref('today')
 const routeTab = ref('decision')
 const sidebarCollapsed = ref(false)
@@ -37,16 +39,17 @@ let clockTimer: ReturnType<typeof setInterval> | null = null
 const isPremarket = computed(() => routePath.value === 'premarket' && routeTab.value === 'report')
 const isTailDecision = computed(() => routePath.value === 'tail' && routeTab.value === 'decision')
 const isCloseReview = computed(() => routePath.value === 'review' && routeTab.value === 'close')
+const isTomorrowStrategy = computed(() => routePath.value === 'review' && routeTab.value === 'tomorrow')
 const isDecisionOverview = computed(() => routePath.value === 'today' && routeTab.value === 'decision')
 const isHotboard = computed(() => routePath.value === 'today' && routeTab.value === 'hotboard')
 const isTiming = computed(() => routePath.value === 'today' && routeTab.value === 'timing')
 const activeNavigation = computed(() => findActiveNavigation(routePath.value, routeTab.value))
 const moduleTitle = computed(() => activeNavigation.value?.group.label || (routePath.value === 'settings' ? '系统设置' : '交易工作台'))
 const pageTitle = computed(() => activeNavigation.value?.child.label || (routePath.value === 'settings' ? '系统设置' : '页面迁移中'))
-const pageRefreshing = computed(() => isHotboard.value || isTiming.value
+const pageRefreshing = computed(() => isHotboard.value || isTiming.value || isTomorrowStrategy.value
   ? reportRefreshing.value
   : refreshing.value || reportRefreshing.value)
-const pageBusy = computed(() => isHotboard.value || isTiming.value
+const pageBusy = computed(() => isHotboard.value || isTiming.value || isTomorrowStrategy.value
   ? reportRefreshing.value
   : loading.value || pageRefreshing.value)
 
@@ -144,6 +147,10 @@ async function refreshCurrentPage() {
   }
   if (isTiming.value && timingPage.value) {
     await Promise.resolve(timingPage.value.refresh())
+    return
+  }
+  if (isTomorrowStrategy.value && tomorrowPage.value) {
+    await Promise.resolve(tomorrowPage.value.refresh())
     return
   }
 
@@ -256,6 +263,12 @@ watch(pageTitle, (value) => { document.title = `${value} · W.U.D.I.` }, { immed
         <CloseReviewPage
           v-else-if="isCloseReview"
           ref="closeReviewPage"
+          @refresh-state="reportRefreshing = $event"
+        />
+
+        <TomorrowStrategyPage
+          v-else-if="isTomorrowStrategy"
+          ref="tomorrowPage"
           @refresh-state="reportRefreshing = $event"
         />
 

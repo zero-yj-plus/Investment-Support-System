@@ -360,6 +360,92 @@ const fixtures = {
 
 下一交易日先重新确认风险等级、集合竞价与资金承接。接口缺失保持缺失，不使用零值或推测值补齐。`,
   },
+  '/api/reports/evening': {
+    ok: true,
+    rtype: 'evening',
+    date: '2026-07-22',
+    title: '次日策略（供 2026-07-23 使用）',
+    created_at: '2026-07-22 19:31:08',
+    report_version: 1,
+    content_hash: '7c4d129ef0731a8d45e7e26ca5d0b317',
+    pushed: true,
+    claim_validation: { status: 'passed', ok: true },
+    advice_governance: { status: 'passed', proposal_only: true },
+    input_lineage: {
+      schema_version: 'daily-report-lineage-v1',
+      trade_day: '2026-07-22',
+      lineage_hash: '05f1ac933e38e10d930f8c988fb15d68',
+      sources: [
+        { rtype: 'tail', trade_day: '2026-07-22', content_id: 'report:tail:2026-07-22', version: 3, content_hash: '3b2c711d5e044c1bb7c091b8fd6826ae', created_at: '2026-07-22 14:52:18' },
+        { rtype: 'close', trade_day: '2026-07-22', content_id: 'report:close:2026-07-22', version: 1, content_hash: '91ab74f2d6068b3d3de74b501e138b92', created_at: '2026-07-22 15:31:26' },
+      ],
+      evidence: [],
+    },
+    cockpit: {
+      as_of: '2026-07-22 19:30',
+      command: {
+        risk_level: 3,
+        level_name: '中等风险',
+        today_action: '明日只核对计划内标的是否进入真实区间，开盘前不新增计划外风险。',
+        position_cap: '总仓不超过 40%',
+        first_principle: '先确认集合竞价与主线承接，不到计划价格不动手。',
+        forbid: ['不追高开一致', '不临时抬高买点', '关键证据缺失时不开新仓'],
+      },
+    },
+    content_md: `# 次日策略 · 2026-07-22（供 2026-07-23 使用）
+
+> 建议治理：以下个股仅为候选提案、待触发观察，不计入胜率；实际动作须以明日服务端风险闸和价格条件为准。
+
+## 一、明日基调
+
+**中性偏谨慎，先确认主线承接再行动。** 今日结构轮动延续，尾盘没有形成可无条件外推的进攻信号。
+
+## 二、明日风险等级预判
+
+风险底座为 3 级。明日主要观察高位分歧是否扩散、主线资金是否续流；任一关键数据缺失时不扩大风险。
+
+## 三、明日仓位上限
+
+总仓不超过 40%；单一候选必须通过价格条件和服务端风险闸，不因高开而提高仓位。
+
+## 四、明日重点方向
+
+只跟踪今日已经形成容量承接的方向，开盘后以真实资金续流确认，不从晚间消息直接生成买入结论。
+
+## 五、不能碰方向
+
+- 不追高开一致和后排跟风。
+- 不参与关键价格证据缺失的标的。
+- 不把候选提案当作正式建议。
+
+## 六、确定性策略
+
+| 观察对象 | 触发条件 | 放弃条件 | 仓位提案 |
+| --- | --- | --- | --- |
+| 计划内候选 | 回踩进入服务端区间且承接确认 | 高开急拉或证据缺失 | 待风险闸 |
+
+## 七、高盈亏比策略
+
+本轮没有足够真实证据支持额外博弈标的，保持缺失，不以示例股票补位。
+
+## 八、趋势票
+
+暂无通过完整价格证据核验的新增趋势候选。
+
+## 九、持仓处理
+
+现有持仓只按已定格处理原则执行；明日开盘后重新核对价格条件。
+
+## 十、观察池排序
+
+观察池按服务端 A—E 评级核对，A 级也只代表接近区间，不代表可直接买入。
+
+## 十一、三种剧本
+
+- **强于预期**：主线放量承接且风险未升高，只执行计划内条件。
+- **符合预期**：维持震荡分化，等待价格进入区间。
+- **弱于预期**：高位分歧扩散或关键证据缺失，停止新增风险暴露。`,
+  },
   '/api/holdings/advice-review': {
     ok: true,
     base_date: '2026-07-21',
@@ -426,6 +512,7 @@ const auditedPages = [
   { name: 'premarket', hash: '#/premarket?tab=report', titleSelector: '#premarket-page-title' },
   { name: 'tail', hash: '#/tail?tab=decision', titleSelector: '#tail-page-title' },
   { name: 'review', hash: '#/review?tab=close', titleSelector: '#close-review-page-title' },
+  { name: 'tomorrow', hash: '#/review?tab=tomorrow', titleSelector: '#tomorrow-page-title' },
 ]
 
 await mkdir(outputDir, { recursive: true })
@@ -696,6 +783,103 @@ try {
   })
   await reviewPartialPage.close()
 
+  const tomorrowLoadingPage = await browser.newPage({ viewport: { width: 375, height: 812 }, deviceScaleFactor: 1 })
+  const tomorrowLoadingErrors = []
+  tomorrowLoadingPage.on('pageerror', (error) => tomorrowLoadingErrors.push(error.message))
+  await tomorrowLoadingPage.addInitScript(() => localStorage.setItem('wudi-vue-theme', 'dark'))
+  await tomorrowLoadingPage.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    if (['/api/reports/evening', '/api/watchlist'].includes(path)) {
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 1800))
+    }
+    const body = fixtures[path]
+    return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
+  })
+  await tomorrowLoadingPage.goto('http://127.0.0.1:4175/#/review?tab=tomorrow', { waitUntil: 'domcontentloaded' })
+  await tomorrowLoadingPage.waitForSelector('.tomorrow-loading')
+  await tomorrowLoadingPage.addScriptTag({ content: axeSource })
+  const tomorrowLoadingAxe = await tomorrowLoadingPage.evaluate(async () => window.axe.run(document, {
+    runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+  }))
+  await tomorrowLoadingPage.screenshot({ path: resolve(outputDir, 'tomorrow-loading-375.png'), fullPage: true })
+  report.push({
+    page: 'tomorrow', scenario: 'loading',
+    tomorrowLoadingStateComplete: await tomorrowLoadingPage.locator('.tomorrow-loading').isVisible(),
+    pageErrors: tomorrowLoadingErrors,
+    violations: tomorrowLoadingAxe.violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help, nodes: item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })),
+  })
+  await tomorrowLoadingPage.close()
+
+  const tomorrowEmptyPage = await browser.newPage({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 1 })
+  const tomorrowEmptyErrors = []
+  tomorrowEmptyPage.on('pageerror', (error) => tomorrowEmptyErrors.push(error.message))
+  await tomorrowEmptyPage.addInitScript(() => localStorage.setItem('wudi-vue-theme', 'dark'))
+  await tomorrowEmptyPage.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    let body = fixtures[path]
+    if (path === '/api/reports/evening') body = { ok: false, error: '审计场景：该日期暂无次日策略定稿' }
+    if (path === '/api/watchlist') body = { ok: true, ts: '2026-07-22 19:31:20', items: [], missing: [] }
+    return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
+  })
+  await tomorrowEmptyPage.goto('http://127.0.0.1:4175/#/review?tab=tomorrow', { waitUntil: 'networkidle' })
+  await tomorrowEmptyPage.addScriptTag({ content: axeSource })
+  const tomorrowEmptyState = await tomorrowEmptyPage.evaluate(() => {
+    const text = document.body.innerText
+    return {
+      report: text.includes('次日策略尚未定稿'),
+      watchlist: text.includes('观察池返回真实空数组'),
+      risk: text.includes('风险缺失'),
+      health: text.includes('上游定稿不完整'),
+      noZeroFill: !text.includes('风险 0 级'),
+    }
+  })
+  const tomorrowEmptyAxe = await tomorrowEmptyPage.evaluate(async () => window.axe.run(document, {
+    runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+  }))
+  await tomorrowEmptyPage.screenshot({ path: resolve(outputDir, 'tomorrow-empty-1440.png'), fullPage: true })
+  report.push({
+    page: 'tomorrow', scenario: 'empty', tomorrowEmptyState,
+    tomorrowEmptyStateComplete: Object.values(tomorrowEmptyState).every(Boolean),
+    pageErrors: tomorrowEmptyErrors,
+    violations: tomorrowEmptyAxe.violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help, nodes: item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })),
+  })
+  await tomorrowEmptyPage.close()
+
+  const tomorrowPartialPage = await browser.newPage({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 1 })
+  const tomorrowPartialErrors = []
+  tomorrowPartialPage.on('pageerror', (error) => tomorrowPartialErrors.push(error.message))
+  await tomorrowPartialPage.addInitScript(() => localStorage.setItem('wudi-vue-theme', 'dark'))
+  await tomorrowPartialPage.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    if (path === '/api/watchlist') {
+      return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: '审计场景：观察池轻量报价当前不可达' }) })
+    }
+    const body = fixtures[path]
+    return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
+  })
+  await tomorrowPartialPage.goto('http://127.0.0.1:4175/#/review?tab=tomorrow', { waitUntil: 'networkidle' })
+  await tomorrowPartialPage.addScriptTag({ content: axeSource })
+  const tomorrowPartialState = await tomorrowPartialPage.evaluate(() => {
+    const text = document.body.innerText
+    return {
+      reportSurvives: text.includes('次日策略（供 2026-07-23 使用）') && text.includes('三种剧本'),
+      localFailure: text.includes('明日观察池暂不可用') && text.includes('观察池轻量报价当前不可达'),
+      healthSurvives: text.includes('尾盘定稿') && text.includes('收盘复盘') && text.includes('请求失败'),
+      retry: [...document.querySelectorAll('button')].some((button) => button.textContent?.includes('重试')),
+    }
+  })
+  const tomorrowPartialAxe = await tomorrowPartialPage.evaluate(async () => window.axe.run(document, {
+    runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+  }))
+  await tomorrowPartialPage.screenshot({ path: resolve(outputDir, 'tomorrow-partial-failure-1440.png'), fullPage: true })
+  report.push({
+    page: 'tomorrow', scenario: 'partial-failure', tomorrowPartialState,
+    tomorrowPartialStateComplete: Object.values(tomorrowPartialState).every(Boolean),
+    pageErrors: tomorrowPartialErrors,
+    violations: tomorrowPartialAxe.violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help, nodes: item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })),
+  })
+  await tomorrowPartialPage.close()
+
   const hotboardLoadingPage = await browser.newPage({ viewport: { width: 375, height: 812 }, deviceScaleFactor: 1 })
   const hotboardLoadingErrors = []
   hotboardLoadingPage.on('pageerror', (error) => hotboardLoadingErrors.push(error.message))
@@ -959,6 +1143,9 @@ const failed = report.some((item) =>
   || item.loadingStateComplete === false
   || item.reviewEmptyStateComplete === false
   || item.reviewPartialStateComplete === false
+  || item.tomorrowLoadingStateComplete === false
+  || item.tomorrowEmptyStateComplete === false
+  || item.tomorrowPartialStateComplete === false
   || item.hotboardLoadingStateComplete === false
   || item.hotboardEmptyStateComplete === false
   || item.hotboardFailureStateComplete === false
