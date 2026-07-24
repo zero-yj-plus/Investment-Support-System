@@ -52,7 +52,8 @@ from ..analysis import (sentiment as senti, features, timing as timing_mod, quan
                         diagnosis as diagnosis_mod, cockpit as cockpit_mod, recommend as recommend_mod,
                         advice_proposal as proposal_mod, mainline_timeline, mainline_runtime,
                         engine as engine_mod, stock_analysis_contract,
-                        watchlist_zones as watchlist_zones_mod)
+                        watchlist_zones as watchlist_zones_mod,
+                        technical_screener as technical_screener_mod)
 from ..jobs.scheduler import JOB_NAMES, apply_schedule, task_center_status  # noqa: E402
 from ..product_state import build_market_context, route_lifecycle_contract  # noqa: E402
 from ..decision.risk_gate import evaluate_risk_gate  # noqa: E402
@@ -4531,6 +4532,121 @@ async def screen(request: Request):
     return await asyncio.to_thread(
         screener.screen, filters, sort_by, sort_desc, result_limit
     )
+
+
+# ---------------------------------------------------------------- 技术面选股（只读本地缓存；刷新是显式重型动作）
+
+@router.get("/technical-screen/catalog")
+async def technical_screen_catalog():
+    return technical_screener_mod.catalog()
+
+
+@router.get("/technical-screen/status")
+async def technical_screen_status():
+    return await asyncio.to_thread(technical_screener_mod.status)
+
+
+@router.post("/technical-screen/query")
+async def technical_screen_query(request: Request):
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise ValueError
+    except Exception:
+        return JSONResponse({"ok": False, "state": "invalid", "error": "无效请求体"}, status_code=400)
+    result = await asyncio.to_thread(technical_screener_mod.screen, body)
+    status_code = 400 if result.get("state") == "invalid" else 200
+    return JSONResponse(result, status_code=status_code)
+
+
+@router.post("/technical-screen/refresh")
+async def technical_screen_refresh(request: Request):
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            body = {}
+    except Exception:
+        body = {}
+    current = await asyncio.to_thread(technical_screener_mod.status)
+    if current.get("state") == "running":
+        return JSONResponse({"ok": False, "state": "running", "error_code": "refresh_already_running"}, status_code=409)
+    try:
+        limit = body.get("max_symbols")
+        limit = None if limit in (None, "") else max(1, min(int(limit), 6000))
+        workers = max(1, min(int(body.get("workers") or 6), 12))
+    except (TypeError, ValueError):
+        return JSONResponse({"ok": False, "state": "invalid", "error": "刷新参数不合法"}, status_code=400)
+
+    async def _run_refresh() -> None:
+        store = getattr(_state(request), "store", None)
+        started = now_cn().strftime("%Y-%m-%d %H:%M:%S")
+        if store:
+            store.record_job("technical_signal_refresh", last_run=started, last_status="running", last_error=None)
+        result = await asyncio.to_thread(technical_screener_mod.refresh_all, max_symbols=limit, workers=workers)
+        if store:
+            finished = now_cn().strftime("%Y-%m-%d %H:%M:%S")
+            store.record_job(
+                "technical_signal_refresh",
+                last_status=("ok" if result.get("state") == "ready" else "warn"),
+                last_ok=(finished if result.get("state") == "ready" else None),
+                last_finished=finished, last_error=None,
+                last_result={key: result.get(key) for key in ("state", "processed", "succeeded", "failed", "coverage_ratio")},
+            )
+
+    task = asyncio.create_task(_run_refresh())
+    _bg_tasks.add(task)
+    task.add_done_callback(_bg_tasks.discard)
+    return JSONResponse({"ok": True, "state": "queued", "message": "全市场技术信号刷新已进入后台队列"}, status_code=202)
+
+
+@router.get("/technical-screen/history")
+async def technical_screen_history(
+    code: str | None = None, signal_code: str | None = None,
+    timeframe: str | None = None, limit: int = 200,
+):
+    if code and not _CODE_RE.fullmatch(code):
+        return JSONResponse({"ok": False, "error": "股票代码必须为6位数字"}, status_code=400)
+    if timeframe and timeframe not in {"D", "W", "M"}:
+        return JSONResponse({"ok": False, "error": "周期必须为D/W/M"}, status_code=400)
+    return await asyncio.to_thread(
+        technical_screener_mod.history, code=code, signal_code=signal_code,
+        timeframe=timeframe, limit=limit,
+    )
+
+
+@router.get("/technical-screen/schemes")
+async def technical_screen_schemes():
+    return {"ok": True, "schemes": await asyncio.to_thread(technical_screener_mod.list_schemes)}
+
+
+@router.post("/technical-screen/schemes")
+async def technical_screen_scheme_create(request: Request):
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise ValueError
+    except Exception:
+        return JSONResponse({"ok": False, "error": "无效请求体"}, status_code=400)
+    result = await asyncio.to_thread(technical_screener_mod.save_scheme, body)
+    return JSONResponse(result, status_code=200 if result.get("ok") else 400)
+
+
+@router.put("/technical-screen/schemes/{scheme_id}")
+async def technical_screen_scheme_update(scheme_id: str, request: Request):
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise ValueError
+    except Exception:
+        return JSONResponse({"ok": False, "error": "无效请求体"}, status_code=400)
+    result = await asyncio.to_thread(technical_screener_mod.save_scheme, body, scheme_id)
+    return JSONResponse(result, status_code=200 if result.get("ok") else 400)
+
+
+@router.delete("/technical-screen/schemes/{scheme_id}")
+async def technical_screen_scheme_delete(scheme_id: str):
+    result = await asyncio.to_thread(technical_screener_mod.delete_scheme, scheme_id)
+    return JSONResponse(result, status_code=200 if result.get("ok") else 404)
 
 
 # ---------------------------------------------------------------- 多市场新闻

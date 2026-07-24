@@ -113,6 +113,7 @@ const lazyBuiltins = Object.freeze({
   features: lazyView(() => import('./views/features.js'), '主线深研'),
   institutional: lazyView(() => import('./views/institutional.js'), '机构数据'),
   screener: lazyView(() => import('./views/screener.js'), '条件选股'),
+  technical_screener: lazyView(() => import('./views/technical_screener.js'), '技术面选股'),
   quant: lazyView(() => import('./views/quant.js'), '量化选股'),
   diy: lazyView(() => import('./views/diy.js'), 'DIY 研究'),
   holdings: lazyView(() => import('./views/holdings.js'), '我的持仓'),

@@ -888,3 +888,104 @@ python3 scripts/data_backup_restore.py restore --archive /abs/backup.tar.gz --re
 ```
 
 `drill` 在临时目录恢复并自动清理，源目录只读。路径穿越、软链接、重复成员、包体篡改、非空恢复目录或 SQLite 完整性失败都会返回非零退出码；生产上线前应保存 JSON 输出作为恢复证据。
+
+## 20. 全市场技术面选股
+
+技术面选股使用客户 `data_dir/technical_screener.sqlite3` 中的前复权 K 线和确定性信号缓存。普通查询只读本地缓存，不触发逐股历史行情 N+1。盘后 16:10 的 `technical_signal_refresh` 系统任务以及用户显式刷新动作负责更新缓存。
+
+统一约束：
+
+- `algorithm_ver=local-signal-v1`，复权口径固定为 `qfq`；算法升级不得静默复用旧版本方案。
+- 突破窗口排除当前 K 线；指标预热期保持空值；周/月线先合成 OHLCV 后重新计算。
+- `signal_kind=event` 只保存发生事件，`signal_kind=state` 只保存最新当前状态。
+- DDX、主力资金等 Level-2 条件在没有可核验数据源时返回 `available=false`，不得用成交量推断。
+- 历史功能只查询信号命中，不计算收益、胜率或策略回测。
+
+### GET /api/technical-screen/catalog
+
+返回稳定信号编码、中文名、分类、事件/状态、方向、默认参数、别名、可用性，以及 `D/W/M` 周期和 `TODAY/RECENT/CURRENT` 时间语义。不可用信号包含 `unavailable_reason`。
+
+### GET /api/technical-screen/status
+
+返回 `state ∈ {missing,running,partial,ready}`、缓存股票数/K线数/信号数、`data_date`、复权方式、算法版本、`config_schema_version=2` 和后台刷新进度。无缓存必须返回 `missing`，不能显示为 0 只符合。
+
+### POST /api/technical-screen/query
+
+请求示例：
+
+```json
+{
+  "universe": {
+    "markets": ["MAIN", "CHINEXT", "STAR"],
+    "exclude_st": true,
+    "exclude_suspended": true,
+    "min_listing_days": 120,
+    "min_amount_ma20": 50000000
+  },
+  "default_timeframe": "D",
+  "schemaVersion": 2,
+  "satisfy": {
+    "groupMatch": "ALL",
+    "groups": [
+      {
+        "id": "sg_1",
+        "conditionMatch": "ALL",
+        "conditions": [
+          {"id":"c_1","signal_code":"MACD_GOLDEN_CROSS","timeframe":"D","occurrence":"TODAY","params":{"fast":12,"slow":26,"signal":9}},
+          {"id":"c_2","signal_code":"CLOSE_ABOVE_MA","timeframe":"D","occurrence":"CURRENT","params":{"period":60}}
+        ]
+      }
+    ]
+  },
+  "exclude": {
+    "groups": [
+      {
+        "id": "eg_1",
+        "conditionMatch": "ANY",
+        "conditions": [
+          {"id":"c_3","signal_code":"RSI_OVERBOUGHT","timeframe":"D","occurrence":"CURRENT","params":{"threshold":70}}
+        ]
+      }
+    ]
+  },
+  "sort": [{"field":"signal_score","direction":"desc"}],
+  "algorithm_ver": "local-signal-v1",
+  "adjustment": "qfq",
+  "benchmark": "000300.SH",
+  "limit": 50,
+  "offset": 0
+}
+```
+
+`schemaVersion=2` 是面向规则编辑器的固定两层结构：
+
+- `satisfy.groupMatch ∈ {ALL,ANY}`：所有满足规则组都成立，或任意满足规则组成立。只有一个满足组时前端隐藏该选择并提交 `ALL`。
+- `satisfy.groups[].conditionMatch ∈ {ALL,ANY}`：组内技术信号全部成立，或任意一项成立。
+- `exclude.groups[].conditionMatch ∈ {ALL,ANY}`：组内任意一项出现时排除，或全部条件同时出现时排除。
+- 排除组之间固定为任意一组命中即剔除，不提供也不接受可修改的顶层关系字段。
+- `id` 只用于编辑器稳定定位和删除撤销，不参与筛选缓存键。数组顺序用于展示，不影响逻辑结果。
+
+前端面向普通用户只显示“所有/任意/排除”等自然语言，不显示逻辑运算符。后端保存和执行前重复校验：至少一个非空满足组，每个已存在的组至少一个技术信号，排除组可完全为空，组内不得继续嵌套。空组、未知编码、非法周期、不可用数据源或非法结构返回 `state=invalid`。事件只能使用 `TODAY/RECENT`，状态只能使用 `CURRENT`。默认参数从预计算匹配表查询；自定义参数只在本地 K 线缓存上重算，不发网络请求。
+
+周/月条件可显式设置 `include_partial_period=true`，此时只在本地缓存上重算，并在命中原因返回 `is_confirmed=false`。
+
+成功响应返回 `matched/returned/stocks`。每只股票包含 `matched_reasons[]`，逐条给出信号编码、名称、周期、信号日期和关键指标值。缓存为空返回 `state=missing` 和明确 `missing[]`。
+
+### POST /api/technical-screen/refresh
+
+显式提交重型后台刷新，立即返回 HTTP `202` 和 `state=queued`。可选维护参数：`max_symbols`（1—6000）和 `workers`（1—12）；默认全市场、6 个有界工作线程。刷新同时缓存沪深300不复权基准日线，供“近N日跑赢大盘”按同日期对齐计算。已有刷新运行时返回 `409 refresh_already_running`。
+
+### GET /api/technical-screen/history
+
+查询参数：可选 `code`、`signal_code`、`timeframe`，以及 `limit`（1—1000）。只返回 `signal_kind=event` 的追加式历史命中。
+
+### 筛选方案
+
+- `GET /api/technical-screen/schemes`：列出保存方案。
+- `POST /api/technical-screen/schemes`：新建或导入方案。
+- `PUT /api/technical-screen/schemes/{id}`：更新指定方案。
+- `DELETE /api/technical-screen/schemes/{id}`：删除指定方案。
+
+保存内容包含股票池、`schemaVersion=2` 规则结构、周期、参数、排序、算法版本、复权方式和基准指数。旧算法版本方案必须提示用户。
+
+兼容规则：旧版 `must_all/any_of/exclude` 查询仍按原语义执行。读取旧保存方案时，可无损表达的结构在内存中稳定迁移为 v2，但不覆盖原数据库记录；超出固定两层表达能力的方案返回 `editable=false`、`migration_state=read_only_incompatible` 和 `migration_reason`，前端保留原逻辑筛选并要求用户创建重建草稿，禁止静默展平。新建或更新保存时最终写入 v2；旧请求只有在可无损迁移时才允许保存。

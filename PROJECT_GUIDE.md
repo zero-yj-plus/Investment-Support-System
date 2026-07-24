@@ -194,6 +194,8 @@ flowchart LR
 | `analysis/sentinel.py` | 数据/推送运行哨兵；确定性自检、告警和对已定稿未送达报告的补推。 |
 | `analysis/stock_analysis_contract.py` | 冻结“规则选股 → 受治理诊断 → AI 仅解释”的共享执行契约。 |
 | `analysis/timing.py` | 价量均线四区域择时和五因子贪恐温度计。 |
+| `analysis/technical_signals.py` | 可复算技术信号目录与算法；事件/状态分离、无未来函数、日周月独立重算。 |
+| `analysis/technical_screener.py` | 客户隔离 SQLite K线/信号缓存、全市场盘后刷新、固定两层自然语言规则筛选、旧方案无损迁移、方案与历史命中。 |
 | `analysis/watchlist_zones.py` | 观察池双周期纯数字区间；用前复权日线与 5 分钟 OHLCV/成交额确定性计算超短线、波段区间，并管理同交易日降级快照。 |
 
 ### 7.4 `api/`：HTTP 接口层
@@ -351,6 +353,7 @@ flowchart LR
 | `reports.js` | 全报告中心：查看、SSE 生成、PDF 和推送。 |
 | `restructuring.js` | 用户材料驱动的重组事件深度拆解。 |
 | `screener.js` | 条件/多因子全市场筛选，结果可跳转诊断。 |
+| `technical_screener.js` | “技术面选股”：模板/高级组合、信号条件卡、全市场缓存状态、命中解释和历史事件。 |
 | `senti.js` | 新闻事件流、A 股实体/板块映射和后续观察。 |
 | `sentiment.js` | 情绪周期与历史图表。 |
 | `settings.js` | 任务、数据、交付、模型连接、安全和版本设置。 |
@@ -530,6 +533,9 @@ Vite。首屏继续复用 `/api/shell-status`、`/api/pulse`、`/api/market/over
 | `test_mainforce_official_verification_frontend.py` | 主力页官方核验状态与代码集合比较。 |
 | `test_phase5_accessibility_frontend.py` | 风险配色和 WCAG AA 可读性。 |
 | `test_phase5_responsive_frontend.py` | 量化、问股、尾盘和移动断点。 |
+| `test_technical_signals.py` | 技术交叉、突破排除当前K线、周线重采样、状态去重和Level-2禁用语义。 |
+| `test_technical_screener.py` | 技术缓存缺失、筛选方案版本和非法信号校验。 |
+| `test_technical_screener_frontend.py` | 研究中心导航、满足/排除自然语言规则、只读迁移、生命周期、无障碍与缺失状态。 |
 
 ## 12. 运行数据结构（来自源码约定）
 
@@ -546,6 +552,7 @@ data/
 ├─ watchlist_zones.json
 ├─ settings.json
 ├─ simulation.sqlite3
+├─ technical_screener.sqlite3
 ├─ evidence/market_data.sqlite3
 ├─ delivery_receipts/
 ├─ news_events/

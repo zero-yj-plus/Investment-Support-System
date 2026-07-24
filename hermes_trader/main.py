@@ -132,6 +132,9 @@ def create_app(config_path: str) -> FastAPI:
     engine = Engine(config, store, hermes, notifier)
     # 分析层只消费统一网关契约；不在各页再各自直连行情源。
     engine.market_gateway = market_gateway
+    # 技术选股只读客户隔离的本地缓存；网络采集由盘后任务或显式刷新触发。
+    from .analysis import technical_screener  # noqa: PLC0415
+    technical_screener.init(config.data_dir)
     scheduler = build_scheduler(config, engine)
     try:
         register_mainline_sampler(scheduler, config)
