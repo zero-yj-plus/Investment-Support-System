@@ -26,7 +26,7 @@
 | AI 接入 | OpenAI 兼容 `/v1/chat/completions`；Hermes 网关为可选集成 |
 | Agent 工具 | FastMCP，只读工具为默认，维护型写入默认关闭 |
 | 前端 | 原生 ES Modules、Hash Router、ECharts、Marked、html2canvas、jsPDF |
-| Vue 重构试验 | `frontend-vue/`：Vue 3、TypeScript、Vite；已迁移决策总览、盘前、尾盘、复盘与涨停题材，尚未接管生产入口 |
+| Vue 重构试验 | `frontend-vue/`：Vue 3、TypeScript、Vite；已迁移决策总览、盘前、尾盘、复盘、次日策略、涨停题材、资金追踪、持仓与观察池，尚未接管生产入口 |
 | 测试 | pytest、pytest-asyncio；大量契约测试直接检查 Python、API 和前端源码语义 |
 | 部署脚本 | 主要是 Bash/Linux 形态；另有跨平台 Python 运维脚本 |
 
@@ -384,7 +384,12 @@ Vite。首屏继续复用 `/api/shell-status`、`/api/pulse`、`/api/market/over
 `/api/market/stockflow`、`/api/market/sectors` 和 `/api/market/multiperiod`。盘前页读取定稿
 `/api/reports/morning` 与独立的 `/api/market/flow` 盘中验证，并保留生成/推送能力。接口失败必须局部降级且不得生成示例数字。
 今日复盘页读取 `/api/reports/close`、`/api/holdings/advice-review` 与追加式推荐回验接口，分别呈现收盘风险定格、昨日建议对账和 T0/T1/T2/T5 留痕；各请求独立降级。
+次日策略页读取 `/api/reports/evening` 与 `/api/watchlist`，展示 19:30 风险底座、明日观察池触发条件、尾盘/收盘定稿 lineage 和正式报告；不在浏览器中重算风险、评级或价格区间。
 涨停题材页只读取独立口径 `/api/market/limitup/themes`，展示题材可复核计数和涨停股明细，不与驾驶舱主涨停池混算；加载、真实空数组、降级和接口失败分别呈现。
+主线深研页只读取 `/api/features/money-effect`、`/api/features/crowdedness`、`/api/features/mainline` 与 `/api/features/leaders`，保持赚钱效应、拥挤度、跨日持续性和龙头梯队四种口径独立，并显式区分部分因子、样本积累、真实空数组与传输失败。
+资金追踪页读取 `/api/capital/trends?days=1`，并保留 `/api/capital/snapshot` 手动采集动作；行业与热门股按真实数据日期、来源和单位分别展示，`tdx_raw_unverified` 仅显示原始公式值，加载、空数组、陈旧快照和动作失败均显式区分。
+我的持仓页读取 `/api/holdings` 与合并报价 `/api/quotes?codes=...`，新增代码时仅用 `/api/quote/{code}` 核验，并通过 `PUT /api/holdings` 整体保存；页面不消费或提交账户总资产，投入成本按成本价与股数自动汇总，任一现价缺失时不汇总持仓总市值、总盈亏或持仓构成，持仓加载失败时锁定保存以避免空账本覆盖。
+观察池页读取轻量合并的 `/api/watchlist`，新增时用 `/api/quote/{code}` 核验，并通过逐条 `POST /api/watchlist`、`PUT /api/watchlist/{id}`、`DELETE /api/watchlist/{id}` 管理账本；评级、状态、双周期区间、位置和价格边界完全展示服务端结果，`queued` 只表示区间计算已排队。页面明确区分空数组、报价缺失、降级快照、陈旧数据和传输失败，且不推断接口未提供的仓位上限。
 
 | 文件 / 目录 | 说明 |
 | --- | --- |
@@ -392,11 +397,21 @@ Vite。首屏继续复用 `/api/shell-status`、`/api/pulse`、`/api/market/over
 | `src/components/` | 决策总览卡片、盘前定格快照、安全 Markdown 报告、章节目录和共享图标/状态组件。 |
 | `src/components/CloseReview*.vue`、`CloseAdviceReview.vue`、`CloseRecommendationReview.vue` | 今日复盘的收盘结论、持仓建议对账、推荐留痕和正式报告工作区。 |
 | `src/components/Hotboard*.vue` | 涨停题材结论、题材筛选和响应式涨停股明细。 |
+| `src/components/Capital*.vue` | 资金追踪的数据边界、行业/热门股榜单、日内连续采样趋势和局部动作反馈。 |
+| `src/components/MainlineResearchPage.vue`、`MainlineMoneyEffect.vue`、`MainlineCrowdedness.vue`、`MainlineContinuity.vue`、`MainlineLeaders.vue` | 主线深研结论边界、四类结构化证据和各模块独立状态。 |
+| `src/components/HoldingsPage.vue`、`HoldingsSummary.vue`、`HoldingEditor.vue`、`HoldingsTable.vue` | 我的持仓结论、自动成本/市值汇总边界、账本编辑和桌面宽表/移动卡片明细。 |
+| `src/components/WatchlistPage.vue`、`WatchlistItemCard.vue`、`WatchlistEditor.vue` | 观察池结论摘要、服务端双周期价格边界、逐项数据健康与显式核验编辑。 |
+| `src/components/TomorrowStrategyPage.vue`、`TomorrowDecisionSummary.vue`、`TomorrowWatchlist.vue`、`TomorrowDataHealth.vue` | 次日策略的风险底座、观察池触发条件、依据健康和安全报告工作区。 |
 | `src/composables/useDecisionOverview.ts` | 并行请求、超时、刷新、可见性恢复和卸载清理。 |
 | `src/composables/useMarketEvidence.ts` | 盘面证据与深度结构的延迟请求、独立降级、刷新和卸载清理。 |
 | `src/composables/usePremarketReport.ts` | 盘前报告读取、资金验证、SSE 生成、推送和独立请求/定时器清理。 |
 | `src/composables/useCloseReview.ts` | 今日复盘报告、策略自证与推荐回验的独立请求、SSE 动作、局部降级和卸载清理。 |
 | `src/composables/useHotboard.ts` | 涨停题材独立请求、刷新、可见性恢复、缺失语义和卸载清理。 |
+| `src/composables/useCapitalTracking.ts` | 资金趋势读取、手动快照采集、独立请求控制、可见性刷新和卸载清理。 |
+| `src/composables/useMainlineResearch.ts` | 主线深研四路有界请求、共享底座预热、局部降级、自动刷新和卸载清理。 |
+| `src/composables/useHoldings.ts` | 持仓、批量报价、单票核验与整体保存的独立请求控制、覆盖保护、自动刷新和卸载清理。 |
+| `src/composables/useWatchlist.ts` | 观察池读取、代码核验、逐条 CRUD、区间重算排队、自动刷新与独立请求卸载清理。 |
+| `src/composables/useTomorrowStrategy.ts` | 次日策略报告与观察池的独立请求、SSE 生成、推送提交语义、自动刷新和卸载清理。 |
 | `src/utils/reportMarkdown.ts` | 把受治理报告 Markdown 解析为安全的 Vue 渲染块和章节目录，不使用原始 HTML 注入。 |
 | `src/styles.css` | 深浅主题、响应式断点、焦点和 reduced-motion 规则。 |
 | `scripts/audit-ui.mjs` | 使用本机 Chrome + axe-core 检查已迁移页面的 375/768/1024/1440 布局、深浅主题、关键状态和 WCAG。 |

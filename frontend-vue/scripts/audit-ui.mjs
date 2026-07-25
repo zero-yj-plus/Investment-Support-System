@@ -97,6 +97,77 @@ const fixtures = {
         { label: '情绪链', status: 'formed', name: '风电设备', change_pct: 1.16, structure_score: 79, amount_rank_pct: 0.24, breadth_ratio: 0.48, limit_up_count: 5, max_lianban: 6, role_reason: '6/2/1板梯队 · 涨停5家 · 龙头立新能源' },
     ],
   },
+  '/api/features/money-effect': {
+    ok: true,
+    ts: '2026-07-22 10:31:26',
+    data_date: '2026-07-22',
+    data_state: 'degraded',
+    missing: ['概念涨跌家数'],
+    missing_fields: [],
+    degraded_factors: ['概念涨跌家数覆盖1/2'],
+    notes: ['主力资金流未进入赚钱分；末列展示可核验成交额'],
+    score_semantics: { name: 'available_factor_score', comparable_when: 'score_coverage.state=complete', warning: '因子不全时分数不与完整因子分数等置比较' },
+    themes: [
+      { name: '先进制造', kind: 'industry', change_pct: 2.46, money_score: 32.8, zt_count: 12, max_lianban: 4, up_count: 74, down_count: 21, leader_name: '立新能源', leader_change_pct: 10.02, amount: 87600000000, main_flow: 4230000000, score_coverage: { complete: 4, total: 4, state: 'complete', missing: [] } },
+      { name: '算力基础设施', kind: 'concept', change_pct: 1.73, money_score: 24.6, zt_count: null, max_lianban: null, up_count: 48, down_count: 19, leader_name: '中科曙光', leader_change_pct: 10.00, amount: 71200000000, main_flow: null, score_coverage: { complete: 2, total: 2, state: 'complete', missing: [] } },
+      { name: '创新药', kind: 'concept', change_pct: 1.12, money_score: 17.4, zt_count: null, max_lianban: null, up_count: null, down_count: null, leader_name: '众生药业', leader_change_pct: 10.01, amount: 43800000000, main_flow: null, score_coverage: { complete: 1, total: 2, state: 'partial', missing: ['breadth'] } },
+      { name: '风电设备', kind: 'industry', change_pct: 0.84, money_score: 13.6, zt_count: 5, max_lianban: 6, up_count: 39, down_count: 26, leader_name: '立新能源', leader_change_pct: 10.02, amount: 39100000000, main_flow: -620000000, score_coverage: { complete: 4, total: 4, state: 'complete', missing: [] } },
+    ],
+    losers: [
+      { name: '游戏', kind: 'industry', change_pct: -2.86, money_score: -18.2, zt_count: 0, max_lianban: null, up_count: 8, down_count: 41, leader_name: null, leader_change_pct: null, amount: 29800000000, score_coverage: { complete: 4, total: 4, state: 'complete', missing: [] } },
+    ],
+  },
+  '/api/features/crowdedness': {
+    ok: true,
+    ts: '2026-07-22 10:31:28',
+    data_date: '2026-07-22',
+    data_state: 'degraded',
+    missing: [],
+    missing_fields: [],
+    degraded_factors: ['概念拥挤度未计涨停聚集分量'],
+    score_semantics: { name: 'cross_section_percentile', comparable_when: 'score_coverage.state=complete', warning: '部分因子分仅表示当前可用因子的横截面分位' },
+    sectors: [
+      { name: '先进制造', kind: 'industry', change_pct: 2.46, amount: 87600000000, amt_share: 12.84, zt_count: 12, crowd_score: 96, level: '过热拥挤', score_coverage: { complete: 3, total: 3, state: 'complete' } },
+      { name: '算力基础设施', kind: 'concept', change_pct: 1.73, amount: 71200000000, amt_share: 10.43, zt_count: null, crowd_score: 84, level: '偏拥挤', score_coverage: { complete: 2, total: 3, state: 'partial' } },
+      { name: '创新药', kind: 'concept', change_pct: 1.12, amount: 43800000000, amt_share: 6.42, zt_count: null, crowd_score: 66, level: '偏拥挤', score_coverage: { complete: 2, total: 3, state: 'partial' } },
+      { name: '风电设备', kind: 'industry', change_pct: 0.84, amount: 39100000000, amt_share: 5.73, zt_count: 5, crowd_score: 58, level: '正常', score_coverage: { complete: 3, total: 3, state: 'complete' } },
+    ],
+  },
+  '/api/features/mainline': {
+    ok: true,
+    ts: '2026-07-22 10:31:30',
+    data_date: '2026-07-22',
+    data_state: 'complete',
+    missing: [],
+    missing_fields: [],
+    degraded_factors: [],
+    history_days: 5,
+    switch_signal: '今日赚钱效应榜首『先进制造』与近5日主线『算力基础设施』不一致，关注主线是否切换',
+    note: null,
+    today_top: [],
+    mainlines: [
+      { name: '算力基础设施', kind: 'concept', days_on_board: 4, avg_money_score: 31.2, cum_main_flow: null, strength: 71.2, recent_score: 24.6, flow_note: '无资金流数据（概念板块不提供主力净额）' },
+      { name: '先进制造', kind: 'industry', days_on_board: 3, avg_money_score: 34.8, cum_main_flow: 12600000000, strength: 64.8, recent_score: 32.8 },
+      { name: '创新药', kind: 'concept', days_on_board: 3, avg_money_score: 24.1, cum_main_flow: null, strength: 54.1, recent_score: 17.4, flow_note: '无资金流数据（概念板块不提供主力净额）' },
+    ],
+  },
+  '/api/features/leaders': {
+    ok: true,
+    ts: '2026-07-22 10:31:32',
+    data_date: '2026-07-22',
+    missing: [],
+    kongban: { height: 6, stocks: [{ code: '001269', name: '立新能源', lianban: 6, reason: '风电设备', seal_amount: 318000000 }] },
+    ladder: [
+      { lianban: 6, label: '6连板', count: 1, stocks: [{ code: '001269', name: '立新能源', reason: '风电设备', seal_amount: 318000000, turnover_rate: 17.6, first_time: '09:31', is_leader: true }] },
+      { lianban: 3, label: '3连板', count: 2, stocks: [{ code: '600664', name: '哈药股份', reason: '中报预增+创新药', seal_amount: 110000000, turnover_rate: 8.4, first_time: '09:42', is_leader: false }, { code: '002317', name: '众生药业', reason: '创新药+医药商业', seal_amount: 286000000, turnover_rate: null, first_time: '09:35', is_leader: false }] },
+      { lianban: 1, label: '首板', count: 2, stocks: [{ code: '603019', name: '中科曙光', reason: '算力基础设施+国产芯片', seal_amount: 192000000, turnover_rate: 6.7, first_time: '10:12', is_leader: false }, { code: '002230', name: '科大讯飞', reason: '算力基础设施+人工智能', seal_amount: 143000000, turnover_rate: 4.8, first_time: '09:58', is_leader: false }] },
+    ],
+    popularity: [
+      { code: '001269', name: '立新能源', lianban: 6, seal_amount: 318000000, seal_ratio: 1.7, reason: '风电设备' },
+      { code: '002317', name: '众生药业', lianban: 3, seal_amount: 286000000, seal_ratio: null, reason: '创新药+医药商业' },
+      { code: '603019', name: '中科曙光', lianban: 1, seal_amount: 192000000, seal_ratio: 0.6, reason: '算力基础设施+国产芯片' },
+    ],
+  },
   '/api/sentiment/today': {
     ok: true,
     metrics: { yesterday_limit_premium: 2.04, up_down_ratio: 1.47 },
@@ -173,6 +244,121 @@ const fixtures = {
       { code: '002230', name: '科大讯飞', price: 58.74, change_pct: 9.99, reason_type: '算力基础设施+人工智能', limit_up_type: '换手板', high_days: '首板', is_again: false, suc_rate_pct: 83.3, first_time: '09:58', last_time: '09:58', seal_amount: 143000000 },
       { code: '301269', name: '华大九天', price: 103.52, change_pct: 19.99, reason_type: '国产芯片+EDA', limit_up_type: '', high_days: '首板', is_again: false, suc_rate_pct: null, first_time: '', last_time: '', seal_amount: null },
     ],
+  },
+  '/api/news/a-share': {
+    ok: true,
+    ts: '2026-07-22 10:31:44',
+    cn_fetched_at: '2026-07-22 10:31:42',
+    fetched_at: '2026-07-22T10:31:42+08:00',
+    latest_event_time: '2026-07-22 10:30:18',
+    refresh_seconds: 30,
+    sources_tried: 3,
+    sources_live: 2,
+    missing: ['东财公开聚合端暂不可用'],
+    mapping: { state: 'complete', mapped: 2, candidates: 1, total: 3, missing: [] },
+    observation: { enabled: true, state: 'mixed', tracked: 2, waiting: 1, observing: 0, observed: 1, missing: [] },
+    pipeline: { source_state: 'degraded', entity_mapping_state: 'complete', market_observation_state: 'mixed', validation_state: 'mixed' },
+    items: [
+      {
+        event_id: 'event-audit-direct',
+        title: '世茂能源发布股权转让公告',
+        content: '世茂能源公告称，控股股东拟协议转让部分公司股份。',
+        time: '2026-07-22 10:30:18',
+        published_at: '2026-07-22T10:30:18+08:00',
+        fetched_at: '2026-07-22T10:30:24+08:00',
+        evidence_level: 'tier_1',
+        confirms: 1,
+        corroboration: { collection_endpoint_count: 1, independent_origin_count: 0, independent_origin_confirmed: false, origin_unknown: true },
+        observations: [{
+          source_id: 'tdx_news_sentiment', publisher_name: null, collection_platform_name: 'TDX 舆情电讯',
+          source_relation: 'customer_authorized_feed', access_path: 'authorized_api', evidence_level: 'tier_1',
+          published_at: '2026-07-22T10:30:18+08:00', fetched_at: '2026-07-22T10:30:24+08:00', source_url: null,
+          content_hash: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', degraded_reasons: ['original_url_unavailable'],
+        }],
+        a_share: {
+          state: 'mapped', level: 'direct_stock',
+          matches: [
+            { kind: 'stock', code: '605028', name: '世茂能源', match_by: 'explicit_name', name_consistency: 'matched' },
+            { kind: 'industry', code: '881459.SH', name: '电力', match_by: 'derived_from_stock' },
+          ],
+          coverage: { missing: [] },
+          market_check: { state: 'pending_next_session', label: '下一交易日待观察' },
+          observation: { status: 'waiting', target_trade_date: '2026-07-23', progress: { complete: 1, total: 3 }, checkpoints: [] },
+        },
+      },
+      {
+        event_id: 'event-audit-sector',
+        title: '半导体行业盘中出现新产能消息',
+        content: '公开信息显示，多家半导体企业披露新产能进展，行业映射仅用于后续观察。',
+        time: '2026-07-22 10:22:05',
+        published_at: '2026-07-22T10:22:05+08:00',
+        fetched_at: '2026-07-22T10:22:11+08:00',
+        evidence_level: 'tier_2',
+        corroboration: { collection_endpoint_count: 1, independent_origin_count: 1, independent_origin_confirmed: false, origin_unknown: false },
+        observations: [{
+          source_id: 'cls_telegraph', publisher_name: '财联社', collection_platform_name: '财联社电报',
+          source_relation: 'original_publisher', access_path: 'public_web', evidence_level: 'tier_2',
+          published_at: '2026-07-22T10:22:05+08:00', fetched_at: '2026-07-22T10:22:11+08:00',
+          source_url: 'https://www.cls.cn/detail/1234567', content_hash: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', degraded_reasons: [],
+        }],
+        a_share: {
+          state: 'mapped', level: 'direct_sector',
+          matches: [{ kind: 'industry', code: '881319.SH', name: '半导体', match_by: 'sector_catalog' }],
+          coverage: { missing: [] },
+          market_check: { state: 'observation_only', label: '同日盘面观察（非因果）' },
+          observation: {
+            status: 'observed', target_trade_date: '2026-07-22', progress: { complete: 3, total: 3 }, causality: 'not_inferred',
+            result: { stocks: [], sectors: [{ code: '881319.SH', name: '半导体', median_change_pct: 1.2, up_ratio_pct: 64.3 }] },
+          },
+        },
+      },
+      {
+        event_id: 'event-audit-candidate',
+        title: '钙钛矿电池研究取得新进展',
+        content: '研究机构公布实验进展，相关概念仍需公司与行业关系进一步核验。',
+        time: '2026-07-22 10:18:40',
+        published_at: '2026-07-22T10:18:40+08:00', fetched_at: '2026-07-22T10:18:48+08:00',
+        observations: [],
+        a_share: { state: 'candidate', level: 'topic_candidate', matches: [], topic_candidates: [{ kind: 'concept', code: '880655.SH', name: '钙钛矿电池' }], coverage: { missing: ['未通过公司或行业精确映射'] } },
+      },
+    ],
+  },
+  '/api/capital/trends': {
+    ok: true,
+    ts: '2026-07-22 10:31:36',
+    snap_ts: '2026-07-22 10:30:00',
+    today: '2026-07-22',
+    days: 1,
+    view_state: 'last_good',
+    sector_source: 'TDX·板块资金(realtime)',
+    hot_source: '新浪资金流估算口径',
+    sector_date: '2026-07-22',
+    hot_date: '2026-07-21',
+    stale_sector: false,
+    stale_hot: true,
+    last_good_sector: false,
+    last_good_hot: true,
+    sectors: [
+      { name: '工业金属', main_net: 138.6, change_pct: 2.14, rnk: 1, value_unit: 'tdx_raw_unverified', unit_verified: false, series: [{ t: '09:45', v: 92.1 }, { t: '10:00', v: 116.4 }, { t: '10:15', v: null }, { t: '10:30', v: 138.6 }] },
+      { name: '贵金属', main_net: 94.2, change_pct: 5.82, rnk: 2, value_unit: 'tdx_raw_unverified', unit_verified: false, series: [{ t: '09:45', v: 51.8 }, { t: '10:00', v: 76.4 }, { t: '10:15', v: 88.9 }, { t: '10:30', v: 94.2 }] },
+      { name: '半导体', main_net: -72.8, change_pct: null, rnk: 9, value_unit: 'tdx_raw_unverified', unit_verified: false, series: [{ t: '09:45', v: -21.2 }, { t: '10:00', v: -38.5 }, { t: '10:15', v: -54.1 }, { t: '10:30', v: -72.8 }] },
+    ],
+    hot_stocks: [
+      { code: '601899', name: '紫金矿业', main_net: 2520000000, change_pct: 2.31, rnk: 1, value_unit: 'CNY', unit_verified: true, series: [{ t: '09:45', v: 1180000000 }, { t: '10:00', v: 1840000000 }, { t: '10:15', v: 2190000000 }, { t: '10:30', v: 2520000000 }] },
+      { code: '300750', name: '宁德时代', main_net: 1480000000, change_pct: 1.52, rnk: 2, value_unit: 'CNY', unit_verified: true, series: [{ t: '09:45', v: 710000000 }, { t: '10:00', v: 990000000 }, { t: '10:15', v: null }, { t: '10:30', v: 1480000000 }] },
+      { code: '002594', name: '比亚迪', main_net: -3820000000, change_pct: -1.17, rnk: 18, value_unit: 'CNY', unit_verified: true, series: [{ t: '09:45', v: -1460000000 }, { t: '10:00', v: -2380000000 }, { t: '10:15', v: -3160000000 }, { t: '10:30', v: -3820000000 }] },
+      { code: '300308', name: '中际旭创', main_net: null, change_pct: null, rnk: null, value_unit: 'CNY', unit_verified: true, series: [] },
+    ],
+  },
+  '/api/capital/snapshot': {
+    ok: true,
+    complete: true,
+    ts: '2026-07-22 10:31:42',
+    sectors: 3,
+    hot_stocks: 4,
+    missing: [],
+    sector_date: '2026-07-22',
+    hot_date: '2026-07-22',
   },
   '/api/timing': {
     ok: true,
@@ -358,7 +544,72 @@ const fixtures = {
 
 ## 五、明日修正与数据健康
 
-下一交易日先重新确认风险等级、集合竞价与资金承接。接口缺失保持缺失，不使用零值或推测值补齐。`,
+    下一交易日先重新确认风险等级、集合竞价与资金承接。接口缺失保持缺失，不使用零值或推测值补齐。`,
+  },
+  '/api/reports/evening': {
+    ok: true,
+    rtype: 'evening',
+    date: '2026-07-22',
+    title: '次日策略（供 2026-07-23 使用）',
+    created_at: '2026-07-22 19:31:08',
+    report_version: 1,
+    plan_version: 1,
+    content_hash: 'bfc63d3174a62653437a39f0154a8d19',
+    pushed: true,
+    claim_validation: { status: 'passed' },
+    advice_governance: { status: 'passed', proposal_only: true },
+    input_lineage: {
+      schema_version: '1.0', trade_day: '2026-07-22', lineage_hash: '6d159bc2957d78b0bb214e06179b0bc1',
+      sources: [
+        { rtype: 'tail', trade_day: '2026-07-22', version: 1, content_hash: '7ab37b03991b819e251ae0d5dcc091ee', created_at: '2026-07-22 14:53:05' },
+        { rtype: 'close', trade_day: '2026-07-22', version: 1, content_hash: '91ab74f2d6068b3d3de74b501e138b92', created_at: '2026-07-22 15:31:26' },
+      ],
+    },
+    cockpit: {
+      as_of: '2026-07-22 19:30',
+      command: {
+        risk_level: 3, level_name: '防守观察', trade_state: '条件参与', decision_tradeable: true,
+        today_action: '明日只核对计划内标的是否回到服务端价格区间并重新确认承接，不因高开临时抬价。',
+        position_cap: '总仓不超过 40%；单标的不超过 10%',
+        first_principle: '不到计划价格不动手，任一关键证据缺失则放弃新增风险暴露。',
+        allow: ['回到计划区间后出现可复核承接', '开盘风险闸未升级且服务端状态仍允许参与'],
+        forbid: ['不追高开加速', '不新增计划外标的', '关键行情或区间缺失时不交易'],
+        blackswan: ['集合竞价风险闸升级到禁止参与', '核心方向出现不可解释的集中跌停'],
+      },
+    },
+    content_md: `# 次日策略 · 2026-07-23
+
+> 本策略依据 2026-07-22 尾盘与收盘正式定稿生成。它不是下单指令，明日开盘后必须重新通过实时风险闸。
+
+## 一、当前结论
+
+**只做计划内的条件参与。** 风险等级为 3 级，优先等待价格与承接同时满足，不追高开一致加速。
+
+## 二、明日唯一动作
+
+开盘后先核对风险闸，再检查观察池是否进入服务端给出的目标区间；没有完整证据就继续等待。
+
+## 三、仓位与禁止条件
+
+| 边界 | 服务端定稿 |
+| --- | --- |
+| 总仓上限 | 不超过 40% |
+| 单标的上限 | 不超过 10% |
+| 禁止项 | 追高开加速、计划外临时交易、缺失证据下交易 |
+
+## 四、观察池验证
+
+- 紫金矿业：只在计划区间内重新确认承接。
+- 宁德时代：当前接近区间上沿，不追价。
+- 区间缺失的标的继续观察，不以零值代替。
+
+## 五、失效条件
+
+风险闸升级、核心方向集中转弱或报价证据陈旧时，原计划立即暂停。
+
+## 六、数据健康与治理
+
+尾盘和收盘来源指纹齐备；历史事实采用追加式留痕，后续信息不得回写原报告。`,
   },
   '/api/holdings/advice-review': {
     ok: true,
@@ -371,6 +622,23 @@ const fixtures = {
       { code: '002594', name: '比亚迪', base_price: 114.39, today_price: 113.05, change_pct: -1.17, tendency: '等待反抽减仓', direction: '看空', verdict: '兑现' },
       { code: '300308', name: '中际旭创', base_price: 162.44, today_price: null, change_pct: null, tendency: '行情证据缺失时保持观察', direction: '中性', verdict: '—' },
     ],
+  },
+  '/api/holdings': {
+    ok: true,
+    holdings: [
+      { code: '601899', name: '紫金矿业', cost: 17.42, shares: 6000, industry: '工业金属', weight_pct: 16.48, market_value: 112080, note: '核心观察仓，等待服务端风险条件复核' },
+      { code: '300750', name: '宁德时代', cost: 274.80, shares: 300, industry: '电池', weight_pct: 12.67, market_value: 86166, note: '只按计划处理，不临时追价' },
+      { code: '002594', name: '比亚迪', cost: 116.20, shares: 500, industry: '汽车整车', weight_pct: 8.31, market_value: 56525, note: '' },
+    ],
+  },
+  '/api/quotes': {
+    ok: true,
+    quotes: {
+      '601899': { code: '601899', name: '紫金矿业', price: 18.68, change_pct: 2.30, source: 'TDX API', stale: false, as_of: '2026-07-22 10:31:18', quote_note: null },
+      '300750': { code: '300750', name: '宁德时代', price: 287.22, change_pct: 1.45, source: '腾讯财经', stale: false, as_of: '2026-07-22 10:31:19', quote_note: null },
+      '002594': { code: '002594', name: '比亚迪', price: 113.05, change_pct: -1.17, source: 'TDX API', stale: false, as_of: '2026-07-22 10:31:18', quote_note: null },
+    },
+    missing: [],
   },
   '/api/recommendations/stats': {
     ok: true,
@@ -404,12 +672,65 @@ const fixtures = {
   },
   '/api/watchlist': {
     ok: true,
+    ts: '2026-07-22 10:31:22',
+    missing: [],
     items: [
-      { code: '601899', name: '紫金矿业', grade: 'A', status: '进入超短区间', target_low: 18.42, target_high: 18.76, quote: { price: 18.68, change_pct: 2.31 } },
-      { code: '300750', name: '宁德时代', grade: 'B', status: '接近区间上沿', target_low: 282.10, target_high: 286.80, quote: { price: 287.22, change_pct: 1.52 } },
-      { code: '002594', name: '比亚迪', grade: 'C', status: '仍在区间上方', target_low: 108.20, target_high: 111.60, quote: { price: 113.05, change_pct: -1.17 } },
-      { code: '300308', name: '中际旭创', grade: 'D', status: '等待结构修复', target_low: null, target_high: null, quote: { price: 162.30, change_pct: -2.04 } },
+      {
+        id: 'watch-audit-1', code: '601899', name: '紫金矿业', sector: '工业金属', grade: 'A', status: '在理想买入区间内',
+        risk_level: 2, add_reason: '用户记录：等待价格进入计划区间后再复核。', trigger_condition: '服务端区间内且用户条件仍成立',
+        no_buy_condition: '价格脱离计划区间时不追', abandon_condition: '用户记录的逻辑失效条件', abandon_price: 17.66, note: '审计固定 fixture，仅用于语义与布局验证',
+        manual_target_low: null, manual_target_high: null, target_low: 18.42, target_high: 18.76,
+        effective_target_low: 18.42, effective_target_high: 18.76, target_source: 'auto_ultra', created_at: '2026-07-18 09:12:00', missing: [],
+        quote: { name: '紫金矿业', price: 18.68, change_pct: 2.31, as_of: '2026-07-22 10:31:18', stale: false, source: 'TDX API' },
+        ideal_buy_zones: {
+          schema_version: 'watchlist-dual-zone-v2', algorithm_version: '2.0', ok: true, calculated_at: '2026-07-22 10:30:00', missing: [],
+          ultra: { state: 'complete', low: 18.42, high: 18.76, position: 'IN_ZONE', data_date: '2026-07-22', stale: false, missing: [], metrics: { sample_days: 3 } },
+          swing: { state: 'complete', low: 17.88, high: 18.35, position: 'ABOVE_ZONE', data_date: '2026-07-21', stale: false, missing: [], metrics: { daily_count: 60 } },
+        },
+      },
+      {
+        id: 'watch-audit-2', code: '300750', name: '宁德时代', sector: '电池', grade: 'B', status: '略高于上沿，继续观察',
+        risk_level: 3, add_reason: '用户记录：只等待条件，不追价。', trigger_condition: '价格回到手工边界并重新核对',
+        no_buy_condition: '服务端状态未进入计划区间', abandon_condition: '', abandon_price: null, note: '',
+        manual_target_low: 282.10, manual_target_high: null, target_low: 282.10, target_high: null,
+        effective_target_low: 282.10, effective_target_high: null, target_source: 'manual_override', created_at: '2026-07-19 14:20:00', missing: [],
+        quote: { name: '宁德时代', price: 287.22, change_pct: 1.52, as_of: '2026-07-22 10:28:05', stale: true, source: '腾讯财经' },
+        ideal_buy_zones: {
+          schema_version: 'watchlist-dual-zone-v2', algorithm_version: '2.0', ok: true, calculated_at: '2026-07-22 10:25:00', missing: ['超短线本次刷新失败'],
+          ultra: { state: 'degraded', low: 282.10, high: 286.80, position: 'ABOVE_ZONE', data_date: '2026-07-22', stale: true, missing: ['本次刷新失败，展示同交易日最近成功结果'] },
+          swing: { state: 'complete', low: 274.30, high: 280.90, position: 'ABOVE_ZONE', data_date: '2026-07-21', stale: false, missing: [] },
+        },
+      },
+      {
+        id: 'watch-audit-3', code: '300308', name: '中际旭创', sector: null, grade: null, status: '理想买入区间缺失',
+        risk_level: 4, add_reason: '', trigger_condition: '', no_buy_condition: '数据不完整时不动作', abandon_condition: '', abandon_price: null, note: '',
+        manual_target_low: null, manual_target_high: null, target_low: null, target_high: null,
+        effective_target_low: null, effective_target_high: null, target_source: 'missing', created_at: '2026-07-20 11:00:00', missing: ['现价', '理想买入区间'], quote: null,
+        identity_state: 'quote_unavailable',
+        ideal_buy_zones: {
+          schema_version: 'watchlist-dual-zone-v2', algorithm_version: '2.0', ok: false, missing: ['日线不足60根', '5分钟线不足3个交易日'],
+          ultra: { state: 'missing', low: null, high: null, position: null, data_date: '2026-07-22', missing: ['5分钟线不足3个交易日'] },
+          swing: { state: 'missing', low: null, high: null, position: null, data_date: '2026-07-21', missing: ['日线不足60根'] },
+        },
+      },
+      {
+        id: 'watch-audit-4', code: '600000', name: '浦发银行', sector: '银行', grade: 'C', status: '低于理想买入区间',
+        risk_level: 3, add_reason: '等待服务端价格条件重新确认。', trigger_condition: '重新进入生效区间',
+        no_buy_condition: '关键证据缺失时不动作', abandon_condition: '跌破用户记录的放弃价', abandon_price: 11.72, note: '',
+        manual_target_low: null, manual_target_high: null, target_low: 12.08, target_high: 12.24,
+        effective_target_low: 12.08, effective_target_high: 12.24, target_source: 'auto_ultra', created_at: '2026-07-21 09:40:00', missing: [],
+        quote: { name: '浦发银行', price: 11.96, change_pct: -0.42, as_of: '2026-07-22 10:30:44', stale: false, source: 'TDX API' },
+        ideal_buy_zones: {
+          schema_version: 'watchlist-dual-zone-v2', algorithm_version: '2.0', ok: true, calculated_at: '2026-07-22 10:30:00', missing: [],
+          ultra: { state: 'complete', low: 12.08, high: 12.24, position: 'BELOW_ZONE', data_date: '2026-07-22', stale: false, missing: [] },
+          swing: { state: 'complete', low: 11.80, high: 12.02, position: 'IN_ZONE', data_date: '2026-07-21', stale: false, missing: [] },
+        },
+      },
     ],
+  },
+  '/api/quote/600000': {
+    ok: false, state: 'quote_unavailable', recognized: true,
+    error: '股票已识别，但当前报价源暂未返回', identity: { name: '浦发银行' }, quote: null,
   },
 }
 
@@ -422,10 +743,16 @@ const viewports = [
 ]
 const auditedPages = [
   { name: 'hotboard', hash: '#/today?tab=hotboard', titleSelector: '#hotboard-page-title' },
+  { name: 'capital', hash: '#/today?tab=capital', titleSelector: '#capital-page-title' },
   { name: 'timing', hash: '#/today?tab=timing', titleSelector: '#timing-page-title' },
+  { name: 'mainline', hash: '#/today?tab=mainline', titleSelector: '#mainline-research-title' },
+  { name: 'sentiment', hash: '#/today?tab=news', titleSelector: '#sentiment-page-title' },
   { name: 'premarket', hash: '#/premarket?tab=report', titleSelector: '#premarket-page-title' },
   { name: 'tail', hash: '#/tail?tab=decision', titleSelector: '#tail-page-title' },
   { name: 'review', hash: '#/review?tab=close', titleSelector: '#close-review-page-title' },
+  { name: 'tomorrow', hash: '#/review?tab=tomorrow', titleSelector: '#tomorrow-page-title' },
+  { name: 'holdings', hash: '#/risk?tab=holdings', titleSelector: '#holdings-page-title' },
+  { name: 'watchlist', hash: '#/risk?tab=watchlist', titleSelector: '#watchlist-page-title' },
 ]
 
 await mkdir(outputDir, { recursive: true })
@@ -469,6 +796,7 @@ try {
         overflow: Math.max(0, root.scrollWidth - window.innerWidth),
         mainContentPresent: Boolean(document.querySelector('#main-content h1')),
         mainContentHeight: document.querySelector('#main-content')?.getBoundingClientRect().height || 0,
+        retiredSimulationAbsent: !document.querySelector('#primary-navigation')?.textContent?.includes('模拟执行'),
         heatmapFallbackVisible: document.body.innerText.includes('面积改用 |涨跌幅|')
           && document.querySelectorAll('.sector-treemap rect').length === 9,
         heatmapLabelHierarchy: {
@@ -696,6 +1024,97 @@ try {
   })
   await reviewPartialPage.close()
 
+  const tomorrowLoadingPage = await browser.newPage({ viewport: { width: 375, height: 812 }, deviceScaleFactor: 1 })
+  const tomorrowLoadingErrors = []
+  tomorrowLoadingPage.on('pageerror', (error) => tomorrowLoadingErrors.push(error.message))
+  await tomorrowLoadingPage.addInitScript(() => localStorage.setItem('wudi-vue-theme', 'dark'))
+  await tomorrowLoadingPage.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    if (['/api/reports/evening', '/api/watchlist'].includes(path)) await new Promise((resolveDelay) => setTimeout(resolveDelay, 1800))
+    const body = fixtures[path]
+    return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
+  })
+  await tomorrowLoadingPage.goto('http://127.0.0.1:4175/#/review?tab=tomorrow', { waitUntil: 'domcontentloaded' })
+  await tomorrowLoadingPage.waitForSelector('.tomorrow-loading')
+  await tomorrowLoadingPage.addScriptTag({ content: axeSource })
+  const tomorrowLoadingAxe = await tomorrowLoadingPage.evaluate(async () => window.axe.run(document, {
+    runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+  }))
+  await tomorrowLoadingPage.screenshot({ path: resolve(outputDir, 'tomorrow-loading-375.png'), fullPage: true })
+  report.push({
+    page: 'tomorrow', scenario: 'loading',
+    tomorrowLoadingStateComplete: await tomorrowLoadingPage.locator('.tomorrow-loading').isVisible(),
+    pageErrors: tomorrowLoadingErrors,
+    violations: tomorrowLoadingAxe.violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help, nodes: item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })),
+  })
+  await tomorrowLoadingPage.close()
+
+  const tomorrowEmptyPage = await browser.newPage({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 1 })
+  const tomorrowEmptyErrors = []
+  tomorrowEmptyPage.on('pageerror', (error) => tomorrowEmptyErrors.push(error.message))
+  await tomorrowEmptyPage.addInitScript(() => localStorage.setItem('wudi-vue-theme', 'dark'))
+  await tomorrowEmptyPage.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    let body = fixtures[path]
+    if (path === '/api/reports/evening') body = { ok: false, error: '审计场景：该日期暂无次日策略定稿' }
+    if (path === '/api/watchlist') body = { ok: true, items: [], missing: [] }
+    return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
+  })
+  await tomorrowEmptyPage.goto('http://127.0.0.1:4175/#/review?tab=tomorrow', { waitUntil: 'networkidle' })
+  await tomorrowEmptyPage.addScriptTag({ content: axeSource })
+  const tomorrowEmptyState = await tomorrowEmptyPage.evaluate(() => {
+    const text = document.body.innerText
+    return {
+      report: text.includes('次日策略尚未定稿'),
+      watchlist: text.includes('观察池返回真实空数组'),
+      missingRisk: text.includes('收盘风险结论暂不可用'),
+      noZeroFill: !text.includes('0 级'),
+    }
+  })
+  const tomorrowEmptyAxe = await tomorrowEmptyPage.evaluate(async () => window.axe.run(document, {
+    runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+  }))
+  await tomorrowEmptyPage.screenshot({ path: resolve(outputDir, 'tomorrow-empty-1440.png'), fullPage: true })
+  report.push({
+    page: 'tomorrow', scenario: 'empty', tomorrowEmptyState,
+    tomorrowEmptyStateComplete: Object.values(tomorrowEmptyState).every(Boolean),
+    pageErrors: tomorrowEmptyErrors,
+    violations: tomorrowEmptyAxe.violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help, nodes: item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })),
+  })
+  await tomorrowEmptyPage.close()
+
+  const tomorrowPartialPage = await browser.newPage({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 1 })
+  const tomorrowPartialErrors = []
+  tomorrowPartialPage.on('pageerror', (error) => tomorrowPartialErrors.push(error.message))
+  await tomorrowPartialPage.addInitScript(() => localStorage.setItem('wudi-vue-theme', 'dark'))
+  await tomorrowPartialPage.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    if (path === '/api/watchlist') return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: '审计场景：观察池行情源暂不可用' }) })
+    const body = fixtures[path]
+    return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
+  })
+  await tomorrowPartialPage.goto('http://127.0.0.1:4175/#/review?tab=tomorrow', { waitUntil: 'networkidle' })
+  await tomorrowPartialPage.addScriptTag({ content: axeSource })
+  const tomorrowPartialState = await tomorrowPartialPage.evaluate(() => {
+    const text = document.body.innerText
+    return {
+      reportSurvives: text.includes('次日策略（供 2026-07-23 使用）') && text.includes('明日唯一动作'),
+      localFailure: text.includes('明日观察池暂不可用') && text.includes('观察池行情源暂不可用'),
+      governanceSurvives: text.includes('尾盘 + 收盘齐备') && text.includes('已提交推送，未确认送达'),
+    }
+  })
+  const tomorrowPartialAxe = await tomorrowPartialPage.evaluate(async () => window.axe.run(document, {
+    runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+  }))
+  await tomorrowPartialPage.screenshot({ path: resolve(outputDir, 'tomorrow-partial-failure-1440.png'), fullPage: true })
+  report.push({
+    page: 'tomorrow', scenario: 'partial-failure', tomorrowPartialState,
+    tomorrowPartialStateComplete: Object.values(tomorrowPartialState).every(Boolean),
+    pageErrors: tomorrowPartialErrors,
+    violations: tomorrowPartialAxe.violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help, nodes: item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })),
+  })
+  await tomorrowPartialPage.close()
+
   const hotboardLoadingPage = await browser.newPage({ viewport: { width: 375, height: 812 }, deviceScaleFactor: 1 })
   const hotboardLoadingErrors = []
   hotboardLoadingPage.on('pageerror', (error) => hotboardLoadingErrors.push(error.message))
@@ -900,6 +1319,517 @@ try {
   })
   await timingFailurePage.close()
 
+  const mainlineLoadingPage = await browser.newPage({ viewport: { width: 375, height: 812 }, deviceScaleFactor: 1 })
+  const mainlineLoadingErrors = []
+  mainlineLoadingPage.on('pageerror', (error) => mainlineLoadingErrors.push(error.message))
+  await mainlineLoadingPage.addInitScript(() => localStorage.setItem('wudi-vue-theme', 'dark'))
+  await mainlineLoadingPage.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    if (path.startsWith('/api/features/')) await new Promise((resolveDelay) => setTimeout(resolveDelay, 1800))
+    const body = fixtures[path]
+    return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
+  })
+  await mainlineLoadingPage.goto('http://127.0.0.1:4175/#/today?tab=mainline', { waitUntil: 'domcontentloaded' })
+  await mainlineLoadingPage.waitForSelector('.mainline-workbench [role="status"]')
+  await mainlineLoadingPage.addScriptTag({ content: axeSource })
+  const mainlineLoadingCount = await mainlineLoadingPage.locator('.mainline-workbench [role="status"]').count()
+  const mainlineLoadingAxe = await mainlineLoadingPage.evaluate(async () => window.axe.run(document, {
+    runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+  }))
+  await mainlineLoadingPage.screenshot({ path: resolve(outputDir, 'mainline-loading-375.png'), fullPage: true })
+  report.push({
+    page: 'mainline', scenario: 'loading', mainlineLoadingStateComplete: mainlineLoadingCount >= 4,
+    pageErrors: mainlineLoadingErrors,
+    violations: mainlineLoadingAxe.violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help, nodes: item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })),
+  })
+  await mainlineLoadingPage.close()
+
+  const mainlineEmptyPage = await browser.newPage({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 1 })
+  const mainlineEmptyErrors = []
+  mainlineEmptyPage.on('pageerror', (error) => mainlineEmptyErrors.push(error.message))
+  await mainlineEmptyPage.addInitScript(() => localStorage.setItem('wudi-vue-theme', 'dark'))
+  await mainlineEmptyPage.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    let body = fixtures[path]
+    if (path === '/api/features/money-effect') body = { ok: true, ts: '2026-07-22 10:31:26', data_date: '2026-07-22', data_state: 'complete', missing: [], themes: [], losers: [] }
+    if (path === '/api/features/crowdedness') body = { ok: true, ts: '2026-07-22 10:31:28', data_date: '2026-07-22', data_state: 'complete', missing: [], sectors: [] }
+    if (path === '/api/features/mainline') body = { ok: true, ts: '2026-07-22 10:31:30', data_date: '2026-07-22', data_state: 'accumulating', state_label: '已积累0/2日', note: '市场主线需至少 2 个交易日数据累积', missing: [], mainlines: [], today_top: [] }
+    if (path === '/api/features/leaders') body = { ok: true, ts: '2026-07-22 10:31:32', data_date: '2026-07-22', missing: [], kongban: null, ladder: [], popularity: [] }
+    return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
+  })
+  await mainlineEmptyPage.goto('http://127.0.0.1:4175/#/today?tab=mainline', { waitUntil: 'networkidle' })
+  await mainlineEmptyPage.addScriptTag({ content: axeSource })
+  const mainlineEmptyState = await mainlineEmptyPage.evaluate(() => {
+    const text = document.body.innerText
+    return {
+      money: text.includes('本次未计算出赚钱效应记录'),
+      crowd: text.includes('本次未计算出拥挤度记录'),
+      continuity: text.includes('当前没有形成可展示的跨日主线'),
+      leaders: text.includes('当前批次未形成龙头梯队'),
+      noSampleClaim: !text.includes('近 0 个交易日强度首位'),
+    }
+  })
+  const mainlineEmptyAxe = await mainlineEmptyPage.evaluate(async () => window.axe.run(document, {
+    runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+  }))
+  await mainlineEmptyPage.screenshot({ path: resolve(outputDir, 'mainline-empty-1440.png'), fullPage: true })
+  report.push({
+    page: 'mainline', scenario: 'empty', mainlineEmptyState,
+    mainlineEmptyStateComplete: Object.values(mainlineEmptyState).every(Boolean),
+    pageErrors: mainlineEmptyErrors,
+    violations: mainlineEmptyAxe.violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help, nodes: item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })),
+  })
+  await mainlineEmptyPage.close()
+
+  const mainlineFailurePage = await browser.newPage({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 1 })
+  const mainlineFailureErrors = []
+  mainlineFailurePage.on('pageerror', (error) => mainlineFailureErrors.push(error.message))
+  await mainlineFailurePage.addInitScript(() => localStorage.setItem('wudi-vue-theme', 'dark'))
+  await mainlineFailurePage.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    if (path === '/api/features/crowdedness') return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: '审计场景：拥挤度数据源当前不可达' }) })
+    const body = fixtures[path]
+    return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
+  })
+  await mainlineFailurePage.goto('http://127.0.0.1:4175/#/today?tab=mainline', { waitUntil: 'networkidle' })
+  await mainlineFailurePage.addScriptTag({ content: axeSource })
+  const mainlineFailureState = await mainlineFailurePage.evaluate(() => {
+    const text = document.body.innerText
+    return {
+      localError: text.includes('交易拥挤度暂不可用') && text.includes('审计场景：拥挤度数据源当前不可达'),
+      moneyRetained: text.includes('题材赚钱效应') && text.includes('先进制造'),
+      mainlineRetained: text.includes('跨日主线持续性') && text.includes('算力基础设施'),
+      leadersRetained: text.includes('情绪龙头梯队') && text.includes('立新能源'),
+    }
+  })
+  const mainlineFailureAxe = await mainlineFailurePage.evaluate(async () => window.axe.run(document, {
+    runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+  }))
+  await mainlineFailurePage.screenshot({ path: resolve(outputDir, 'mainline-partial-failure-1440.png'), fullPage: true })
+  report.push({
+    page: 'mainline', scenario: 'partial-failure', mainlineFailureState,
+    mainlineFailureStateComplete: Object.values(mainlineFailureState).every(Boolean),
+    pageErrors: mainlineFailureErrors,
+    violations: mainlineFailureAxe.violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help, nodes: item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })),
+  })
+  await mainlineFailurePage.close()
+
+  const capitalLoadingPage = await browser.newPage({ viewport: { width: 375, height: 812 }, deviceScaleFactor: 1 })
+  const capitalLoadingErrors = []
+  capitalLoadingPage.on('pageerror', (error) => capitalLoadingErrors.push(error.message))
+  await capitalLoadingPage.addInitScript(() => localStorage.setItem('wudi-vue-theme', 'dark'))
+  await capitalLoadingPage.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    if (path === '/api/capital/trends') await new Promise((resolveDelay) => setTimeout(resolveDelay, 1800))
+    const body = fixtures[path]
+    return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
+  })
+  await capitalLoadingPage.goto('http://127.0.0.1:4175/#/today?tab=capital', { waitUntil: 'domcontentloaded' })
+  await capitalLoadingPage.waitForSelector('.capital-loading')
+  await capitalLoadingPage.addScriptTag({ content: axeSource })
+  const capitalLoadingAxe = await capitalLoadingPage.evaluate(async () => window.axe.run(document, {
+    runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+  }))
+  await capitalLoadingPage.screenshot({ path: resolve(outputDir, 'capital-loading-375.png'), fullPage: true })
+  report.push({
+    page: 'capital', scenario: 'loading',
+    capitalLoadingStateComplete: await capitalLoadingPage.locator('.capital-loading').isVisible(),
+    pageErrors: capitalLoadingErrors,
+    violations: capitalLoadingAxe.violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help, nodes: item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })),
+  })
+  await capitalLoadingPage.close()
+
+  const capitalEmptyPage = await browser.newPage({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 1 })
+  const capitalEmptyErrors = []
+  capitalEmptyPage.on('pageerror', (error) => capitalEmptyErrors.push(error.message))
+  await capitalEmptyPage.addInitScript(() => localStorage.setItem('wudi-vue-theme', 'dark'))
+  await capitalEmptyPage.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    const body = path === '/api/capital/trends'
+      ? { ok: true, ts: '2026-07-22 10:31:36', snap_ts: '', today: '2026-07-22', sector_date: '', hot_date: '', view_state: 'empty', stale_sector: false, stale_hot: false, sectors: [], hot_stocks: [] }
+      : fixtures[path]
+    return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
+  })
+  await capitalEmptyPage.goto('http://127.0.0.1:4175/#/today?tab=capital', { waitUntil: 'networkidle' })
+  await capitalEmptyPage.addScriptTag({ content: axeSource })
+  const capitalEmptyState = await capitalEmptyPage.evaluate(() => {
+    const text = document.body.innerText
+    return {
+      empty: text.includes('当前无资金快照'),
+      noFixture: !text.includes('紫金矿业') && !text.includes('工业金属'),
+      missingNotZero: !text.includes('0.00 亿'),
+    }
+  })
+  const capitalEmptyAxe = await capitalEmptyPage.evaluate(async () => window.axe.run(document, {
+    runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+  }))
+  await capitalEmptyPage.screenshot({ path: resolve(outputDir, 'capital-empty-1440.png'), fullPage: true })
+  report.push({
+    page: 'capital', scenario: 'empty', capitalEmptyState,
+    capitalEmptyStateComplete: Object.values(capitalEmptyState).every(Boolean),
+    pageErrors: capitalEmptyErrors,
+    violations: capitalEmptyAxe.violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help, nodes: item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })),
+  })
+  await capitalEmptyPage.close()
+
+  const capitalFailurePage = await browser.newPage({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 1 })
+  const capitalFailureErrors = []
+  capitalFailurePage.on('pageerror', (error) => capitalFailureErrors.push(error.message))
+  await capitalFailurePage.addInitScript(() => localStorage.setItem('wudi-vue-theme', 'dark'))
+  await capitalFailurePage.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    if (path === '/api/capital/snapshot' && route.request().method() === 'POST') {
+      return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: '审计场景：手动快照采集源暂不可用' }) })
+    }
+    const body = fixtures[path]
+    return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
+  })
+  await capitalFailurePage.goto('http://127.0.0.1:4175/#/today?tab=capital', { waitUntil: 'networkidle' })
+  await capitalFailurePage.locator('.capital-snapshot-button').click()
+  await capitalFailurePage.waitForSelector('.capital-action-feedback.is-danger')
+  await capitalFailurePage.addScriptTag({ content: axeSource })
+  const capitalFailureState = await capitalFailurePage.evaluate(() => {
+    const text = document.body.innerText
+    return {
+      actionFailure: text.includes('采集失败') && text.includes('手动快照采集源暂不可用'),
+      sectorRetained: text.includes('工业金属'),
+      stockRetained: text.includes('紫金矿业'),
+      unitWarningRetained: text.includes('原始值 · 未核验'),
+    }
+  })
+  const capitalFailureAxe = await capitalFailurePage.evaluate(async () => window.axe.run(document, {
+    runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+  }))
+  await capitalFailurePage.screenshot({ path: resolve(outputDir, 'capital-partial-failure-1440.png'), fullPage: true })
+  report.push({
+    page: 'capital', scenario: 'partial-failure', capitalFailureState,
+    capitalFailureStateComplete: Object.values(capitalFailureState).every(Boolean),
+    pageErrors: capitalFailureErrors,
+    violations: capitalFailureAxe.violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help, nodes: item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })),
+  })
+  await capitalFailurePage.close()
+
+  const sentimentLoadingPage = await browser.newPage({ viewport: { width: 375, height: 812 }, deviceScaleFactor: 1 })
+  const sentimentLoadingErrors = []
+  sentimentLoadingPage.on('pageerror', (error) => sentimentLoadingErrors.push(error.message))
+  await sentimentLoadingPage.addInitScript(() => localStorage.setItem('wudi-vue-theme', 'dark'))
+  await sentimentLoadingPage.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    if (path === '/api/news/a-share') await new Promise((resolveDelay) => setTimeout(resolveDelay, 1800))
+    const body = fixtures[path]
+    return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
+  })
+  await sentimentLoadingPage.goto('http://127.0.0.1:4175/#/today?tab=news', { waitUntil: 'domcontentloaded' })
+  await sentimentLoadingPage.waitForSelector('.sentiment-loading')
+  await sentimentLoadingPage.addScriptTag({ content: axeSource })
+  const sentimentLoadingAxe = await sentimentLoadingPage.evaluate(async () => window.axe.run(document, {
+    runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+  }))
+  await sentimentLoadingPage.screenshot({ path: resolve(outputDir, 'sentiment-loading-375.png'), fullPage: true })
+  report.push({
+    page: 'sentiment', scenario: 'loading',
+    sentimentLoadingStateComplete: await sentimentLoadingPage.locator('.sentiment-loading').isVisible(),
+    pageErrors: sentimentLoadingErrors,
+    violations: sentimentLoadingAxe.violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help, nodes: item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })),
+  })
+  await sentimentLoadingPage.close()
+
+  const sentimentEmptyPage = await browser.newPage({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 1 })
+  const sentimentEmptyErrors = []
+  sentimentEmptyPage.on('pageerror', (error) => sentimentEmptyErrors.push(error.message))
+  await sentimentEmptyPage.addInitScript(() => localStorage.setItem('wudi-vue-theme', 'dark'))
+  await sentimentEmptyPage.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    const body = path === '/api/news/a-share'
+      ? { ok: true, ts: '2026-07-22 10:40:00', cn_fetched_at: '2026-07-22 10:40:00', fetched_at: '2026-07-22T10:40:00+08:00', latest_event_time: null, refresh_seconds: 30, sources_tried: 3, sources_live: 3, missing: [], items: [], mapping: { state: 'complete', mapped: 0, candidates: 0, total: 0, missing: [] }, observation: { enabled: true, state: 'empty', tracked: 0, missing: [] }, pipeline: { source_state: 'complete', entity_mapping_state: 'complete', market_observation_state: 'empty', validation_state: 'empty' } }
+      : fixtures[path]
+    return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
+  })
+  await sentimentEmptyPage.goto('http://127.0.0.1:4175/#/today?tab=news', { waitUntil: 'networkidle' })
+  await sentimentEmptyPage.addScriptTag({ content: axeSource })
+  const sentimentEmptyState = await sentimentEmptyPage.evaluate(() => {
+    const text = document.body.innerText
+    return {
+      emptyLabel: text.includes('真实空结果'),
+      noEvent: text.includes('当前暂无可展示的舆情事件'),
+      missingTimeNotZero: text.includes('最新事件\n—') && !text.includes('最新事件\n00:00'),
+    }
+  })
+  const sentimentEmptyAxe = await sentimentEmptyPage.evaluate(async () => window.axe.run(document, {
+    runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+  }))
+  await sentimentEmptyPage.screenshot({ path: resolve(outputDir, 'sentiment-empty-1440.png'), fullPage: true })
+  report.push({
+    page: 'sentiment', scenario: 'empty', sentimentEmptyState,
+    sentimentEmptyStateComplete: Object.values(sentimentEmptyState).every(Boolean),
+    pageErrors: sentimentEmptyErrors,
+    violations: sentimentEmptyAxe.violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help, nodes: item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })),
+  })
+  await sentimentEmptyPage.close()
+
+  const sentimentFailurePage = await browser.newPage({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 1 })
+  const sentimentFailureErrors = []
+  let sentimentCalls = 0
+  sentimentFailurePage.on('pageerror', (error) => sentimentFailureErrors.push(error.message))
+  await sentimentFailurePage.addInitScript(() => localStorage.setItem('wudi-vue-theme', 'dark'))
+  await sentimentFailurePage.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    if (path === '/api/news/a-share') {
+      sentimentCalls += 1
+      if (sentimentCalls > 1) return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: '审计场景：新闻采集链暂不可用' }) })
+    }
+    const body = fixtures[path]
+    return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
+  })
+  await sentimentFailurePage.goto('http://127.0.0.1:4175/#/today?tab=news', { waitUntil: 'networkidle' })
+  await sentimentFailurePage.locator('.sentiment-event-toggle').first().click()
+  await sentimentFailurePage.locator('.refresh-button').click()
+  await sentimentFailurePage.waitForSelector('.sentiment-alert')
+  await sentimentFailurePage.addScriptTag({ content: axeSource })
+  const sentimentFailureState = await sentimentFailurePage.evaluate(() => {
+    const text = document.body.innerText
+    return {
+      localFailure: text.includes('最新刷新失败，保留已加载事件'),
+      retainedEvent: text.includes('世茂能源发布股权转让公告'),
+      truthfulBoundary: text.includes('不判断利多利空'),
+      evidenceDetails: text.includes('采集证据') && text.includes('独立信源待确认'),
+    }
+  })
+  const sentimentFailureAxe = await sentimentFailurePage.evaluate(async () => window.axe.run(document, {
+    runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+  }))
+  await sentimentFailurePage.screenshot({ path: resolve(outputDir, 'sentiment-partial-failure-1440.png'), fullPage: true })
+  report.push({
+    page: 'sentiment', scenario: 'partial-failure', sentimentFailureState,
+    sentimentFailureStateComplete: Object.values(sentimentFailureState).every(Boolean),
+    pageErrors: sentimentFailureErrors,
+    violations: sentimentFailureAxe.violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help, nodes: item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })),
+  })
+  await sentimentFailurePage.close()
+
+  const holdingsLoadingPage = await browser.newPage({ viewport: { width: 375, height: 812 }, deviceScaleFactor: 1 })
+  const holdingsLoadingErrors = []
+  holdingsLoadingPage.on('pageerror', (error) => holdingsLoadingErrors.push(error.message))
+  await holdingsLoadingPage.addInitScript(() => localStorage.setItem('wudi-vue-theme', 'dark'))
+  await holdingsLoadingPage.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    if (path === '/api/holdings') await new Promise((resolveDelay) => setTimeout(resolveDelay, 1800))
+    const body = fixtures[path]
+    return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
+  })
+  await holdingsLoadingPage.goto('http://127.0.0.1:4175/#/risk?tab=holdings', { waitUntil: 'domcontentloaded' })
+  await holdingsLoadingPage.waitForSelector('.holdings-loading')
+  await holdingsLoadingPage.addScriptTag({ content: axeSource })
+  const holdingsLoadingAxe = await holdingsLoadingPage.evaluate(async () => window.axe.run(document, {
+    runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+  }))
+  await holdingsLoadingPage.screenshot({ path: resolve(outputDir, 'holdings-loading-375.png'), fullPage: true })
+  report.push({
+    page: 'holdings', scenario: 'loading',
+    holdingsLoadingStateComplete: await holdingsLoadingPage.locator('.holdings-loading').isVisible(),
+    pageErrors: holdingsLoadingErrors,
+    violations: holdingsLoadingAxe.violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help, nodes: item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })),
+  })
+  await holdingsLoadingPage.close()
+
+  const holdingsEmptyPage = await browser.newPage({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 1 })
+  const holdingsEmptyErrors = []
+  holdingsEmptyPage.on('pageerror', (error) => holdingsEmptyErrors.push(error.message))
+  await holdingsEmptyPage.addInitScript(() => localStorage.setItem('wudi-vue-theme', 'dark'))
+  await holdingsEmptyPage.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    const body = path === '/api/holdings'
+      ? { ok: true, holdings: [] }
+      : fixtures[path]
+    return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
+  })
+  await holdingsEmptyPage.goto('http://127.0.0.1:4175/#/risk?tab=holdings', { waitUntil: 'networkidle' })
+  await holdingsEmptyPage.addScriptTag({ content: axeSource })
+  const holdingsEmptyState = await holdingsEmptyPage.evaluate(() => {
+    const text = document.body.innerText
+    return {
+      truthfulEmpty: text.includes('真实空数组') && text.includes('当前未记录持仓'),
+      noPlaceholderRows: text.includes('不会插入示例股票、零成本或零股数'),
+      automaticTotals: text.includes('持仓总市值\n—') && text.includes('投入成本\n—'),
+    }
+  })
+  const holdingsEmptyAxe = await holdingsEmptyPage.evaluate(async () => window.axe.run(document, {
+    runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+  }))
+  await holdingsEmptyPage.screenshot({ path: resolve(outputDir, 'holdings-empty-1440.png'), fullPage: true })
+  report.push({
+    page: 'holdings', scenario: 'empty', holdingsEmptyState,
+    holdingsEmptyStateComplete: Object.values(holdingsEmptyState).every(Boolean),
+    pageErrors: holdingsEmptyErrors,
+    violations: holdingsEmptyAxe.violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help, nodes: item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })),
+  })
+  await holdingsEmptyPage.close()
+
+  const holdingsFailurePage = await browser.newPage({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 1 })
+  const holdingsFailureErrors = []
+  holdingsFailurePage.on('pageerror', (error) => holdingsFailureErrors.push(error.message))
+  await holdingsFailurePage.addInitScript(() => localStorage.setItem('wudi-vue-theme', 'dark'))
+  await holdingsFailurePage.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    if (path === '/api/quotes') {
+      return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: '审计场景：批量报价源暂不可用' }) })
+    }
+    const body = fixtures[path]
+    return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
+  })
+  await holdingsFailurePage.goto('http://127.0.0.1:4175/#/risk?tab=holdings', { waitUntil: 'networkidle' })
+  await holdingsFailurePage.addScriptTag({ content: axeSource })
+  const holdingsFailureState = await holdingsFailurePage.evaluate(() => {
+    const text = document.body.innerText
+    return {
+      localFailure: text.includes('报价局部失败，持仓账本仍可编辑') && text.includes('批量报价源暂不可用'),
+      holdingsSurvive: text.includes('紫金矿业') && text.includes('宁德时代') && text.includes('比亚迪'),
+      aggregateMissing: text.includes('持仓总市值\n—') && text.includes('浮动盈亏\n—'),
+      retryAvailable: text.includes('重试报价'),
+    }
+  })
+  const holdingsFailureAxe = await holdingsFailurePage.evaluate(async () => window.axe.run(document, {
+    runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+  }))
+  await holdingsFailurePage.screenshot({ path: resolve(outputDir, 'holdings-partial-failure-1440.png'), fullPage: true })
+  report.push({
+    page: 'holdings', scenario: 'partial-failure', holdingsFailureState,
+    holdingsFailureStateComplete: Object.values(holdingsFailureState).every(Boolean),
+    pageErrors: holdingsFailureErrors,
+    violations: holdingsFailureAxe.violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help, nodes: item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })),
+  })
+  await holdingsFailurePage.close()
+
+  const watchlistLoadingPage = await browser.newPage({ viewport: { width: 375, height: 812 }, deviceScaleFactor: 1 })
+  const watchlistLoadingErrors = []
+  watchlistLoadingPage.on('pageerror', (error) => watchlistLoadingErrors.push(error.message))
+  await watchlistLoadingPage.addInitScript(() => localStorage.setItem('wudi-vue-theme', 'dark'))
+  await watchlistLoadingPage.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    if (path === '/api/watchlist') await new Promise((resolveDelay) => setTimeout(resolveDelay, 1800))
+    const body = fixtures[path]
+    return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
+  })
+  await watchlistLoadingPage.goto('http://127.0.0.1:4175/#/risk?tab=watchlist', { waitUntil: 'domcontentloaded' })
+  await watchlistLoadingPage.waitForSelector('.watchlist-loading')
+  await watchlistLoadingPage.addScriptTag({ content: axeSource })
+  const watchlistLoadingAxe = await watchlistLoadingPage.evaluate(async () => window.axe.run(document, {
+    runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+  }))
+  await watchlistLoadingPage.screenshot({ path: resolve(outputDir, 'watchlist-loading-375.png'), fullPage: true })
+  report.push({
+    page: 'watchlist', scenario: 'loading',
+    watchlistLoadingStateComplete: await watchlistLoadingPage.locator('.watchlist-loading').isVisible(),
+    pageErrors: watchlistLoadingErrors,
+    violations: watchlistLoadingAxe.violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help, nodes: item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })),
+  })
+  await watchlistLoadingPage.close()
+
+  const watchlistEmptyPage = await browser.newPage({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 1 })
+  const watchlistEmptyErrors = []
+  watchlistEmptyPage.on('pageerror', (error) => watchlistEmptyErrors.push(error.message))
+  await watchlistEmptyPage.addInitScript(() => localStorage.setItem('wudi-vue-theme', 'dark'))
+  await watchlistEmptyPage.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    const body = path === '/api/watchlist'
+      ? { ok: true, ts: '2026-07-22 10:31:22', items: [], missing: [] }
+      : fixtures[path]
+    return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
+  })
+  await watchlistEmptyPage.goto('http://127.0.0.1:4175/#/risk?tab=watchlist', { waitUntil: 'networkidle' })
+  await watchlistEmptyPage.addScriptTag({ content: axeSource })
+  const watchlistEmptyState = await watchlistEmptyPage.evaluate(() => {
+    const text = document.body.innerText
+    return {
+      truthfulEmpty: text.includes('真实空数组') && text.includes('当前观察池为空'),
+      primaryAction: text.includes('添加第一只观察标的'),
+      noFixtureRows: !text.includes('紫金矿业') && !text.includes('宁德时代'),
+      noZeroFill: !text.includes('0.00 元'),
+    }
+  })
+  const watchlistEmptyAxe = await watchlistEmptyPage.evaluate(async () => window.axe.run(document, {
+    runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+  }))
+  await watchlistEmptyPage.screenshot({ path: resolve(outputDir, 'watchlist-empty-1440.png'), fullPage: true })
+  report.push({
+    page: 'watchlist', scenario: 'empty', watchlistEmptyState,
+    watchlistEmptyStateComplete: Object.values(watchlistEmptyState).every(Boolean),
+    pageErrors: watchlistEmptyErrors,
+    violations: watchlistEmptyAxe.violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help, nodes: item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })),
+  })
+  await watchlistEmptyPage.getByRole('button', { name: '添加第一只观察标的' }).click()
+  await watchlistEmptyPage.waitForSelector('dialog.watchlist-editor[open]')
+  const watchlistModalState = await watchlistEmptyPage.evaluate(() => {
+    const dialog = document.querySelector('dialog.watchlist-editor')
+    const text = dialog?.textContent || ''
+    return {
+      nativeModal: dialog instanceof HTMLDialogElement && dialog.open,
+      serverRiskOnly: text.includes('风险边界等级由服务端计算') && !text.includes('请选择风险等级'),
+      codeFocused: document.activeElement?.getAttribute('inputmode') === 'numeric',
+      saveVisible: (() => {
+        const rect = dialog?.querySelector('button[type="submit"]')?.getBoundingClientRect()
+        return Boolean(rect && rect.top >= 0 && rect.bottom <= window.innerHeight)
+      })(),
+      backgroundStable: document.querySelectorAll('.watchlist-card').length === 0,
+    }
+  })
+  const watchlistModalAxe = await watchlistEmptyPage.evaluate(async () => window.axe.run(document, {
+    runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+  }))
+  await watchlistEmptyPage.screenshot({ path: resolve(outputDir, 'watchlist-add-modal-1440.png'), fullPage: true })
+  report.push({
+    page: 'watchlist', scenario: 'add-modal', watchlistModalState,
+    watchlistModalStateComplete: Object.values(watchlistModalState).every(Boolean),
+    pageErrors: watchlistEmptyErrors,
+    violations: watchlistModalAxe.violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help, nodes: item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })),
+  })
+  await watchlistEmptyPage.close()
+
+  const watchlistFailurePage = await browser.newPage({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 1 })
+  const watchlistFailureErrors = []
+  let watchlistCalls = 0
+  watchlistFailurePage.on('pageerror', (error) => watchlistFailureErrors.push(error.message))
+  await watchlistFailurePage.addInitScript(() => localStorage.setItem('wudi-vue-theme', 'dark'))
+  await watchlistFailurePage.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    if (path === '/api/watchlist') {
+      watchlistCalls += 1
+      if (watchlistCalls > 1) {
+        return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: '审计场景：观察池刷新链暂不可用' }) })
+      }
+    }
+    const body = fixtures[path]
+    return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
+  })
+  await watchlistFailurePage.goto('http://127.0.0.1:4175/#/risk?tab=watchlist', { waitUntil: 'networkidle' })
+  await watchlistFailurePage.locator('.refresh-button').click()
+  await watchlistFailurePage.waitForSelector('.watchlist-alert')
+  await watchlistFailurePage.addScriptTag({ content: axeSource })
+  const watchlistFailureState = await watchlistFailurePage.evaluate(() => {
+    const text = document.body.innerText
+    const cardTops = [...document.querySelectorAll('.watchlist-card')]
+      .slice(0, 4)
+      .map((card) => card.getBoundingClientRect().top)
+    return {
+      localFailure: text.includes('自动刷新失败，保留最近已加载内容') && text.includes('观察池刷新链暂不可用'),
+      itemsSurvive: text.includes('紫金矿业') && text.includes('宁德时代') && text.includes('中际旭创') && text.includes('浦发银行'),
+      degradedSurvives: text.includes('降级快照') && text.includes('陈旧'),
+      retryAvailable: text.includes('重试刷新'),
+      fourCardsOneRow: cardTops.length === 4 && cardTops.every((top) => Math.abs(top - cardTops[0]) < 2),
+    }
+  })
+  const watchlistFailureAxe = await watchlistFailurePage.evaluate(async () => window.axe.run(document, {
+    runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+  }))
+  await watchlistFailurePage.screenshot({ path: resolve(outputDir, 'watchlist-partial-failure-1440.png'), fullPage: true })
+  report.push({
+    page: 'watchlist', scenario: 'partial-failure', watchlistFailureState,
+    watchlistFailureStateComplete: Object.values(watchlistFailureState).every(Boolean),
+    pageErrors: watchlistFailureErrors,
+    violations: watchlistFailureAxe.violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help, nodes: item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })),
+  })
+  await watchlistFailurePage.close()
+
   const missingPage = await browser.newPage({ viewport: { width: 375, height: 812 } })
   const missingPageErrors = []
   missingPage.on('pageerror', (error) => missingPageErrors.push(error.message))
@@ -945,6 +1875,7 @@ await writeFile(resolve(outputDir, 'report.json'), JSON.stringify(report, null, 
 const failed = report.some((item) =>
   (item.layout?.overflow || 0) > 0
   || item.layout?.mainContentPresent === false
+  || item.layout?.retiredSimulationAbsent === false
   || (item.layout && item.layout.mainContentHeight < 500)
   || item.layout?.heatmapFallbackVisible === false
   || (item.layout?.heatmapLabelHierarchy && (
@@ -959,12 +1890,31 @@ const failed = report.some((item) =>
   || item.loadingStateComplete === false
   || item.reviewEmptyStateComplete === false
   || item.reviewPartialStateComplete === false
+  || item.tomorrowLoadingStateComplete === false
+  || item.tomorrowEmptyStateComplete === false
+  || item.tomorrowPartialStateComplete === false
   || item.hotboardLoadingStateComplete === false
   || item.hotboardEmptyStateComplete === false
   || item.hotboardFailureStateComplete === false
   || item.timingLoadingStateComplete === false
   || item.timingEmptyStateComplete === false
   || item.timingFailureStateComplete === false
+  || item.mainlineLoadingStateComplete === false
+  || item.mainlineEmptyStateComplete === false
+  || item.mainlineFailureStateComplete === false
+  || item.capitalLoadingStateComplete === false
+  || item.capitalEmptyStateComplete === false
+  || item.capitalFailureStateComplete === false
+  || item.sentimentLoadingStateComplete === false
+  || item.sentimentEmptyStateComplete === false
+  || item.sentimentFailureStateComplete === false
+  || item.holdingsLoadingStateComplete === false
+  || item.holdingsEmptyStateComplete === false
+  || item.holdingsFailureStateComplete === false
+  || item.watchlistLoadingStateComplete === false
+  || item.watchlistEmptyStateComplete === false
+  || item.watchlistModalStateComplete === false
+  || item.watchlistFailureStateComplete === false
   || (item.pageErrors?.length || 0) > 0
   || item.violations.length > 0
 )
