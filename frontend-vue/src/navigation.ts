@@ -34,7 +34,6 @@ export const sidebarNavigation: NavigationGroup[] = [
       { path: 'today', tab: 'mainline', label: '主线深研' },
       { path: 'today', tab: 'capital', label: '资金追踪' },
       { path: 'today', tab: 'timing', label: '资金择时' },
-      { path: 'today', tab: 'mainforce', label: '主力结构' },
       { path: 'today', tab: 'news', label: '舆情事件' },
     ],
   },
@@ -43,7 +42,6 @@ export const sidebarNavigation: NavigationGroup[] = [
     children: [
       { path: 'risk', tab: 'holdings', label: '我的持仓' },
       { path: 'risk', tab: 'watchlist', label: '观察池' },
-      { path: 'risk', tab: 'simulation', label: '模拟执行' },
     ],
   },
   {

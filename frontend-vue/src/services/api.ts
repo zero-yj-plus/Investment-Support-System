@@ -43,6 +43,40 @@ export async function postJson<T>(path: string, payload: unknown, signal: AbortS
   return body as T
 }
 
+export async function putJson<T>(path: string, payload: unknown, signal: AbortSignal): Promise<T> {
+  const response = await fetch(`${API_BASE}${path}`, {
+    method: 'PUT',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+    signal,
+  })
+  const body = (await response.json().catch(() => null)) as T | { error?: string } | null
+  if (!response.ok) {
+    const detail = body && typeof body === 'object' && 'error' in body ? body.error : undefined
+    throw new ApiError(detail || `接口返回 HTTP ${response.status}`, response.status)
+  }
+  if (body == null) throw new ApiError('接口没有返回可读取的数据', response.status)
+  return body as T
+}
+
+export async function deleteJson<T>(path: string, signal: AbortSignal): Promise<T> {
+  const response = await fetch(`${API_BASE}${path}`, {
+    method: 'DELETE',
+    headers: { Accept: 'application/json' },
+    signal,
+  })
+  const body = (await response.json().catch(() => null)) as T | { error?: string } | null
+  if (!response.ok) {
+    const detail = body && typeof body === 'object' && 'error' in body ? body.error : undefined
+    throw new ApiError(detail || `接口返回 HTTP ${response.status}`, response.status)
+  }
+  if (body == null) throw new ApiError('接口没有返回可读取的数据', response.status)
+  return body as T
+}
+
 export interface EventStreamHandlers {
   signal: AbortSignal
   onStage?: (stage: string) => void

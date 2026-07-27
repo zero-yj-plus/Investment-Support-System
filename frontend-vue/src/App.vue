@@ -1,19 +1,26 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import AppIcon from './components/AppIcon.vue'
+import CapitalTrackingPage from './components/CapitalTrackingPage.vue'
 import CloseReviewPage from './components/CloseReviewPage.vue'
 import DataStatus from './components/DataStatus.vue'
 import DecisionCommand from './components/DecisionCommand.vue'
+import DiagnosisPage from './components/DiagnosisPage.vue'
 import HotboardPage from './components/HotboardPage.vue'
+import HoldingsPage from './components/HoldingsPage.vue'
 import MainlineOverview from './components/MainlineOverview.vue'
+import MainlineResearchPage from './components/MainlineResearchPage.vue'
 import MarketEvidence from './components/MarketEvidence.vue'
 import MarketOverview from './components/MarketOverview.vue'
 import PremarketReportPage from './components/PremarketReportPage.vue'
 import RiskOverview from './components/RiskOverview.vue'
+import SentimentEventsPage from './components/SentimentEventsPage.vue'
 import SidebarNavigation from './components/SidebarNavigation.vue'
+import StockAskPage from './components/StockAskPage.vue'
 import TailReportPage from './components/TailReportPage.vue'
 import TimingPage from './components/TimingPage.vue'
 import TomorrowStrategyPage from './components/TomorrowStrategyPage.vue'
+import WatchlistPage from './components/WatchlistPage.vue'
 import { useDecisionOverview } from './composables/useDecisionOverview'
 import { findActiveNavigation } from './navigation'
 
@@ -25,9 +32,16 @@ const sidebar = ref<InstanceType<typeof SidebarNavigation> | null>(null)
 const premarketPage = ref<InstanceType<typeof PremarketReportPage> | null>(null)
 const tailPage = ref<InstanceType<typeof TailReportPage> | null>(null)
 const closeReviewPage = ref<InstanceType<typeof CloseReviewPage> | null>(null)
+const capitalTrackingPage = ref<InstanceType<typeof CapitalTrackingPage> | null>(null)
 const hotboardPage = ref<InstanceType<typeof HotboardPage> | null>(null)
+const holdingsPage = ref<InstanceType<typeof HoldingsPage> | null>(null)
 const timingPage = ref<InstanceType<typeof TimingPage> | null>(null)
+const mainlineResearchPage = ref<InstanceType<typeof MainlineResearchPage> | null>(null)
+const sentimentEventsPage = ref<InstanceType<typeof SentimentEventsPage> | null>(null)
+const stockAskPage = ref<InstanceType<typeof StockAskPage> | null>(null)
+const diagnosisPage = ref<InstanceType<typeof DiagnosisPage> | null>(null)
 const tomorrowPage = ref<InstanceType<typeof TomorrowStrategyPage> | null>(null)
+const watchlistPage = ref<InstanceType<typeof WatchlistPage> | null>(null)
 const routePath = ref('today')
 const routeTab = ref('decision')
 const sidebarCollapsed = ref(false)
@@ -39,17 +53,24 @@ let clockTimer: ReturnType<typeof setInterval> | null = null
 const isPremarket = computed(() => routePath.value === 'premarket' && routeTab.value === 'report')
 const isTailDecision = computed(() => routePath.value === 'tail' && routeTab.value === 'decision')
 const isCloseReview = computed(() => routePath.value === 'review' && routeTab.value === 'close')
-const isTomorrowStrategy = computed(() => routePath.value === 'review' && routeTab.value === 'tomorrow')
 const isDecisionOverview = computed(() => routePath.value === 'today' && routeTab.value === 'decision')
+const isCapitalTracking = computed(() => routePath.value === 'today' && routeTab.value === 'capital')
 const isHotboard = computed(() => routePath.value === 'today' && routeTab.value === 'hotboard')
+const isHoldings = computed(() => routePath.value === 'risk' && routeTab.value === 'holdings')
 const isTiming = computed(() => routePath.value === 'today' && routeTab.value === 'timing')
+const isMainlineResearch = computed(() => routePath.value === 'today' && routeTab.value === 'mainline')
+const isSentimentEvents = computed(() => routePath.value === 'today' && routeTab.value === 'news')
+const isTomorrowStrategy = computed(() => routePath.value === 'review' && routeTab.value === 'tomorrow')
+const isWatchlist = computed(() => routePath.value === 'risk' && routeTab.value === 'watchlist')
+const isStockAsk = computed(() => routePath.value === 'research' && routeTab.value === 'ask')
+const isDiagnosis = computed(() => routePath.value === 'research' && routeTab.value === 'diagnosis')
 const activeNavigation = computed(() => findActiveNavigation(routePath.value, routeTab.value))
 const moduleTitle = computed(() => activeNavigation.value?.group.label || (routePath.value === 'settings' ? '系统设置' : '交易工作台'))
 const pageTitle = computed(() => activeNavigation.value?.child.label || (routePath.value === 'settings' ? '系统设置' : '页面迁移中'))
-const pageRefreshing = computed(() => isHotboard.value || isTiming.value || isTomorrowStrategy.value
+const pageRefreshing = computed(() => isHotboard.value || isHoldings.value || isWatchlist.value || isTiming.value || isMainlineResearch.value || isSentimentEvents.value || isTomorrowStrategy.value || isCapitalTracking.value || isStockAsk.value || isDiagnosis.value
   ? reportRefreshing.value
   : refreshing.value || reportRefreshing.value)
-const pageBusy = computed(() => isHotboard.value || isTiming.value || isTomorrowStrategy.value
+const pageBusy = computed(() => isHotboard.value || isHoldings.value || isWatchlist.value || isTiming.value || isMainlineResearch.value || isSentimentEvents.value || isTomorrowStrategy.value || isCapitalTracking.value || isStockAsk.value || isDiagnosis.value
   ? reportRefreshing.value
   : loading.value || pageRefreshing.value)
 
@@ -126,8 +147,15 @@ function updateRoute() {
     today: 'decision', premarket: 'report', tail: 'decision', review: 'close',
     risk: 'holdings', research: 'ask', history: 'reports', settings: 'system',
   }
+  const requestedTab = new URLSearchParams(query).get('tab') || defaults[path] || ''
+  if (path === 'risk' && requestedTab === 'simulation') {
+    window.history.replaceState(null, '', '#/risk?tab=holdings')
+    routePath.value = 'risk'
+    routeTab.value = 'holdings'
+    return
+  }
   routePath.value = path
-  routeTab.value = new URLSearchParams(query).get('tab') || defaults[path] || ''
+  routeTab.value = requestedTab
 }
 
 function toggleSidebarCollapsed() {
@@ -141,12 +169,40 @@ function expandSidebar() {
 }
 
 async function refreshCurrentPage() {
+  if (isDiagnosis.value && diagnosisPage.value) {
+    await Promise.resolve(diagnosisPage.value.refresh())
+    return
+  }
+  if (isStockAsk.value && stockAskPage.value) {
+    await Promise.resolve(stockAskPage.value.refresh())
+    return
+  }
+  if (isWatchlist.value && watchlistPage.value) {
+    await Promise.resolve(watchlistPage.value.refresh())
+    return
+  }
+  if (isHoldings.value && holdingsPage.value) {
+    await Promise.resolve(holdingsPage.value.refresh())
+    return
+  }
+  if (isCapitalTracking.value && capitalTrackingPage.value) {
+    await Promise.resolve(capitalTrackingPage.value.refresh())
+    return
+  }
   if (isHotboard.value && hotboardPage.value) {
     await Promise.resolve(hotboardPage.value.refresh())
     return
   }
   if (isTiming.value && timingPage.value) {
     await Promise.resolve(timingPage.value.refresh())
+    return
+  }
+  if (isMainlineResearch.value && mainlineResearchPage.value) {
+    await Promise.resolve(mainlineResearchPage.value.refresh())
+    return
+  }
+  if (isSentimentEvents.value && sentimentEventsPage.value) {
+    await Promise.resolve(sentimentEventsPage.value.refresh())
     return
   }
   if (isTomorrowStrategy.value && tomorrowPage.value) {
@@ -278,6 +334,24 @@ watch(pageTitle, (value) => { document.title = `${value} · W.U.D.I.` }, { immed
           @refresh-state="reportRefreshing = $event"
         />
 
+        <CapitalTrackingPage
+          v-else-if="isCapitalTracking"
+          ref="capitalTrackingPage"
+          @refresh-state="reportRefreshing = $event"
+        />
+
+        <HoldingsPage
+          v-else-if="isHoldings"
+          ref="holdingsPage"
+          @refresh-state="reportRefreshing = $event"
+        />
+
+        <WatchlistPage
+          v-else-if="isWatchlist"
+          ref="watchlistPage"
+          @refresh-state="reportRefreshing = $event"
+        />
+
         <TimingPage
           v-else-if="isTiming"
           ref="timingPage"
@@ -285,6 +359,32 @@ watch(pageTitle, (value) => { document.title = `${value} · W.U.D.I.` }, { immed
           :pulse-error="errors.pulse"
           :market-session="data.shell?.market_context?.market_session || data.shell?.market_session"
           :is-trade-day="data.shell?.market_context?.is_trade_day ?? data.shell?.is_trade_day"
+          @refresh-state="reportRefreshing = $event"
+        />
+
+        <MainlineResearchPage
+          v-else-if="isMainlineResearch"
+          ref="mainlineResearchPage"
+          :market-session="data.shell?.market_context?.market_session || data.shell?.market_session"
+          :is-trade-day="data.shell?.market_context?.is_trade_day ?? data.shell?.is_trade_day"
+          @refresh-state="reportRefreshing = $event"
+        />
+
+        <SentimentEventsPage
+          v-else-if="isSentimentEvents"
+          ref="sentimentEventsPage"
+          @refresh-state="reportRefreshing = $event"
+        />
+
+        <StockAskPage
+          v-else-if="isStockAsk"
+          ref="stockAskPage"
+          @refresh-state="reportRefreshing = $event"
+        />
+
+        <DiagnosisPage
+          v-else-if="isDiagnosis"
+          ref="diagnosisPage"
           @refresh-state="reportRefreshing = $event"
         />
 

@@ -201,12 +201,19 @@ def test_vue_sidebar_rebuilds_the_grouped_desktop_workspace_contract() -> None:
         assert f"label: '{label}'" in navigation
     for child in (
         "决策总览", "盘前报告", "尾盘决策", "今日复盘", "次日策略",
-        "涨停题材", "主线深研", "资金追踪", "资金择时", "主力结构", "舆情事件",
-        "我的持仓", "观察池", "模拟执行", "问股", "个股诊断", "条件选股",
+        "涨停题材", "主线深研", "资金追踪", "资金择时", "舆情事件",
+        "我的持仓", "观察池", "问股", "个股诊断", "条件选股",
         "每日量化选股", "事件掘金", "产业链分析", "公司研究", "海外市场",
         "重组拆解", "宏观风险", "全部报告", "知识库",
     ):
         assert f"label: '{child}'" in navigation
+    assert "模拟执行" not in navigation
+    assert "tab: 'simulation'" not in navigation
+    assert "requestedTab === 'simulation'" in app
+    assert "window.history.replaceState(null, '', '#/risk?tab=holdings')" in app
+    assert "retiredSimulationAbsent" in _read("scripts/audit-ui.mjs")
+    assert "tab: 'mainforce'" not in navigation
+    assert "主力结构" not in navigation
     assert "更多功能" in sidebar
     assert "buildNavigationHash(child.path, child.tab)" in sidebar
     assert "openGroupId.value === group.id ? null : group.id" in sidebar
@@ -736,50 +743,63 @@ def test_vue_timing_ui_audit_uses_semantic_fixture_and_required_states() -> None
     assert "timingFailureStateComplete" in audit
 
 
-def test_vue_tomorrow_strategy_uses_only_real_report_and_watchlist_contracts() -> None:
+def test_vue_tomorrow_strategy_route_and_real_contracts() -> None:
     app = _read("src/App.vue")
     navigation = _read("src/navigation.ts")
     page = _read("src/components/TomorrowStrategyPage.vue")
     summary = _read("src/components/TomorrowDecisionSummary.vue")
+    close_summary = _read("src/components/CloseReviewDecision.vue")
     watchlist = _read("src/components/TomorrowWatchlist.vue")
     health = _read("src/components/TomorrowDataHealth.vue")
     composable = _read("src/composables/useTomorrowStrategy.ts")
 
     assert "path: 'review', tab: 'tomorrow'" in navigation
     assert "routePath.value === 'review' && routeTab.value === 'tomorrow'" in app
-    assert 'v-else-if="isTomorrowStrategy"' in app
+    assert "<TomorrowStrategyPage" in app
     for endpoint in (
-        "/reports/evening?date=", "/watchlist", "/status",
-        "/reports/evening/generate", "/reports/evening/push",
+        "/reports/evening?date=",
+        "'/watchlist'",
+        "'/status'",
+        "'/reports/evening/generate'",
+        "'/reports/evening/push'",
     ):
         assert endpoint in composable
     for unrelated in ("/recommendations", "/market/flow", "/cockpit"):
         assert unrelated not in composable
-    assert "19:30 生成时风险底座" in summary
-    assert "不等于明日开盘后的最终风险闸" in summary
-    assert "今日尾盘与收盘定稿只作上游事实" in page
-    assert "item.quote?.price" in watchlist and "target_low" in watchlist and "target_high" in watchlist
-    assert "value == null" in watchlist
-    assert "change_pct == null" in watchlist
+    assert "CloseReviewDecision" in summary
+    assert "收盘确定性结论 · 先看风险与动作边界" in close_summary
+    assert "input_lineage" in health
+    assert "'tail', 'close'" in health
+    assert "ReportDocument" in page
+    assert "TomorrowWatchlist" in page
+    assert "TomorrowDataHealth" in page
+    assert 'class="tomorrow-page__description"' in page
+    assert ".tomorrow-page__description { max-width: none !important; }" in page
+    assert "item.quote?.price" in watchlist
+    assert "item.target_low" in watchlist and "item.target_high" in watchlist
     assert "元" in watchlist and "%" in watchlist
-    assert "input_lineage" in health and "rtype === 'tail'" in health and "rtype === 'close'" in health
 
 
-def test_vue_tomorrow_strategy_preserves_missing_empty_stale_and_delivery_semantics() -> None:
+def test_vue_tomorrow_strategy_preserves_missing_stale_and_delivery_semantics() -> None:
     page = _read("src/components/TomorrowStrategyPage.vue")
+    summary = _read("src/components/TomorrowDecisionSummary.vue")
+    close_summary = _read("src/components/CloseReviewDecision.vue")
     watchlist = _read("src/components/TomorrowWatchlist.vue")
     health = _read("src/components/TomorrowDataHealth.vue")
     composable = _read("src/composables/useTomorrowStrategy.ts")
 
     for label in (
-        "次日策略尚未定稿", "观察池返回真实空数组", "陈旧报价",
-        "明日观察池暂不可用", "部分覆盖", "局部降级",
+        "收盘风险结论暂不可用", "结构化允许/禁止项暂不可用", "观察池返回真实空数组",
+        "陈旧报价", "明日观察池暂不可用", "局部降级", "次日策略尚未定稿",
     ):
-        assert label in page + watchlist + health
-    assert "当前未确认平台送达" in composable
-    assert "已提交推送，未确认送达" in page + health
+        assert label in page + summary + close_summary + watchlist + health
+    assert "value == null" in watchlist
+    assert "change_pct == null" in watchlist
+    assert "已提交推送 · 未确认送达" in page
+    assert "已提交推送，未确认送达" in health
     assert "平台送达状态仍需通过交付回执核验" in composable
-    for source in (page, watchlist, health):
+    assert "不补 0" in page
+    for source in (page, summary, watchlist, health, composable):
         assert "v-html" not in source
         assert "|| 0" not in source
         assert "?? 0" not in source
@@ -788,9 +808,10 @@ def test_vue_tomorrow_strategy_preserves_missing_empty_stale_and_delivery_semant
 def test_vue_tomorrow_strategy_cleans_lifecycle_and_uses_native_interactions() -> None:
     page = _read("src/components/TomorrowStrategyPage.vue")
     summary = _read("src/components/TomorrowDecisionSummary.vue")
+    close_summary = _read("src/components/CloseReviewDecision.vue")
     watchlist = _read("src/components/TomorrowWatchlist.vue")
-    health = _read("src/components/TomorrowDataHealth.vue")
     composable = _read("src/composables/useTomorrowStrategy.ts")
+    api = _read("src/services/api.ts")
 
     for controller in (
         "reportController?.abort()", "watchlistController?.abort()",
@@ -801,37 +822,41 @@ def test_vue_tomorrow_strategy_cleans_lifecycle_and_uses_native_interactions() -
     assert "if (!alive || controller !==" in composable
     assert "clearInterval(watchlistTimer)" in composable
     assert "removeEventListener('visibilitychange'" in composable
-    assert "reader.cancel()" in _read("src/services/api.ts")
+    assert "reader.cancel()" in api
+    assert "onBeforeUnmount(() => emit('refreshState', false))" in page
     assert 'aria-label="次日策略报告章节"' in page
-    assert 'href="#tomorrow-watchlist"' in summary
-    assert 'href="#/research?tab=diagnosis"' in watchlist
-    for source in (page, summary, watchlist, health):
+    assert 'primary-action-href="#tomorrow-watchlist"' in summary
+    assert '<a href="#/risk?tab=watchlist">' in watchlist
+    for source in (page, summary, close_summary, watchlist):
         assert 'role="button"' not in source
-    assert "<button" in page + watchlist
-    assert "<a" in page + summary + watchlist
+    for source in (page, close_summary, watchlist):
+        assert "<button" in source or "<a " in source
 
 
-def test_vue_tomorrow_strategy_has_responsive_accessible_layout_and_audit_states() -> None:
+def test_vue_tomorrow_strategy_responsive_rules_and_audit_states() -> None:
     page = _read("src/components/TomorrowStrategyPage.vue")
     summary = _read("src/components/TomorrowDecisionSummary.vue")
+    close_summary = _read("src/components/CloseReviewDecision.vue")
     watchlist = _read("src/components/TomorrowWatchlist.vue")
+    health = _read("src/components/TomorrowDataHealth.vue")
     audit = _read("scripts/audit-ui.mjs")
 
-    assert 'aria-labelledby="tomorrow-page-title"' in page
-    assert 'role="alert"' in page and 'role="status"' in page
     assert "grid-template-columns: minmax(0, 1.25fr) minmax(320px, .75fr)" in page
     assert "@media (max-width: 1100px)" in page
-    assert "@media (max-width: 720px)" in page + summary + watchlist
+    styles = _read("src/styles.css")
+    assert "@media (max-width: 720px)" in page + styles + watchlist + health
     assert "@media (max-width: 520px)" in watchlist
-    assert "@media (prefers-reduced-motion: reduce)" in page + summary + watchlist
-    assert "box-shadow" not in page + summary + watchlist
-    assert "linear-gradient" not in page + summary + watchlist
+    assert "@media (prefers-reduced-motion: reduce)" in page + styles + watchlist + health
+    for source in (page, summary, watchlist, health):
+        assert "box-shadow" not in source
+        assert "linear-gradient" not in source
+    assert "tomorrow-decision" not in summary
+    assert "close-decision__guardrails" in styles
+    assert "收盘确定性结论 · 先看风险与动作边界" in close_summary
+    assert "'/api/reports/evening'" in audit and "'/api/watchlist'" in audit
     assert "hash: '#/review?tab=tomorrow'" in audit
-    assert "'/api/reports/evening'" in audit
-    assert "次日策略（供 2026-07-23 使用）" in audit
     for screenshot in (
-        "tomorrow-loading-375.png", "tomorrow-empty-1440.png",
-        "tomorrow-partial-failure-1440.png",
+        "tomorrow-loading-375.png", "tomorrow-empty-1440.png", "tomorrow-partial-failure-1440.png",
     ):
         assert screenshot in audit
     assert "tomorrowLoadingStateComplete" in audit

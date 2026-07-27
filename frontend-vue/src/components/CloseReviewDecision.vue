@@ -2,7 +2,18 @@
 import { computed } from 'vue'
 import type { CloseReviewCockpitSnapshot } from '../types/closeReview'
 
-const props = defineProps<{ snapshot?: CloseReviewCockpitSnapshot }>()
+const props = withDefaults(defineProps<{
+  snapshot?: CloseReviewCockpitSnapshot
+  primaryActionEyebrow?: string
+  primaryActionLabel?: string
+  primaryActionHref?: string
+  footnote?: string
+}>(), {
+  primaryActionEyebrow: '复盘唯一主动作',
+  primaryActionLabel: '核对执行偏差',
+  primaryActionHref: '#review-evidence',
+  footnote: '本结论按今日复盘生成时点定格；历史报告不可覆盖，下一交易日必须重新通过服务端风险闸。',
+})
 const command = computed(() => props.snapshot?.command)
 const riskLevel = computed(() => {
   const value = Number(command.value?.risk_level)
@@ -32,8 +43,8 @@ const rules = computed(() => mode.value === 'allow' ? command.value?.allow || []
         <p class="close-decision__action">{{ command?.today_action || '当前只保留已知事实，不依据缺失数据新增、补仓或修改交易计划。' }}</p>
       </div>
       <div class="close-decision__primary-action">
-        <span>复盘唯一主动作</span>
-        <a class="primary-button" href="#review-evidence">核对执行偏差</a>
+        <span>{{ primaryActionEyebrow }}</span>
+        <a class="primary-button" :href="primaryActionHref">{{ primaryActionLabel }}</a>
       </div>
     </div>
 
@@ -52,6 +63,6 @@ const rules = computed(() => mode.value === 'allow' ? command.value?.allow || []
     <div v-if="command?.blackswan?.length" class="close-decision__black-swan" role="status">
       <strong>黑天鹅信号</strong><span>{{ command.blackswan.join('；') }}</span>
     </div>
-    <p class="close-decision__foot">本结论按今日复盘生成时点定格；历史报告不可覆盖，下一交易日必须重新通过服务端风险闸。</p>
+    <p class="close-decision__foot">{{ footnote }}</p>
   </section>
 </template>

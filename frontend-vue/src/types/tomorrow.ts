@@ -15,7 +15,7 @@ export interface ReportLineageSource {
   rtype?: string
   trade_day?: string
   content_id?: string
-  version?: number | string
+  version?: number
   content_hash?: string
   created_at?: string
 }
@@ -24,7 +24,7 @@ export interface ReportInputLineage {
   schema_version?: string
   trade_day?: string
   sources?: ReportLineageSource[]
-  evidence?: Record<string, unknown>[]
+  evidence?: Record<string, unknown>
   lineage_hash?: string
 }
 
@@ -35,14 +35,13 @@ export interface TomorrowReportResponse extends ApiResponseState {
   content_md?: string
   created_at?: string
   pushed?: boolean
-  stale?: boolean
   content_hash?: string
   report_version?: number
   plan_version?: number
   cockpit?: TomorrowCockpitSnapshot
-  claim_validation?: { status?: string; ok?: boolean }
-  advice_governance?: { status?: string; proposal_only?: boolean }
   input_lineage?: ReportInputLineage
+  claim_validation?: { status?: string }
+  advice_governance?: { status?: string; proposal_only?: boolean }
 }
 
 export interface TomorrowWatchQuote {
@@ -68,7 +67,11 @@ export interface TomorrowWatchItem {
 export interface TomorrowWatchlistResponse extends ApiResponseState {
   ts?: string
   items?: TomorrowWatchItem[]
-  missing?: string[]
+}
+
+export interface TomorrowStatusResponse extends ApiResponseState {
+  model_connection?: { configured?: boolean; connected?: boolean }
+  hermes?: { agent_capability?: { ready?: boolean; reason?: string } }
 }
 
 export interface TomorrowActionResponse extends ApiResponseState {

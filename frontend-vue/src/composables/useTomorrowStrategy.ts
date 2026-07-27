@@ -1,9 +1,9 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { getJson, postEventStream, postJson } from '../services/api'
-import type { PremarketStatusResponse } from '../types/premarket'
 import type {
   TomorrowActionResponse,
   TomorrowReportResponse,
+  TomorrowStatusResponse,
   TomorrowWatchlistResponse,
 } from '../types/tomorrow'
 
@@ -68,7 +68,10 @@ export function useTomorrowStrategy() {
     try {
       const payload = await getJson<TomorrowWatchlistResponse>('/watchlist', controller.signal)
       if (!alive || controller !== watchlistController) return
-      if (payload.ok === false) throw new Error(payload.error || '明日观察池暂不可用')
+      if (payload.ok === false) {
+        watchlistError.value = payload.error || '明日观察池暂不可用'
+        return
+      }
       watchlist.value = payload
       watchlistError.value = ''
     } catch (caught) {
@@ -81,7 +84,6 @@ export function useTomorrowStrategy() {
     if (refreshing.value || generating.value) return
     refreshing.value = true
     actionError.value = ''
-    actionNotice.value = ''
     await Promise.allSettled([loadReport(), loadWatchlist()])
     if (!alive) return
     loading.value = false
@@ -99,7 +101,7 @@ export function useTomorrowStrategy() {
     actionError.value = ''
     actionNotice.value = ''
     try {
-      const status = await getJson<PremarketStatusResponse>('/status', controller.signal)
+      const status = await getJson<TomorrowStatusResponse>('/status', controller.signal)
       if (!alive || controller !== generateController) return
       const model = status.model_connection || {}
       const capability = status.hermes?.agent_capability || {}
@@ -118,7 +120,7 @@ export function useTomorrowStrategy() {
         onDone: (payload) => {
           if (!alive || controller !== generateController) return
           reportDate.value = typeof payload.date === 'string' ? payload.date : reportDate.value
-          actionNotice.value = '次日策略已定稿并保存'
+          actionNotice.value = '次日策略已生成并保存为正式定稿'
         },
       })
       if (alive && controller === generateController) await loadReport()
@@ -126,15 +128,13 @@ export function useTomorrowStrategy() {
       if (!alive || controller !== generateController) return
       if (caught instanceof DOMException && caught.name === 'AbortError') {
         actionNotice.value = '已停止查看生成流；未完成内容不会冒充正式定稿'
-      } else {
-        actionError.value = errorMessage(caught)
-      }
+      } else actionError.value = errorMessage(caught)
     } finally {
-      if (controller === generateController) generateController = null
-      if (alive) {
+      if (alive && controller === generateController) {
         generating.value = false
         generationStage.value = ''
         generationPreview.value = ''
+        generateController = null
       }
     }
   }
@@ -167,8 +167,10 @@ export function useTomorrowStrategy() {
       if (!alive || controller !== pushController || (caught instanceof DOMException && caught.name === 'AbortError')) return
       actionError.value = errorMessage(caught)
     } finally {
-      if (controller === pushController) pushController = null
-      if (alive) pushing.value = false
+      if (alive && controller === pushController) {
+        pushing.value = false
+        pushController = null
+      }
     }
   }
 
@@ -196,9 +198,8 @@ export function useTomorrowStrategy() {
   })
 
   return {
-    report, watchlist, loading, refreshing, generating, pushing,
-    reportError, watchlistError, actionError, actionNotice,
-    generationStage, generationPreview, hasReport,
-    refresh, loadWatchlist, generate, stopGeneration, pushReport,
+    report, watchlist, loading, refreshing, generating, pushing, reportError, watchlistError,
+    actionError, actionNotice, generationStage, generationPreview, hasReport, refresh,
+    loadWatchlist, generate, stopGeneration, pushReport,
   }
 }

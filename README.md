@@ -72,4 +72,7 @@ uv run --with pytest --with pytest-asyncio \
 
 uv run --with-requirements requirements.txt python -m hermes_trader --config config.yaml
 
-$env:TQ_BRIDGE_API_KEY='换成你自己的随机长字符串'
+$env:TQ_BRIDGE_API_KEY='11111111'\
+.\.venv\Scripts\python.exe .\scripts\tq_tdx_bridge.py
+
+npm run dev
