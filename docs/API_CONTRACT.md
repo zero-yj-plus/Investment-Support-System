@@ -23,7 +23,7 @@ Agent 权限、证据库健康或任务中心，因此不得因运维上游超�
   "ok": true,
   "status_scope": "shell",
   "client": {"name": "本地客户", "id": "local", "brand": "W.U.D.I."},
-  "version": "1.3.0",
+  "version": "1.3.1",
   "date": "2026-06-10",
   "is_trade_day": true,
   "market_session": "intraday",
