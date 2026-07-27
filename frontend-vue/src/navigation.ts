@@ -50,6 +50,7 @@ export const sidebarNavigation: NavigationGroup[] = [
       { path: 'research', tab: 'ask', label: '问股' },
       { path: 'research', tab: 'diagnosis', label: '个股诊断' },
       { path: 'research', tab: 'screener', label: '条件选股' },
+      { path: 'research', tab: 'technical-screener', label: '技术面选股' },
       { path: 'research', tab: 'quant-pick', label: '每日量化选股' },
       { path: 'research', tab: 'events', label: '事件掘金' },
       { path: 'research', tab: 'chain', label: '产业链分析' },

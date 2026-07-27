@@ -849,6 +849,97 @@ const fixtures = {
     sections: { board: { state: 'complete' }, flow: { state: 'complete' }, financial: { state: 'complete' }, auction: { state: 'unavailable' } },
     missing: ['集合竞价(暂无可验证专用源)'],
   },
+  '/api/screen': {
+    ok: true,
+    ts: '2026-07-22 10:31:48',
+    trade_date: '2026-07-22',
+    elapsed_ms: 842,
+    total_market: 5268,
+    matched: 2,
+    returned: 2,
+    sort_by: 'amount',
+    coverage: { received: 5072, expected: 5268, ratio: 0.9628, percent: 96.28, minimum_ratio: 0.8, sufficient: true },
+    universe: { count: 5268, complete: true, stale: false, as_of: '2026-07-22', refresh_required: false, missing_exchanges: [] },
+    industry_coverage: { filled: 1, returned: 2, queried: 2, query_limit: 12, percent: 50.0 },
+    missing: ['行业仅对返回候选低频补全：1/2只已有行业，未取到者保留为空'],
+    analysis_contract: {
+      version: 'stock-analysis-pipeline-v1', current_stage: 'deterministic_candidate_selection',
+      deterministic_rule_version: 'condition-screen-v2', decision_authority: 'candidate_only',
+      data_status: 'complete', data_as_of: '2026-07-22', analysis_executed: true,
+      ai: { role: 'explanation_only', status: 'not_requested', may_change_deterministic_action: false },
+    },
+    stocks: [
+      { code: '600036', name: '招商银行', industry: '银行', board: '主板', price: 46.38, change_pct: 1.24, turnover_rate: 0.56, volume_ratio: 1.18, pe_ttm: 7.1, pb: 1.14, circ_mv: 957200000000, amount: 3148000000 },
+      { code: '300750', name: '宁德时代', industry: null, board: '创业板', price: 282.10, change_pct: -0.73, turnover_rate: 0.92, volume_ratio: null, pe_ttm: 19.8, pb: 4.72, circ_mv: 1186400000000, amount: 5263000000 },
+    ],
+  },
+  '/api/technical-screen/catalog': {
+    ok: true,
+    algorithm_ver: 'local-signal-v1',
+    config_schema_version: 2,
+    timeframes: [{ code: 'D', name: '日线' }, { code: 'W', name: '周线' }, { code: 'M', name: '月线' }],
+    occurrences: [{ code: 'TODAY', name: '今日刚发生' }, { code: 'RECENT', name: '近N个交易周期内发生' }, { code: 'CURRENT', name: '当前仍然成立' }],
+    signals: [
+      { signal_code: 'MACD_GOLDEN_CROSS', signal_name: 'MACD金叉', category: '趋势', signal_kind: 'event', direction: 'bullish', default_params: { fast: 12, slow: 26, signal: 9 }, aliases: ['DIF', 'DEA', '金叉'], available: true, unavailable_reason: null },
+      { signal_code: 'LONG_MA_ARRAY', signal_name: '均线多头排列', category: '趋势', signal_kind: 'state', direction: 'bullish', default_params: {}, aliases: ['均线'], available: true, unavailable_reason: null },
+      { signal_code: 'PRICE_BREAKOUT_N', signal_name: 'N日价格突破', category: '突破', signal_kind: 'event', direction: 'bullish', default_params: { period: 20 }, aliases: ['突破'], available: true, unavailable_reason: null },
+      { signal_code: 'RSI_OVERBOUGHT_REVERSAL', signal_name: 'RSI超买回落', category: '风险', signal_kind: 'event', direction: 'bearish', default_params: { period: 14, threshold: 70 }, aliases: ['RSI'], available: true, unavailable_reason: null },
+      { signal_code: 'DDX_POSITIVE', signal_name: 'DDX连续为正', category: 'Level-2', signal_kind: 'state', direction: 'bullish', default_params: {}, aliases: ['DDX'], available: false, unavailable_reason: '当前没有接入可核验的逐笔/Level-2 DDX 历史数据' },
+    ],
+  },
+  '/api/technical-screen/status': {
+    ok: true,
+    state: 'ready',
+    schema_version: 'technical-screener-v1',
+    config_schema_version: 2,
+    algorithm_ver: 'local-signal-v1',
+    stocks: 5026,
+    bars: 1507800,
+    signal_matches: 18432,
+    data_date: '2026-07-22',
+    adjustment: 'qfq',
+    history_days: 420,
+    benchmark: '000300.SH',
+    benchmark_bars: 420,
+    level2_available: false,
+    level2_reason: '当前没有接入可核验的逐笔/Level-2 DDX 历史数据',
+    refresh: { state: 'ready', processed: 5026, total: 5026, succeeded: 5026, failed: 0, finished_at: '2026-07-22 16:18:42' },
+  },
+  '/api/technical-screen/schemes': {
+    ok: true,
+    schemes: [],
+  },
+  '/api/technical-screen/query': {
+    ok: true,
+    state: 'ready',
+    schema_version: 'technical-screener-v1',
+    config_schema_version: 2,
+    algorithm_ver: 'local-signal-v1',
+    data_date: '2026-07-22',
+    adjustment: 'qfq',
+    matched: 2,
+    returned: 2,
+    offset: 0,
+    limit: 50,
+    coverage: { cached: 5026, eligible: 4388 },
+    strongest_condition: null,
+    missing: ['当前没有接入可核验的逐笔/Level-2 DDX 历史数据'],
+    stocks: [
+      { code: '600123', name: '技术审计股份', industry: '机械设备', last_price: 18.62, change_pct: 2.34, last_amount: 728000000, avg_amount20: 542000000, signal_score: 2, matched_reasons: [{ signal_code: 'MACD_GOLDEN_CROSS', signal_name: 'MACD金叉', signal_kind: 'event', timeframe: 'D', date: '2026-07-22', metrics: { dif: 0.42, dea: 0.38 }, is_confirmed: true }, { signal_code: 'LONG_MA_ARRAY', signal_name: '均线多头排列', signal_kind: 'state', timeframe: 'D', date: '2026-07-22', metrics: { ma20: 17.84, ma60: 16.91 }, is_confirmed: true }] },
+      { code: '300456', name: '缓存核验科技', industry: null, last_price: null, change_pct: null, last_amount: 386000000, avg_amount20: null, signal_score: null, matched_reasons: [{ signal_code: 'MACD_GOLDEN_CROSS', signal_name: 'MACD金叉', signal_kind: 'event', timeframe: 'W', date: '2026-07-18', metrics: {}, is_confirmed: false }] },
+    ],
+  },
+  '/api/technical-screen/refresh': {
+    ok: true,
+    state: 'queued',
+    message: '全市场技术信号刷新已进入后台队列',
+  },
+  '/api/technical-screen/history': {
+    ok: true,
+    returned: 1,
+    algorithm_ver: 'local-signal-v1',
+    events: [{ code: '600123', signal_code: 'MACD_GOLDEN_CROSS', signal_name: 'MACD金叉', timeframe: 'D', event_date: '2026-07-22', metrics: { dif: 0.42, dea: 0.38 }, is_confirmed: true }],
+  },
 }
 
 const viewports = [
@@ -872,6 +963,8 @@ const auditedPages = [
   { name: 'watchlist', hash: '#/risk?tab=watchlist', titleSelector: '#watchlist-page-title' },
   { name: 'stock-ask', hash: '#/research?tab=ask', titleSelector: '#stock-ask-page-title' },
   { name: 'diagnosis', hash: '#/research?tab=diagnosis&code=600519', titleSelector: '#diagnosis-page-title' },
+  { name: 'screener', hash: '#/research?tab=screener', titleSelector: '#screener-page-title' },
+  { name: 'technical-screener', hash: '#/research?tab=technical-screener', titleSelector: '#technical-screener-page-title' },
 ]
 
 await mkdir(outputDir, { recursive: true })
@@ -2209,6 +2302,241 @@ try {
   })
   await stockAskFailurePage.close()
 
+  const screenerLoadingPage = await browser.newPage({ viewport: { width: 375, height: 812 }, deviceScaleFactor: 1 })
+  const screenerLoadingErrors = []
+  screenerLoadingPage.on('pageerror', (error) => screenerLoadingErrors.push(error.message))
+  await screenerLoadingPage.addInitScript(() => localStorage.setItem('wudi-vue-theme', 'dark'))
+  await screenerLoadingPage.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    if (path === '/api/screen') await new Promise((resolveDelay) => setTimeout(resolveDelay, 1800))
+    const body = fixtures[path]
+    return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
+  })
+  await screenerLoadingPage.goto('http://127.0.0.1:4175/#/research?tab=screener', { waitUntil: 'networkidle' })
+  await screenerLoadingPage.locator('.screener-primary-action .primary-button').click()
+  await screenerLoadingPage.waitForSelector('.screener-loading')
+  await screenerLoadingPage.addScriptTag({ content: axeSource })
+  const screenerLoadingState = await screenerLoadingPage.evaluate(() => ({
+    loadingVisible: Boolean(document.querySelector('.screener-loading')),
+    submitDisabled: Boolean(document.querySelector('.screener-primary-action .primary-button')?.disabled),
+    stopNativeButton: document.querySelector('.screener-loading button')?.tagName === 'BUTTON',
+    noPageOverflow: document.documentElement.scrollWidth <= window.innerWidth,
+  }))
+  const screenerLoadingAxe = await screenerLoadingPage.evaluate(async () => window.axe.run(document, {
+    runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+  }))
+  await screenerLoadingPage.screenshot({ path: resolve(outputDir, 'screener-loading-375.png'), fullPage: true })
+  report.push({
+    page: 'screener', scenario: 'loading', screenerLoadingState,
+    screenerLoadingStateComplete: Object.values(screenerLoadingState).every(Boolean),
+    pageErrors: screenerLoadingErrors,
+    violations: screenerLoadingAxe.violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help, nodes: item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })),
+  })
+  await screenerLoadingPage.close()
+
+  const screenerEmptyPage = await browser.newPage({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 1 })
+  const screenerEmptyErrors = []
+  screenerEmptyPage.on('pageerror', (error) => screenerEmptyErrors.push(error.message))
+  await screenerEmptyPage.addInitScript(() => localStorage.setItem('wudi-vue-theme', 'dark'))
+  await screenerEmptyPage.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    const body = path === '/api/screen'
+      ? { ...fixtures[path], matched: 0, returned: 0, stocks: [], missing: [] }
+      : fixtures[path]
+    return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
+  })
+  await screenerEmptyPage.goto('http://127.0.0.1:4175/#/research?tab=screener', { waitUntil: 'networkidle' })
+  await screenerEmptyPage.locator('.screener-primary-action .primary-button').click()
+  await screenerEmptyPage.waitForSelector('.screener-result-state.is-empty')
+  await screenerEmptyPage.addScriptTag({ content: axeSource })
+  const screenerEmptyState = await screenerEmptyPage.evaluate(() => {
+    const text = document.body.innerText
+    return {
+      trueEmpty: text.includes('筛选结果为真实空数组'),
+      nextStep: text.includes('可调整条件后重新执行'),
+      noExampleStocks: !document.querySelector('.screener-stock-link'),
+      nativeForm: document.querySelector('#screener-filter-form')?.tagName === 'FORM',
+      noPageOverflow: document.documentElement.scrollWidth <= window.innerWidth,
+    }
+  })
+  const screenerEmptyAxe = await screenerEmptyPage.evaluate(async () => window.axe.run(document, {
+    runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+  }))
+  await screenerEmptyPage.screenshot({ path: resolve(outputDir, 'screener-empty-1440.png'), fullPage: true })
+  report.push({
+    page: 'screener', scenario: 'empty', screenerEmptyState,
+    screenerEmptyStateComplete: Object.values(screenerEmptyState).every(Boolean),
+    pageErrors: screenerEmptyErrors,
+    violations: screenerEmptyAxe.violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help, nodes: item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })),
+  })
+  await screenerEmptyPage.close()
+
+  const screenerFailurePage = await browser.newPage({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 1 })
+  const screenerFailureErrors = []
+  let screenerCalls = 0
+  screenerFailurePage.on('pageerror', (error) => screenerFailureErrors.push(error.message))
+  await screenerFailurePage.addInitScript(() => localStorage.setItem('wudi-vue-theme', 'dark'))
+  await screenerFailurePage.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    if (path === '/api/screen') {
+      screenerCalls += 1
+      if (screenerCalls > 1) return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: '审计场景：全市场快照暂不可用' }) })
+    }
+    const body = fixtures[path]
+    return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
+  })
+  await screenerFailurePage.goto('http://127.0.0.1:4175/#/research?tab=screener', { waitUntil: 'networkidle' })
+  await screenerFailurePage.locator('.screener-primary-action .primary-button').click()
+  await screenerFailurePage.waitForSelector('.screener-table')
+  await screenerFailurePage.locator('.screener-primary-action .primary-button').click()
+  await screenerFailurePage.waitForSelector('.screener-result-alert')
+  const priceSortButton = screenerFailurePage.locator('.screener-sort-button', { hasText: '现价' })
+  await priceSortButton.click()
+  await priceSortButton.click()
+  await screenerFailurePage.waitForFunction(() => document.querySelector('.screener-table tbody tr .screener-stock-link')?.textContent?.includes('招商银行'))
+  await screenerFailurePage.addScriptTag({ content: axeSource })
+  const screenerFailureState = await screenerFailurePage.evaluate(() => {
+    const text = document.body.innerText
+    const sortButtons = [...document.querySelectorAll('.screener-sort-button')]
+    return {
+      localFailure: text.includes('新一轮筛选局部失败') && text.includes('全市场快照暂不可用'),
+      resultsSurvive: document.querySelectorAll('.screener-table tbody tr').length === 2,
+      missingPreserved: text.includes('行业缺失') && !text.includes('量比：0'),
+      realDiagnosisLink: document.querySelector('.screener-stock-link')?.tagName === 'A',
+      sortingRemovedFromFilter: !document.querySelector('#screener-filter-form select'),
+      noStandaloneSortFields: !document.querySelector('.screener-results-heading select'),
+      sortHeadersComplete: sortButtons.length === 8
+        && sortButtons.map((button) => button.textContent?.replace(/[↕↑↓]/g, '').trim()).join('|') === '现价|涨跌幅|换手率|量比|PE TTM|PB|流通市值|成交额',
+      currentRowsSortedByPriceAscending: document.querySelector('.screener-table tbody tr .screener-stock-link')?.textContent?.includes('招商银行'),
+      priceHeaderAriaSort: document.querySelector('.screener-table th:nth-child(2)')?.getAttribute('aria-sort') === 'ascending',
+      currentResultScopeClear: text.includes('点击数值列表头排序') && text.includes('仅重排当前返回结果'),
+      tableContained: document.querySelector('.screener-table-wrap')?.scrollWidth >= document.querySelector('.screener-table-wrap')?.clientWidth,
+      noPageOverflow: document.documentElement.scrollWidth <= window.innerWidth,
+    }
+  })
+  const screenerFailureAxe = await screenerFailurePage.evaluate(async () => window.axe.run(document, {
+    runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+  }))
+  await screenerFailurePage.screenshot({ path: resolve(outputDir, 'screener-partial-failure-1440.png'), fullPage: true })
+  report.push({
+    page: 'screener', scenario: 'partial-failure', screenerFailureState,
+    screenerFailureStateComplete: Object.values(screenerFailureState).every(Boolean),
+    pageErrors: screenerFailureErrors,
+    violations: screenerFailureAxe.violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help, nodes: item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })),
+  })
+  await screenerFailurePage.close()
+
+  const technicalScreenerLoadingPage = await browser.newPage({ viewport: { width: 375, height: 812 }, deviceScaleFactor: 1 })
+  const technicalScreenerLoadingErrors = []
+  technicalScreenerLoadingPage.on('pageerror', (error) => technicalScreenerLoadingErrors.push(error.message))
+  await technicalScreenerLoadingPage.addInitScript(() => localStorage.setItem('wudi-vue-theme', 'dark'))
+  await technicalScreenerLoadingPage.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    if (['/api/technical-screen/catalog', '/api/technical-screen/status', '/api/technical-screen/schemes'].includes(path)) {
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 1800))
+    }
+    const body = fixtures[path]
+    return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
+  })
+  await technicalScreenerLoadingPage.goto('http://127.0.0.1:4175/#/research?tab=technical-screener', { waitUntil: 'domcontentloaded' })
+  await technicalScreenerLoadingPage.waitForSelector('.technical-screener-loading')
+  await technicalScreenerLoadingPage.addScriptTag({ content: axeSource })
+  const technicalScreenerLoadingState = await technicalScreenerLoadingPage.evaluate(() => ({
+    loadingVisible: Boolean(document.querySelector('.technical-screener-loading')),
+    noExampleData: document.body.innerText.includes('不会用示例数字填充'),
+    actionDisabled: Boolean(document.querySelector('.technical-decision__action .primary-button')?.disabled),
+    noPageOverflow: document.documentElement.scrollWidth <= window.innerWidth,
+  }))
+  const technicalScreenerLoadingAxe = await technicalScreenerLoadingPage.evaluate(async () => window.axe.run(document, {
+    runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+  }))
+  await technicalScreenerLoadingPage.screenshot({ path: resolve(outputDir, 'technical-screener-loading-375.png'), fullPage: true })
+  report.push({
+    page: 'technical-screener', scenario: 'loading', technicalScreenerLoadingState,
+    technicalScreenerLoadingStateComplete: Object.values(technicalScreenerLoadingState).every(Boolean),
+    pageErrors: technicalScreenerLoadingErrors,
+    violations: technicalScreenerLoadingAxe.violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help, nodes: item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })),
+  })
+  await technicalScreenerLoadingPage.close()
+
+  const technicalScreenerEmptyPage = await browser.newPage({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 1 })
+  const technicalScreenerEmptyErrors = []
+  technicalScreenerEmptyPage.on('pageerror', (error) => technicalScreenerEmptyErrors.push(error.message))
+  await technicalScreenerEmptyPage.addInitScript(() => localStorage.setItem('wudi-vue-theme', 'dark'))
+  await technicalScreenerEmptyPage.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    const body = path === '/api/technical-screen/query'
+      ? { ...fixtures[path], matched: 0, returned: 0, stocks: [], strongest_condition: '满足规则 1', missing: [] }
+      : fixtures[path]
+    return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
+  })
+  await technicalScreenerEmptyPage.goto('http://127.0.0.1:4175/#/research?tab=technical-screener', { waitUntil: 'networkidle' })
+  await technicalScreenerEmptyPage.locator('.technical-decision__action .primary-button').click()
+  await technicalScreenerEmptyPage.waitForSelector('.technical-result-state.is-empty')
+  await technicalScreenerEmptyPage.addScriptTag({ content: axeSource })
+  const technicalScreenerEmptyState = await technicalScreenerEmptyPage.evaluate(() => ({
+    trueEmpty: document.body.innerText.includes('筛选结果为真实空数组'),
+    strongestCondition: document.body.innerText.includes('限制最强：满足规则 1'),
+    noExampleStocks: !document.querySelector('.technical-stock-link'),
+    nativeForm: document.querySelector('#technical-screener-form')?.tagName === 'FORM',
+    noPageOverflow: document.documentElement.scrollWidth <= window.innerWidth,
+  }))
+  const technicalScreenerEmptyAxe = await technicalScreenerEmptyPage.evaluate(async () => window.axe.run(document, {
+    runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+  }))
+  await technicalScreenerEmptyPage.screenshot({ path: resolve(outputDir, 'technical-screener-empty-1440.png'), fullPage: true })
+  report.push({
+    page: 'technical-screener', scenario: 'empty', technicalScreenerEmptyState,
+    technicalScreenerEmptyStateComplete: Object.values(technicalScreenerEmptyState).every(Boolean),
+    pageErrors: technicalScreenerEmptyErrors,
+    violations: technicalScreenerEmptyAxe.violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help, nodes: item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })),
+  })
+  await technicalScreenerEmptyPage.close()
+
+  const technicalScreenerFailurePage = await browser.newPage({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 1 })
+  const technicalScreenerFailureErrors = []
+  let technicalScreenerQueryCalls = 0
+  technicalScreenerFailurePage.on('pageerror', (error) => technicalScreenerFailureErrors.push(error.message))
+  await technicalScreenerFailurePage.addInitScript(() => localStorage.setItem('wudi-vue-theme', 'dark'))
+  await technicalScreenerFailurePage.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    if (path === '/api/technical-screen/query') {
+      technicalScreenerQueryCalls += 1
+      if (technicalScreenerQueryCalls > 1) return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: '审计场景：本地技术缓存暂不可读' }) })
+    }
+    const body = fixtures[path]
+    return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
+  })
+  await technicalScreenerFailurePage.goto('http://127.0.0.1:4175/#/research?tab=technical-screener', { waitUntil: 'networkidle' })
+  await technicalScreenerFailurePage.locator('.technical-decision__action .primary-button').click()
+  await technicalScreenerFailurePage.waitForSelector('.technical-table')
+  await technicalScreenerFailurePage.locator('.technical-decision__action .primary-button').click()
+  await technicalScreenerFailurePage.waitForSelector('.technical-result-alert')
+  await technicalScreenerFailurePage.addScriptTag({ content: axeSource })
+  const technicalScreenerFailureState = await technicalScreenerFailurePage.evaluate(() => {
+    const text = document.body.innerText
+    const secondRow = document.querySelector('.technical-table tbody tr:nth-child(2)')?.textContent || ''
+    return {
+      localFailure: text.includes('新一轮筛选局部失败') && text.includes('本地技术缓存暂不可读'),
+      resultsSurvive: document.querySelectorAll('.technical-table tbody tr').length === 2,
+      missingPreserved: secondRow.includes('行业缺失') && secondRow.includes('—') && !secondRow.includes('0.00 元'),
+      realDiagnosisLink: document.querySelector('.technical-stock-link')?.tagName === 'A',
+      tableContained: document.querySelector('.technical-table-wrap')?.scrollWidth >= document.querySelector('.technical-table-wrap')?.clientWidth,
+      noPageOverflow: document.documentElement.scrollWidth <= window.innerWidth,
+    }
+  })
+  const technicalScreenerFailureAxe = await technicalScreenerFailurePage.evaluate(async () => window.axe.run(document, {
+    runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+  }))
+  await technicalScreenerFailurePage.screenshot({ path: resolve(outputDir, 'technical-screener-partial-failure-1440.png'), fullPage: true })
+  report.push({
+    page: 'technical-screener', scenario: 'partial-failure', technicalScreenerFailureState,
+    technicalScreenerFailureStateComplete: Object.values(technicalScreenerFailureState).every(Boolean),
+    pageErrors: technicalScreenerFailureErrors,
+    violations: technicalScreenerFailureAxe.violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help, nodes: item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })),
+  })
+  await technicalScreenerFailurePage.close()
+
   const missingPage = await browser.newPage({ viewport: { width: 375, height: 812 } })
   const missingPageErrors = []
   missingPage.on('pageerror', (error) => missingPageErrors.push(error.message))
@@ -2301,8 +2629,15 @@ const failed = report.some((item) =>
   || item.stockAskLoadingStateComplete === false
   || item.stockAskEmptyStateComplete === false
   || item.stockAskFailureStateComplete === false
+  || item.screenerLoadingStateComplete === false
+  || item.screenerEmptyStateComplete === false
+  || item.screenerFailureStateComplete === false
+  || item.technicalScreenerLoadingStateComplete === false
+  || item.technicalScreenerEmptyStateComplete === false
+  || item.technicalScreenerFailureStateComplete === false
   || (item.pageErrors?.length || 0) > 0
   || item.violations.length > 0
 )
+await writeFile(resolve(outputDir, 'audit-report.json'), JSON.stringify({ failed, report }, null, 2), 'utf8')
 console.log(JSON.stringify(report, null, 2))
 if (failed) process.exitCode = 1

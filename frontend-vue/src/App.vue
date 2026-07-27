@@ -14,10 +14,12 @@ import MarketEvidence from './components/MarketEvidence.vue'
 import MarketOverview from './components/MarketOverview.vue'
 import PremarketReportPage from './components/PremarketReportPage.vue'
 import RiskOverview from './components/RiskOverview.vue'
+import ScreenerPage from './components/ScreenerPage.vue'
 import SentimentEventsPage from './components/SentimentEventsPage.vue'
 import SidebarNavigation from './components/SidebarNavigation.vue'
 import StockAskPage from './components/StockAskPage.vue'
 import TailReportPage from './components/TailReportPage.vue'
+import TechnicalScreenerPage from './components/TechnicalScreenerPage.vue'
 import TimingPage from './components/TimingPage.vue'
 import TomorrowStrategyPage from './components/TomorrowStrategyPage.vue'
 import WatchlistPage from './components/WatchlistPage.vue'
@@ -40,6 +42,8 @@ const mainlineResearchPage = ref<InstanceType<typeof MainlineResearchPage> | nul
 const sentimentEventsPage = ref<InstanceType<typeof SentimentEventsPage> | null>(null)
 const stockAskPage = ref<InstanceType<typeof StockAskPage> | null>(null)
 const diagnosisPage = ref<InstanceType<typeof DiagnosisPage> | null>(null)
+const screenerPage = ref<InstanceType<typeof ScreenerPage> | null>(null)
+const technicalScreenerPage = ref<InstanceType<typeof TechnicalScreenerPage> | null>(null)
 const tomorrowPage = ref<InstanceType<typeof TomorrowStrategyPage> | null>(null)
 const watchlistPage = ref<InstanceType<typeof WatchlistPage> | null>(null)
 const routePath = ref('today')
@@ -64,13 +68,15 @@ const isTomorrowStrategy = computed(() => routePath.value === 'review' && routeT
 const isWatchlist = computed(() => routePath.value === 'risk' && routeTab.value === 'watchlist')
 const isStockAsk = computed(() => routePath.value === 'research' && routeTab.value === 'ask')
 const isDiagnosis = computed(() => routePath.value === 'research' && routeTab.value === 'diagnosis')
+const isScreener = computed(() => routePath.value === 'research' && routeTab.value === 'screener')
+const isTechnicalScreener = computed(() => routePath.value === 'research' && routeTab.value === 'technical-screener')
 const activeNavigation = computed(() => findActiveNavigation(routePath.value, routeTab.value))
 const moduleTitle = computed(() => activeNavigation.value?.group.label || (routePath.value === 'settings' ? '系统设置' : '交易工作台'))
 const pageTitle = computed(() => activeNavigation.value?.child.label || (routePath.value === 'settings' ? '系统设置' : '页面迁移中'))
-const pageRefreshing = computed(() => isHotboard.value || isHoldings.value || isWatchlist.value || isTiming.value || isMainlineResearch.value || isSentimentEvents.value || isTomorrowStrategy.value || isCapitalTracking.value || isStockAsk.value || isDiagnosis.value
+const pageRefreshing = computed(() => isHotboard.value || isHoldings.value || isWatchlist.value || isTiming.value || isMainlineResearch.value || isSentimentEvents.value || isTomorrowStrategy.value || isCapitalTracking.value || isStockAsk.value || isDiagnosis.value || isScreener.value || isTechnicalScreener.value
   ? reportRefreshing.value
   : refreshing.value || reportRefreshing.value)
-const pageBusy = computed(() => isHotboard.value || isHoldings.value || isWatchlist.value || isTiming.value || isMainlineResearch.value || isSentimentEvents.value || isTomorrowStrategy.value || isCapitalTracking.value || isStockAsk.value || isDiagnosis.value
+const pageBusy = computed(() => isHotboard.value || isHoldings.value || isWatchlist.value || isTiming.value || isMainlineResearch.value || isSentimentEvents.value || isTomorrowStrategy.value || isCapitalTracking.value || isStockAsk.value || isDiagnosis.value || isScreener.value || isTechnicalScreener.value
   ? reportRefreshing.value
   : loading.value || pageRefreshing.value)
 
@@ -169,6 +175,14 @@ function expandSidebar() {
 }
 
 async function refreshCurrentPage() {
+  if (isTechnicalScreener.value && technicalScreenerPage.value) {
+    await Promise.resolve(technicalScreenerPage.value.refresh())
+    return
+  }
+  if (isScreener.value && screenerPage.value) {
+    await Promise.resolve(screenerPage.value.refresh())
+    return
+  }
   if (isDiagnosis.value && diagnosisPage.value) {
     await Promise.resolve(diagnosisPage.value.refresh())
     return
@@ -385,6 +399,18 @@ watch(pageTitle, (value) => { document.title = `${value} · W.U.D.I.` }, { immed
         <DiagnosisPage
           v-else-if="isDiagnosis"
           ref="diagnosisPage"
+          @refresh-state="reportRefreshing = $event"
+        />
+
+        <ScreenerPage
+          v-else-if="isScreener"
+          ref="screenerPage"
+          @refresh-state="reportRefreshing = $event"
+        />
+
+        <TechnicalScreenerPage
+          v-else-if="isTechnicalScreener"
+          ref="technicalScreenerPage"
           @refresh-state="reportRefreshing = $event"
         />
 
