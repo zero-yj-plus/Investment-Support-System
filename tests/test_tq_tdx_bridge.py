@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import importlib.util
+import threading
+import time
 from pathlib import Path
+from types import SimpleNamespace
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "tq_tdx_bridge.py"
@@ -74,14 +77,131 @@ def test_authentication_and_read_only_gate() -> None:
 
 def test_quote_contract_and_units() -> None:
     service = app()
-    status, payload = service.dispatch("GET", "/v1/realtime/quotes?codes=000001.SZ", auth())
-    assert status == 200
-    quote = payload["quotes"][0]
-    assert quote["code"] == "000001.SZ"
-    assert quote["amount"] == 1234.5678  # TQ 元 -> TDX 契约万元
-    assert quote["volume"] == 1234.0  # TQ 股 -> TDX 契约手
-    assert quote["buyv"] == [10.0, 20.0]
-    assert quote["sellv"] == [30.0, 40.0]
+    try:
+        status, payload = service.dispatch("GET", "/v1/realtime/quotes?codes=000001.SZ", auth())
+        assert status == 200
+        quote = payload["quotes"][0]
+        assert quote["code"] == "000001.SZ"
+        assert quote["amount"] == 1234.5678  # TQ 元 -> TDX 契约万元
+        assert quote["volume"] == 1234.0  # TQ 股 -> TDX 契约手
+        assert quote["buyv"] == [10.0, 20.0]
+        assert quote["sellv"] == [30.0, 40.0]
+    finally:
+        service.close()
+
+
+def test_wait_zero_returns_pending_without_waiting_for_slow_tq() -> None:
+    release = threading.Event()
+
+    class SlowTQ(FakeTQ):
+        def call(self, method: str, params: dict | None = None):
+            if method == "get_market_snapshot":
+                release.wait(1.0)
+            return super().call(method, params)
+
+    service = bridge.BridgeApp(SlowTQ(), "secret")
+    started = time.monotonic()
+    try:
+        status, payload = service.dispatch(
+            "GET",
+            "/v1/realtime/quotes?codes=000001.SZ&max_age=30&wait=0",
+            auth(),
+        )
+        elapsed = time.monotonic() - started
+        assert status == 200
+        assert elapsed < 0.2
+        assert payload["count"] == 0
+        assert payload["quotes"] == [{"code": "000001.SZ", "pending": True}]
+
+        release.set()
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            _status, warmed = service.dispatch(
+                "GET",
+                "/v1/realtime/quotes?codes=000001.SZ&max_age=30&wait=0",
+                auth(),
+            )
+            if warmed["count"] == 1:
+                break
+            time.sleep(0.01)
+        assert warmed["count"] == 1
+        assert warmed["quotes"][0]["now"] == 10.5
+    finally:
+        release.set()
+        service.close()
+
+
+def test_large_quote_batch_uses_tq_pricevol_once() -> None:
+    service = app()
+    codes = [f"{index:06d}.SZ" for index in range(65)]
+    try:
+        status, payload = service.dispatch(
+            "GET",
+            f"/v1/realtime/quotes?codes={','.join(codes)}&wait=2",
+            auth(),
+        )
+        assert status == 200
+        assert payload["count"] == 65
+        assert len(payload["quotes"]) == 65
+        assert service.client.calls == [("get_pricevol", {"stock_list": codes})]
+    finally:
+        service.close()
+
+
+def test_waiting_request_reuses_existing_quote_refresh() -> None:
+    release = threading.Event()
+
+    class SlowTQ(FakeTQ):
+        def call(self, method: str, params: dict | None = None):
+            if method == "get_market_snapshot":
+                release.wait(1.0)
+            return super().call(method, params)
+
+    client = SlowTQ()
+    service = bridge.BridgeApp(client, "secret")
+    try:
+        _status, first = service.dispatch(
+            "GET",
+            "/v1/realtime/quotes?codes=000001.SZ&wait=0",
+            auth(),
+        )
+        assert first["quotes"][0]["pending"] is True
+
+        timer = threading.Timer(0.05, release.set)
+        timer.start()
+        status, second = service.dispatch(
+            "GET",
+            "/v1/realtime/quotes?codes=000001.SZ&wait=1",
+            auth(),
+        )
+        timer.join()
+        assert status == 200
+        assert second["count"] == 1
+        assert len(client.calls) == 1
+    finally:
+        release.set()
+        service.close()
+
+
+def test_handler_swallows_client_disconnect_during_body_write() -> None:
+    class DisconnectedBody:
+        @staticmethod
+        def write(_raw: bytes) -> None:
+            raise ConnectionAbortedError(10053, "client closed")
+
+    handler = bridge.BridgeHandler.__new__(bridge.BridgeHandler)
+    handler.server = SimpleNamespace(app=app())
+    handler.command = "GET"
+    handler.path = "/v1/realtime/status"
+    handler.headers = {}
+    handler.wfile = DisconnectedBody()
+    handler.send_response = lambda _status: None
+    handler.send_header = lambda _key, _value: None
+    handler.end_headers = lambda: None
+    try:
+        handler._handle()
+    finally:
+        handler.server.app.close()
 
 
 def test_stock_universe_and_cursor_pagination() -> None:

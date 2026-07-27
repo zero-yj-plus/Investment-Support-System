@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import hmac
 import ipaddress
 import json
@@ -27,8 +28,11 @@ DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 18879
 MAX_REQUEST_BYTES = 64 * 1024
 MAX_TQ_RESPONSE_BYTES = 32 * 1024 * 1024
-MAX_QUOTES = 64
+MAX_QUOTES = 300
 MAX_RELATIONS = 120
+MAX_QUOTE_CACHE = 2048
+QUOTE_REFRESH_WORKERS = 2
+QUOTE_DETAIL_BATCH = 4
 DATASETS = {
     "instruments_a",
     "sectors",
@@ -244,6 +248,25 @@ class BridgeApp:
         self.api_key = api_key
         self.cache = TTLCache()
         self._last_quote_at: str | None = None
+        self._quote_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+        self._quote_inflight: dict[str, concurrent.futures.Future[dict[str, dict[str, Any]]]] = {}
+        self._quote_batches: set[concurrent.futures.Future[dict[str, dict[str, Any]]]] = set()
+        self._quote_lock = threading.Lock()
+        self._quote_executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=QUOTE_REFRESH_WORKERS,
+            thread_name_prefix="tq-quote-refresh",
+        )
+        self._closed = False
+
+    def close(self) -> None:
+        with self._quote_lock:
+            if self._closed:
+                return
+            self._closed = True
+            futures = tuple(self._quote_batches)
+        for future in futures:
+            future.cancel()
+        self._quote_executor.shutdown(wait=False, cancel_futures=True)
 
     def dispatch(self, method: str, target: str, headers: dict[str, str]) -> tuple[int, dict[str, Any]]:
         if method != "GET":
@@ -316,17 +339,151 @@ class BridgeApp:
             raise BridgeError(HTTPStatus.BAD_REQUEST, "codes_required", "codes 不能为空")
         if len(codes) > MAX_QUOTES:
             raise BridgeError(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "too_many_codes", f"单次最多 {MAX_QUOTES} 只")
+        max_age = self._quote_query_int(query, "max_age", default=15, minimum=1, maximum=120)
+        wait = self._quote_query_int(query, "wait", default=2, minimum=0, maximum=5)
+
+        now = time.monotonic()
+        refresh_after = max(0.5, max_age / 2.0)
+        with self._quote_lock:
+            refresh_codes = [
+                code
+                for code in codes
+                if (
+                    code not in self._quote_cache
+                    or now - self._quote_cache[code][0] >= refresh_after
+                )
+            ]
+        futures = self._schedule_quote_refresh(refresh_codes)
+        completed: dict[str, dict[str, Any]] = {}
+        if wait and futures:
+            # wait 是整次 HTTP 请求的总预算，不是每只股票各等待一次。
+            done, _pending = concurrent.futures.wait(futures, timeout=float(wait))
+            for future in done:
+                try:
+                    completed.update(future.result())
+                except Exception:
+                    continue
+        else:
+            # Future 的完成通知早于 done callback 执行；直接采用已完成结果，
+            # 避免极窄窗口内误报 pending，缓存仍由 callback 统一落入。
+            for future in futures:
+                if not future.done():
+                    continue
+                try:
+                    completed.update(future.result())
+                except Exception:
+                    continue
+
         rows: list[dict[str, Any]] = []
+        valid_count = 0
+        now = time.monotonic()
+        with self._quote_lock:
+            cached = {code: self._quote_cache.get(code) for code in codes}
         for code in codes:
-            value = self.client.call("get_market_snapshot", {"stock_code": code, "field_list": []})
+            item = cached.get(code)
+            if code in completed:
+                item = (now, completed[code])
+            if item is None:
+                rows.append({"code": code, "pending": True})
+                continue
+            observed_at, quote = item
+            age = max(0.0, now - observed_at)
+            if age > max_age:
+                rows.append({"code": code, "pending": True, "age_seconds": round(age, 3)})
+                continue
+            current = dict(quote)
+            current["age_seconds"] = round(age, 3)
+            rows.append(current)
+            valid_count += 1
+        return {"quotes": rows, "count": valid_count, "source": "local_tq"}
+
+    @staticmethod
+    def _quote_query_int(
+        query: dict[str, str],
+        name: str,
+        *,
+        default: int,
+        minimum: int,
+        maximum: int,
+    ) -> int:
+        try:
+            value = int(query.get(name, str(default)))
+        except (TypeError, ValueError):
+            raise BridgeError(HTTPStatus.BAD_REQUEST, "invalid_quote_query", f"{name} 必须是整数") from None
+        return max(minimum, min(value, maximum))
+
+    def _schedule_quote_refresh(
+        self,
+        codes: list[str],
+    ) -> set[concurrent.futures.Future[dict[str, dict[str, Any]]]]:
+        if not codes:
+            return set()
+        with self._quote_lock:
+            existing = {self._quote_inflight[code] for code in codes if code in self._quote_inflight}
+            pending = [code for code in codes if code not in self._quote_inflight]
+            # ThreadPoolExecutor 的内部队列无界；只允许 worker 数量以内的批次，
+            # 拥堵时本次返回 pending，由腾讯等既有备源接管。
+            if self._closed or not pending or len(self._quote_batches) >= QUOTE_REFRESH_WORKERS:
+                return existing
+            future = self._quote_executor.submit(self._load_quote_batch, tuple(pending))
+            self._quote_batches.add(future)
+            for code in pending:
+                self._quote_inflight[code] = future
+        future.add_done_callback(self._finish_quote_batch)
+        existing.add(future)
+        return existing
+
+    def _load_quote_batch(self, codes: tuple[str, ...]) -> dict[str, dict[str, Any]]:
+        rows: dict[str, dict[str, Any]] = {}
+        if len(codes) > QUOTE_DETAIL_BATCH:
+            # TQ 为批量价量提供 get_pricevol；大批量不能逐只串行调用快照。
+            try:
+                value = self.client.call("get_pricevol", {"stock_list": list(codes)})
+            except BridgeError:
+                return rows
+            if isinstance(value, dict):
+                for raw_code, item in value.items():
+                    code = _entity(raw_code)
+                    if code in codes and isinstance(item, dict):
+                        normalized = self._quote_row(code, item)
+                        if normalized:
+                            rows[code] = normalized
+            return rows
+
+        for code in codes:
+            try:
+                value = self.client.call("get_market_snapshot", {"stock_code": code, "field_list": []})
+            except BridgeError:
+                continue
             row = value.get(code) if isinstance(value, dict) and isinstance(value.get(code), dict) else value
             if isinstance(row, dict):
                 normalized = self._quote_row(code, row)
                 if normalized:
-                    rows.append(normalized)
-        if rows:
-            self._last_quote_at = _now_cn().isoformat(timespec="seconds")
-        return {"quotes": rows, "count": len(rows), "source": "local_tq"}
+                    rows[code] = normalized
+        return rows
+
+    def _finish_quote_batch(
+        self,
+        future: concurrent.futures.Future[dict[str, dict[str, Any]]],
+    ) -> None:
+        try:
+            rows = future.result()
+        except Exception:
+            rows = {}
+        observed_at = time.monotonic()
+        with self._quote_lock:
+            codes = [code for code, current in self._quote_inflight.items() if current is future]
+            for code in codes:
+                self._quote_inflight.pop(code, None)
+            self._quote_batches.discard(future)
+            for code, quote in rows.items():
+                self._quote_cache[code] = (observed_at, quote)
+            if len(self._quote_cache) > MAX_QUOTE_CACHE:
+                oldest = sorted(self._quote_cache, key=lambda code: self._quote_cache[code][0])
+                for code in oldest[: len(self._quote_cache) - MAX_QUOTE_CACHE]:
+                    self._quote_cache.pop(code, None)
+            if rows:
+                self._last_quote_at = _now_cn().isoformat(timespec="seconds")
 
     @staticmethod
     def _quote_row(code: str, row: dict[str, Any]) -> dict[str, Any] | None:
@@ -504,12 +661,16 @@ class BridgeHandler(BaseHTTPRequestHandler):
         headers = {str(key).lower(): str(value) for key, value in self.headers.items()}
         status, payload = app.dispatch(self.command, self.path, headers)
         raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-        self.send_response(int(status))
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(raw)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(raw)
+        try:
+            self.send_response(int(status))
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(raw)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(raw)
+        except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
+            # 客户端已超时或主动取消；响应内容不能再送达，不应打印线程堆栈。
+            return
 
     do_GET = _handle
     do_POST = _handle
@@ -527,6 +688,10 @@ class BridgeServer(ThreadingHTTPServer):
     def __init__(self, address: tuple[str, int], app: BridgeApp) -> None:
         super().__init__(address, BridgeHandler)
         self.app = app
+
+    def server_close(self) -> None:
+        self.app.close()
+        super().server_close()
 
 
 def build_parser() -> argparse.ArgumentParser:

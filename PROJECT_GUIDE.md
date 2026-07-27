@@ -26,7 +26,7 @@
 | AI 接入 | OpenAI 兼容 `/v1/chat/completions`；Hermes 网关为可选集成 |
 | Agent 工具 | FastMCP，只读工具为默认，维护型写入默认关闭 |
 | 前端 | 原生 ES Modules、Hash Router、ECharts、Marked、html2canvas、jsPDF |
-| Vue 重构试验 | `frontend-vue/`：Vue 3、TypeScript、Vite；已迁移决策总览、盘前、尾盘、复盘、次日策略、涨停题材、资金追踪、持仓与观察池，尚未接管生产入口 |
+| Vue 重构试验 | `frontend-vue/`：Vue 3、TypeScript、Vite；已迁移决策总览、盘前、尾盘、复盘、次日策略、涨停题材、资金追踪、持仓、观察池与问股，尚未接管生产入口 |
 | 测试 | pytest、pytest-asyncio；大量契约测试直接检查 Python、API 和前端源码语义 |
 | 部署脚本 | 主要是 Bash/Linux 形态；另有跨平台 Python 运维脚本 |
 
@@ -390,6 +390,8 @@ Vite。首屏继续复用 `/api/shell-status`、`/api/pulse`、`/api/market/over
 资金追踪页读取 `/api/capital/trends?days=1`，并保留 `/api/capital/snapshot` 手动采集动作；行业与热门股按真实数据日期、来源和单位分别展示，`tdx_raw_unverified` 仅显示原始公式值，加载、空数组、陈旧快照和动作失败均显式区分。
 我的持仓页读取 `/api/holdings` 与合并报价 `/api/quotes?codes=...`，新增代码时仅用 `/api/quote/{code}` 核验，并通过 `PUT /api/holdings` 整体保存；页面不消费或提交账户总资产，投入成本按成本价与股数自动汇总，任一现价缺失时不汇总持仓总市值、总盈亏或持仓构成，持仓加载失败时锁定保存以避免空账本覆盖。
 观察池页读取轻量合并的 `/api/watchlist`，新增时用 `/api/quote/{code}` 核验，并通过逐条 `POST /api/watchlist`、`PUT /api/watchlist/{id}`、`DELETE /api/watchlist/{id}` 管理账本；评级、状态、双周期区间、位置和价格边界完全展示服务端结果，`queued` 只表示区间计算已排队。页面明确区分空数组、报价缺失、降级快照、陈旧数据和传输失败，且不推断接口未提供的仓位上限。
+问股页固定使用股票模式，通过 `/api/stock/{code}/core` 与 `/api/stock/{code}/enrichment` 展示标的证据，并以 `/api/chat` SSE 生成受约束回答；会话接口负责追加式历史。页面不提供自由问答、持仓判断或产业链挖掘，标的核心与增强证据独立降级，Markdown 只通过安全 Vue 节点渲染。
+个股诊断页并行读取 `/api/quote/{code}` 与 `/api/diagnose?code={code}`；快速报价只作身份和行情预览，正式动作、仓位上限、价格条件、风险闸与证据链完全展示服务端治理卡。页面区分缺失、降级、冲突、陈旧、真实空数组和局部请求失败，不请求模型或其他研究接口，也不在浏览器中重算交易结论。
 
 | 文件 / 目录 | 说明 |
 | --- | --- |
@@ -402,6 +404,8 @@ Vite。首屏继续复用 `/api/shell-status`、`/api/pulse`、`/api/market/over
 | `src/components/HoldingsPage.vue`、`HoldingsSummary.vue`、`HoldingEditor.vue`、`HoldingsTable.vue` | 我的持仓结论、自动成本/市值汇总边界、账本编辑和桌面宽表/移动卡片明细。 |
 | `src/components/WatchlistPage.vue`、`WatchlistItemCard.vue`、`WatchlistEditor.vue` | 观察池结论摘要、服务端双周期价格边界、逐项数据健康与显式核验编辑。 |
 | `src/components/TomorrowStrategyPage.vue`、`TomorrowDecisionSummary.vue`、`TomorrowWatchlist.vue`、`TomorrowDataHealth.vue` | 次日策略的风险底座、观察池触发条件、依据健康和安全报告工作区。 |
+| `src/components/StockAsk*.vue` | 专属盘中问股的历史栏、对话、安全消息节点、标的证据与等高输入区。 |
+| `src/components/Diagnosis*.vue` | 个股诊断的代码查询、确定性结论、风险/价格边界、结构化证据与数据治理。 |
 | `src/composables/useDecisionOverview.ts` | 并行请求、超时、刷新、可见性恢复和卸载清理。 |
 | `src/composables/useMarketEvidence.ts` | 盘面证据与深度结构的延迟请求、独立降级、刷新和卸载清理。 |
 | `src/composables/usePremarketReport.ts` | 盘前报告读取、资金验证、SSE 生成、推送和独立请求/定时器清理。 |
@@ -412,6 +416,8 @@ Vite。首屏继续复用 `/api/shell-status`、`/api/pulse`、`/api/market/over
 | `src/composables/useHoldings.ts` | 持仓、批量报价、单票核验与整体保存的独立请求控制、覆盖保护、自动刷新和卸载清理。 |
 | `src/composables/useWatchlist.ts` | 观察池读取、代码核验、逐条 CRUD、区间重算排队、自动刷新与独立请求卸载清理。 |
 | `src/composables/useTomorrowStrategy.ts` | 次日策略报告与观察池的独立请求、SSE 生成、推送提交语义、自动刷新和卸载清理。 |
+| `src/composables/useStockAsk.ts` | 问股核心/增强证据、会话、SSE、附件和生命周期资源的独立控制与局部降级。 |
+| `src/composables/useDiagnosis.ts` | 快速报价与正式诊断的独立请求控制、跨页代码意图、刷新保留和卸载清理。 |
 | `src/utils/reportMarkdown.ts` | 把受治理报告 Markdown 解析为安全的 Vue 渲染块和章节目录，不使用原始 HTML 注入。 |
 | `src/styles.css` | 深浅主题、响应式断点、焦点和 reduced-motion 规则。 |
 | `scripts/audit-ui.mjs` | 使用本机 Chrome + axe-core 检查已迁移页面的 375/768/1024/1440 布局、深浅主题、关键状态和 WCAG。 |

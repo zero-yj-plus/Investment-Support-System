@@ -732,6 +732,123 @@ const fixtures = {
     ok: false, state: 'quote_unavailable', recognized: true,
     error: '股票已识别，但当前报价源暂未返回', identity: { name: '浦发银行' }, quote: null,
   },
+  '/api/quote/600519': {
+    ok: true, state: 'complete', recognized: true,
+    identity: { code: '600519', known: true, name: '贵州茅台', universe_complete: true, universe_as_of: '2026-07-22' },
+    quote: {
+      code: '600519', name: '贵州茅台', price: 1488.52, prev_close: 1470.00, change_pct: 1.26,
+      open: 1472.00, high: 1496.80, low: 1468.20, amount: 4238000000,
+      turnover_rate: 0.42, volume_ratio: 1.18, pe: 24.62, pb: 7.82,
+      source: 'TDX 数据 API + 腾讯字段补齐', stale: false,
+      as_of: '2026-07-22 10:31:38',
+    },
+  },
+  '/api/diagnose': {
+    ok: true, code: '600519', name: '贵州茅台', recognized: true,
+    action: '观望', signal_action: '买入', original_action: '买入', conviction: '低', confidence: 0.38,
+    position_cap_pct: null,
+    entry_zone: '1470.00–1484.70（结构支撑区）',
+    stop: '收盘有效跌破 昨收 1470.00，且下一交易日不能收回',
+    summary: '趋势偏强（深度规则 +5 分），但账户与风控授权证据未齐，当前只能观望；等待回踩支撑企稳。',
+    missing: ['基础财务本次未返回', '账户净值证据缺失'],
+    analysis_mode: 'deterministic_deep', analysis_status: 'partial',
+    decision_authority: 'deep_deterministic_analysis+risk_gate',
+    decision_generated_at: '2026-07-22T10:31:46+08:00',
+    analysis_pipeline: {
+      rule_version: 'diagnosis-pipeline-v1', completed: 7, total: 8, elapsed_ms: 2860,
+      data_as_of: '2026-07-22 10:31:44', quote_stale: false,
+      quote_note: '盘口为盘中快照；技术结构使用前复权日线。',
+      stages: [
+        { id: 'trend', label: '趋势结构', status: 'complete', score: 2, summary: '收盘价位于 MA20 上方，趋势偏强', source: '前复权日K', data_date: '2026-07-22' },
+        { id: 'momentum', label: '动量', status: 'complete', score: 1, summary: 'RSI 与 MACD 未进入过热区', source: '前复权日K', data_date: '2026-07-22' },
+        { id: 'volume', label: '量价', status: 'complete', score: 1, summary: '量比温和放大，换手率保持低位', source: '实时盘口' },
+        { id: 'volatility', label: '波动', status: 'complete', score: 0, summary: 'ATR 波动未触发异常阈值', source: '前复权日K' },
+        { id: 'levels', label: '结构位', status: 'complete', score: 1, summary: '1470.00 附近为服务端识别支撑', source: '日K结构位' },
+        { id: 'flow', label: '资金', status: 'complete', score: 0, summary: '主力净额为正，仅作增强证据', source: '新浪资金流估算口径' },
+        { id: 'industry', label: '行业', status: 'complete', score: 0, summary: '所属白酒行业，未据此单独给动作', source: 'TDX relation' },
+        { id: 'fundamental', label: '基础财务', status: 'missing', score: null, summary: '基础财务本次未返回', source: 'TDX stock_info' },
+      ],
+    },
+    technical_analysis: {
+      structure: '趋势偏强', complete: true, score: 5,
+      levels: { support: 1470.00, resistance: 1496.80, support_basis: '昨收', resistance_basis: '当日高点' },
+    },
+    trade_plan: {
+      entry_zone: '1470.00–1484.70（结构支撑区）', entry_trigger: '回踩昨收 1470.00 附近缩量企稳，或放量突破当日高点 1496.80',
+      stop: '收盘有效跌破 昨收 1470.00，且下一交易日不能收回', support: 1470.00,
+      resistance: 1496.80, invalidation: 1470.00, basis: ['昨收', '当日高点'], rule_version: 'diagnosis-structure-plan-v1',
+    },
+    risk_decision: {
+      decision: 'veto', final_action: '观望', position_cap_pct: 0, effective_confidence: 0.38,
+      reasons: ['账户净值与总仓证据不足，当前未授权新增风险'], reason_codes: ['account_nav_missing'],
+      rule_version: 'risk-gate-v2', input_snapshot_hash: 'a63f17e22b9c934d4caa',
+    },
+    deterministic_signal: { signal_score: 5, coverage: 0.875, complete: true, reasons: ['趋势偏强', '量价未过热'], rule_version: 'diagnosis-deep-governance-v1' },
+    market_quote: {
+      code: '600519', name: '贵州茅台', price: 1488.52, prev_close: 1470.00,
+      change_pct: 1.26, open: 1472.00, high: 1496.80, low: 1468.20,
+      amount: 4238000000, turnover_rate: 0.42, volume_ratio: 1.18,
+      as_of: '2026-07-22 10:31:38', source: 'TDX 数据 API', stale: false,
+    },
+    market_evidence_quality: { status: 'degraded', captured: 7, requested: 8, missing_fields: ['pe'] },
+    decision_market_evidence_quality: { status: 'degraded', captured: 7, requested: 8, missing_fields: ['pe'] },
+    market_evidence: [
+      { field: 'last_price', value: 1488.52, unit: 'CNY', source_id: 'tdx_quote', quality_status: 'ok', freshness: 'live', trading_day: '2026-07-22', evidence_id: 'ev-dg-price' },
+      { field: 'prev_close', value: 1470.00, unit: 'CNY', source_id: 'tdx_quote', quality_status: 'ok', freshness: 'live', trading_day: '2026-07-22', evidence_id: 'ev-dg-prev' },
+      { field: 'change_pct', value: 1.26, unit: 'percent', source_id: 'tdx_quote', quality_status: 'ok', freshness: 'live', trading_day: '2026-07-22', evidence_id: 'ev-dg-change' },
+      { field: 'amount', value: 4238000000, unit: 'CNY', source_id: 'tdx_quote', quality_status: 'ok', freshness: 'live', trading_day: '2026-07-22', evidence_id: 'ev-dg-amount' },
+      { field: 'turnover_rate', value: 0.42, unit: 'percent', source_id: 'tdx_quote', quality_status: 'ok', freshness: 'live', trading_day: '2026-07-22', evidence_id: 'ev-dg-turnover' },
+      { field: 'volume_ratio', value: 1.18, unit: 'ratio', source_id: 'tdx_quote', quality_status: 'ok', freshness: 'live', trading_day: '2026-07-22', evidence_id: 'ev-dg-volume' },
+      { field: 'pb', value: 7.82, unit: 'ratio', source_id: 'tencent_quote', quality_status: 'degraded', freshness: 'delayed', trading_day: '2026-07-22', evidence_id: 'ev-dg-pb' },
+    ],
+    decision_market_evidence: [
+      { field: 'last_price', value: 1488.52, unit: 'CNY', source_id: 'tdx_quote', quality_status: 'ok', freshness: 'live', trading_day: '2026-07-22', evidence_id: 'ev-dg-price' },
+      { field: 'prev_close', value: 1470.00, unit: 'CNY', source_id: 'tdx_quote', quality_status: 'ok', freshness: 'live', trading_day: '2026-07-22', evidence_id: 'ev-dg-prev' },
+      { field: 'change_pct', value: 1.26, unit: 'percent', source_id: 'tdx_quote', quality_status: 'ok', freshness: 'live', trading_day: '2026-07-22', evidence_id: 'ev-dg-change' },
+      { field: 'amount', value: 4238000000, unit: 'CNY', source_id: 'tdx_quote', quality_status: 'ok', freshness: 'live', trading_day: '2026-07-22', evidence_id: 'ev-dg-amount' },
+      { field: 'turnover_rate', value: 0.42, unit: 'percent', source_id: 'tdx_quote', quality_status: 'ok', freshness: 'live', trading_day: '2026-07-22', evidence_id: 'ev-dg-turnover' },
+      { field: 'volume_ratio', value: 1.18, unit: 'ratio', source_id: 'tdx_quote', quality_status: 'ok', freshness: 'live', trading_day: '2026-07-22', evidence_id: 'ev-dg-volume' },
+      { field: 'pb', value: 7.82, unit: 'ratio', source_id: 'tencent_quote', quality_status: 'degraded', freshness: 'delayed', trading_day: '2026-07-22', evidence_id: 'ev-dg-pb' },
+    ],
+    evidence: [
+      { finding: '现价 1488.52，高于昨收 1470.00', direction: '利多', source: 'tdx_quote', evidence_ref: 'evidence:ev-dg-price', rule_version: 'diagnosis-deterministic-evidence-v1' },
+      { finding: '当日涨跌幅 +1.26%', direction: '利多', source: 'tdx_quote', evidence_ref: 'evidence:ev-dg-change', rule_version: 'diagnosis-deterministic-evidence-v1' },
+      { finding: '量比 1.18，换手 0.42%', direction: '中性', source: 'tdx_quote', evidence_ref: 'evidence:ev-dg-volume', rule_version: 'diagnosis-deterministic-evidence-v1' },
+    ],
+    model_connection: { configured: true, status: 'not_requested', used_for_diagnosis: false, fallback: null },
+    model_explanation_status: 'available_on_request',
+    advice_record: { ok: true, blocked: true, recommendation_created: false },
+    analysis_contract: { version: 'stock-analysis-pipeline-v1', data_status: 'degraded', data_as_of: '2026-07-22T10:31:46+08:00', decision_authority: 'deep_deterministic_analysis+risk_gate' },
+  },
+  '/api/chat/conversations': {
+    ok: true,
+    conversations: [
+      { id: 'abc123', title: '贵州茅台盘中承接', mode: 'stock', updated_at: '2026-07-22 10:31:40', msg_count: 4 },
+      { id: 'def456', title: '旧自由问答不会出现在本页', mode: 'free', updated_at: '2026-07-22 10:20:00', msg_count: 2 },
+    ],
+  },
+  '/api/stock/600519/core': {
+    ok: true, state: 'complete', ts: '2026-07-22 10:31:42', recognized: true, missing: [],
+    recent_daily: [{ d: '2026-07-22', o: 1472.00, c: 1488.52, h: 1496.80, l: 1468.20, v: 3261547 }],
+    recognition: { code: '600519', known: true, name: '贵州茅台', universe_complete: true },
+    quote: {
+      code: '600519', name: '贵州茅台', price: 1488.52, change_pct: 1.26,
+      open: 1472.00, high: 1496.80, low: 1468.20, prev_close: 1470.00,
+      amount: 4238000000, turnover_rate: 0.42, volume_ratio: 1.18,
+      pe: 23.6, total_mv: 1870000000000, float_mv: 1870000000000,
+      high_52w: 1598.00, low_52w: 1268.00, source: 'TDX 数据 API', stale: false,
+      as_of: '2026-07-22 10:31:38',
+    },
+    sections: { quote: { state: 'complete' }, recent_daily: { state: 'complete' } },
+  },
+  '/api/stock/600519/enrichment': {
+    ok: true, state: 'complete', ts: '2026-07-22 10:31:44', flow_date: '2026-07-22',
+    board: { industry: '白酒', concepts: ['高股息', '消费龙头'], source: 'TDX relation' },
+    flow: { trade_date: '20260722', main_net: 318000000, source: '新浪资金流估算口径', derived: true },
+    financial: { end_date: '2026-03-31', roe: 8.42, grossprofit_margin: 91.8, netprofit_yoy: 11.2, debt_to_assets: 18.7, source: 'TDX stock_info' },
+    sections: { board: { state: 'complete' }, flow: { state: 'complete' }, financial: { state: 'complete' }, auction: { state: 'unavailable' } },
+    missing: ['集合竞价(暂无可验证专用源)'],
+  },
 }
 
 const viewports = [
@@ -753,6 +870,8 @@ const auditedPages = [
   { name: 'tomorrow', hash: '#/review?tab=tomorrow', titleSelector: '#tomorrow-page-title' },
   { name: 'holdings', hash: '#/risk?tab=holdings', titleSelector: '#holdings-page-title' },
   { name: 'watchlist', hash: '#/risk?tab=watchlist', titleSelector: '#watchlist-page-title' },
+  { name: 'stock-ask', hash: '#/research?tab=ask', titleSelector: '#stock-ask-page-title' },
+  { name: 'diagnosis', hash: '#/research?tab=diagnosis&code=600519', titleSelector: '#diagnosis-page-title' },
 ]
 
 await mkdir(outputDir, { recursive: true })
@@ -1830,6 +1949,266 @@ try {
   })
   await watchlistFailurePage.close()
 
+  const diagnosisLoadingPage = await browser.newPage({ viewport: { width: 375, height: 812 }, deviceScaleFactor: 1 })
+  const diagnosisLoadingErrors = []
+  diagnosisLoadingPage.on('pageerror', (error) => diagnosisLoadingErrors.push(error.message))
+  await diagnosisLoadingPage.addInitScript(() => localStorage.setItem('wudi-vue-theme', 'dark'))
+  await diagnosisLoadingPage.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    if (path === '/api/quote/600519' || path === '/api/diagnose') {
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 1800))
+    }
+    const body = fixtures[path]
+    return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
+  })
+  await diagnosisLoadingPage.goto('http://127.0.0.1:4175/#/research?tab=diagnosis&code=600519', { waitUntil: 'domcontentloaded' })
+  await diagnosisLoadingPage.waitForSelector('.diagnosis-loading')
+  await diagnosisLoadingPage.addScriptTag({ content: axeSource })
+  const diagnosisLoadingState = await diagnosisLoadingPage.evaluate(() => ({
+    loadingVisible: Boolean(document.querySelector('.diagnosis-loading')),
+    submitDisabled: Boolean(document.querySelector('.diagnosis-search__submit')?.disabled),
+    noPageOverflow: document.documentElement.scrollWidth <= window.innerWidth,
+    honestLoadingCopy: document.body.innerText.includes('缺失项不会补 0'),
+  }))
+  const diagnosisLoadingAxe = await diagnosisLoadingPage.evaluate(async () => window.axe.run(document, {
+    runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+  }))
+  await diagnosisLoadingPage.screenshot({ path: resolve(outputDir, 'diagnosis-loading-375.png'), fullPage: true })
+  report.push({
+    page: 'diagnosis', scenario: 'loading', diagnosisLoadingState,
+    diagnosisLoadingStateComplete: Object.values(diagnosisLoadingState).every(Boolean),
+    pageErrors: diagnosisLoadingErrors,
+    violations: diagnosisLoadingAxe.violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help, nodes: item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })),
+  })
+  await diagnosisLoadingPage.close()
+
+  const diagnosisEmptyPage = await browser.newPage({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 1 })
+  const diagnosisEmptyErrors = []
+  const diagnosisOwnRequests = []
+  diagnosisEmptyPage.on('pageerror', (error) => diagnosisEmptyErrors.push(error.message))
+  await diagnosisEmptyPage.addInitScript(() => localStorage.setItem('wudi-vue-theme', 'dark'))
+  await diagnosisEmptyPage.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    if (path === '/api/quote/600519' || path === '/api/diagnose') diagnosisOwnRequests.push(path)
+    const body = fixtures[path]
+    return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
+  })
+  await diagnosisEmptyPage.goto('http://127.0.0.1:4175/#/research?tab=diagnosis', { waitUntil: 'networkidle' })
+  await diagnosisEmptyPage.addScriptTag({ content: axeSource })
+  const diagnosisEmptyState = await diagnosisEmptyPage.evaluate((ownRequests) => ({
+    emptyVisible: Boolean(document.querySelector('.diagnosis-empty')),
+    clearCopy: document.body.innerText.includes('当前没有诊断数据') && document.body.innerText.includes('不会用示例股票、演示数字或历史值填充'),
+    noUnrelatedDiagnosisRequest: ownRequests.length === 0,
+    nativeInput: document.querySelector('#diagnosis-code')?.tagName === 'INPUT',
+  }), diagnosisOwnRequests)
+  const diagnosisEmptyAxe = await diagnosisEmptyPage.evaluate(async () => window.axe.run(document, {
+    runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+  }))
+  await diagnosisEmptyPage.screenshot({ path: resolve(outputDir, 'diagnosis-empty-1440.png'), fullPage: true })
+  report.push({
+    page: 'diagnosis', scenario: 'empty', diagnosisEmptyState,
+    diagnosisEmptyStateComplete: Object.values(diagnosisEmptyState).every(Boolean),
+    pageErrors: diagnosisEmptyErrors,
+    violations: diagnosisEmptyAxe.violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help, nodes: item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })),
+  })
+  await diagnosisEmptyPage.close()
+
+  const diagnosisFailurePage = await browser.newPage({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 1 })
+  const diagnosisFailureErrors = []
+  diagnosisFailurePage.on('pageerror', (error) => diagnosisFailureErrors.push(error.message))
+  await diagnosisFailurePage.addInitScript(() => localStorage.setItem('wudi-vue-theme', 'dark'))
+  await diagnosisFailurePage.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    if (path === '/api/quote/600519') {
+      return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: '审计场景：快速报价源暂不可用' }) })
+    }
+    const body = fixtures[path]
+    return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
+  })
+  await diagnosisFailurePage.goto('http://127.0.0.1:4175/#/research?tab=diagnosis&code=600519', { waitUntil: 'networkidle' })
+  await diagnosisFailurePage.waitForSelector('.diagnosis-decision')
+  await diagnosisFailurePage.addScriptTag({ content: axeSource })
+  const diagnosisFailureState = await diagnosisFailurePage.evaluate(() => {
+    const text = document.body.innerText
+    return {
+      decisionSurvives: text.includes('贵州茅台') && text.includes('当前动作') && text.includes('观望'),
+      localFailure: text.includes('快速报价局部失败') && text.includes('快速报价源暂不可用'),
+      governanceSurvives: text.includes('数据健康、版本与治理') && text.includes('建议已留痕'),
+      noPageOverflow: document.documentElement.scrollWidth <= window.innerWidth,
+    }
+  })
+  const diagnosisFailureAxe = await diagnosisFailurePage.evaluate(async () => window.axe.run(document, {
+    runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+  }))
+  await diagnosisFailurePage.screenshot({ path: resolve(outputDir, 'diagnosis-partial-failure-1440.png'), fullPage: true })
+  report.push({
+    page: 'diagnosis', scenario: 'partial-failure', diagnosisFailureState,
+    diagnosisFailureStateComplete: Object.values(diagnosisFailureState).every(Boolean),
+    pageErrors: diagnosisFailureErrors,
+    violations: diagnosisFailureAxe.violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help, nodes: item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })),
+  })
+  await diagnosisFailurePage.close()
+
+  const diagnosisEvidencePage = await browser.newPage({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 1 })
+  const diagnosisEvidenceErrors = []
+  diagnosisEvidencePage.on('pageerror', (error) => diagnosisEvidenceErrors.push(error.message))
+  await diagnosisEvidencePage.addInitScript(() => localStorage.setItem('wudi-vue-theme', 'dark'))
+  await diagnosisEvidencePage.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    if (path === '/api/diagnose') {
+      const body = structuredClone(fixtures[path])
+      const quality = {
+        status: 'unavailable', captured: 0, requested: 8,
+        missing_fields: ['last_price', 'prev_close', 'change_pct', 'amount', 'turnover_rate', 'volume_ratio', 'pe', 'pb'],
+        reason: 'market_evidence_timeout',
+      }
+      body.market_evidence = []
+      body.decision_market_evidence = []
+      body.market_evidence_quality = quality
+      body.decision_market_evidence_quality = quality
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
+    }
+    const body = fixtures[path]
+    return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
+  })
+  await diagnosisEvidencePage.goto('http://127.0.0.1:4175/#/research?tab=diagnosis&code=600519', { waitUntil: 'networkidle' })
+  await diagnosisEvidencePage.waitForSelector('.diagnosis-quote-fallback')
+  await diagnosisEvidencePage.addScriptTag({ content: axeSource })
+  const diagnosisEvidenceState = await diagnosisEvidencePage.evaluate(() => {
+    const text = document.body.innerText
+    return {
+      causeVisible: text.includes('正式行情证据采集未完成') && text.includes('超过 4 秒交互预算'),
+      unboundSnapshotVisible: text.includes('当前快速行情') && text.includes('仅供核对 · 未绑定证据 ID'),
+      realValuesVisible: text.includes('1,488.52 元') && text.includes('24.62 倍') && text.includes('7.82 倍'),
+      missingNotZeroFilled: !text.includes('行情证据真实空数组'),
+      noPageOverflow: document.documentElement.scrollWidth <= window.innerWidth,
+    }
+  })
+  const diagnosisEvidenceAxe = await diagnosisEvidencePage.evaluate(async () => window.axe.run(document, {
+    runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+  }))
+  await diagnosisEvidencePage.screenshot({ path: resolve(outputDir, 'diagnosis-evidence-unavailable-1440.png'), fullPage: true })
+  report.push({
+    page: 'diagnosis', scenario: 'evidence-unavailable', diagnosisEvidenceState,
+    diagnosisEvidenceStateComplete: Object.values(diagnosisEvidenceState).every(Boolean),
+    pageErrors: diagnosisEvidenceErrors,
+    violations: diagnosisEvidenceAxe.violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help, nodes: item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })),
+  })
+  await diagnosisEvidencePage.close()
+
+  const stockAskLoadingPage = await browser.newPage({ viewport: { width: 375, height: 812 }, deviceScaleFactor: 1 })
+  const stockAskLoadingErrors = []
+  stockAskLoadingPage.on('pageerror', (error) => stockAskLoadingErrors.push(error.message))
+  await stockAskLoadingPage.addInitScript(() => {
+    localStorage.setItem('wudi-vue-theme', 'dark')
+    sessionStorage.setItem('hermes.chat.code', '600519')
+  })
+  await stockAskLoadingPage.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    if (path === '/api/stock/600519/core' || path === '/api/stock/600519/enrichment') {
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 1800))
+    }
+    const body = fixtures[path]
+    return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
+  })
+  await stockAskLoadingPage.goto('http://127.0.0.1:4175/#/research?tab=ask', { waitUntil: 'domcontentloaded' })
+  await stockAskLoadingPage.waitForSelector('.stock-evidence__loading')
+  await stockAskLoadingPage.addScriptTag({ content: axeSource })
+  const stockAskLoadingAxe = await stockAskLoadingPage.evaluate(async () => window.axe.run(document, {
+    runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+  }))
+  const stockAskLoadingState = await stockAskLoadingPage.evaluate(() => ({
+    dedicatedMode: document.body.innerText.includes('本页不提供自由问答、持仓判断或产业链挖掘'),
+    evidenceLoading: Boolean(document.querySelector('.stock-evidence__loading')),
+    equalComposerHeight: (() => {
+      const upload = document.querySelector('.stock-ask-upload')?.getBoundingClientRect().height
+      const input = document.querySelector('#stock-ask-prompt')?.getBoundingClientRect().height
+      const send = document.querySelector('.stock-ask-send')?.getBoundingClientRect().height
+      return Boolean(upload && input && send && upload === input && input === send)
+    })(),
+    mobileComposerStatic: getComputedStyle(document.querySelector('.stock-ask-composer')).position === 'static',
+  }))
+  await stockAskLoadingPage.screenshot({ path: resolve(outputDir, 'stock-ask-loading-375.png'), fullPage: true })
+  report.push({
+    page: 'stock-ask', scenario: 'loading', stockAskLoadingState,
+    stockAskLoadingStateComplete: Object.values(stockAskLoadingState).every(Boolean),
+    pageErrors: stockAskLoadingErrors,
+    violations: stockAskLoadingAxe.violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help, nodes: item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })),
+  })
+  await stockAskLoadingPage.close()
+
+  const stockAskEmptyPage = await browser.newPage({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 1 })
+  const stockAskEmptyErrors = []
+  stockAskEmptyPage.on('pageerror', (error) => stockAskEmptyErrors.push(error.message))
+  await stockAskEmptyPage.addInitScript(() => localStorage.setItem('wudi-vue-theme', 'dark'))
+  await stockAskEmptyPage.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    const body = path === '/api/chat/conversations' ? { ok: true, conversations: [] } : fixtures[path]
+    return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
+  })
+  await stockAskEmptyPage.goto('http://127.0.0.1:4175/#/research?tab=ask', { waitUntil: 'networkidle' })
+  await stockAskEmptyPage.addScriptTag({ content: axeSource })
+  const stockAskEmptyState = await stockAskEmptyPage.evaluate(() => {
+    const text = document.body.innerText
+    return {
+      noHistory: text.includes('暂无问股记录'),
+      noStock: text.includes('尚未选择股票') && text.includes('先选择一只股票'),
+      missingNotZero: !text.includes('0.00 元') && !text.includes('0.00%'),
+      removedModes: ![...document.querySelectorAll('.stock-ask-page button')]
+        .some((button) => ['自由问答', '持仓诊断', '产业链挖掘'].includes(button.textContent?.trim())),
+      twoPresetRows: getComputedStyle(document.querySelector('.stock-ask-presets')).gridTemplateRows.split(' ').length === 2,
+    }
+  })
+  const stockAskEmptyAxe = await stockAskEmptyPage.evaluate(async () => window.axe.run(document, {
+    runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+  }))
+  await stockAskEmptyPage.screenshot({ path: resolve(outputDir, 'stock-ask-empty-1440.png'), fullPage: true })
+  report.push({
+    page: 'stock-ask', scenario: 'empty', stockAskEmptyState,
+    stockAskEmptyStateComplete: Object.values(stockAskEmptyState).every(Boolean),
+    pageErrors: stockAskEmptyErrors,
+    violations: stockAskEmptyAxe.violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help, nodes: item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })),
+  })
+  await stockAskEmptyPage.close()
+
+  const stockAskFailurePage = await browser.newPage({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 1 })
+  const stockAskFailureErrors = []
+  stockAskFailurePage.on('pageerror', (error) => stockAskFailureErrors.push(error.message))
+  await stockAskFailurePage.addInitScript(() => localStorage.setItem('wudi-vue-theme', 'dark'))
+  await stockAskFailurePage.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    if (path === '/api/stock/600519/enrichment') {
+      return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: '审计场景：个股增强证据源暂不可用' }) })
+    }
+    const body = fixtures[path]
+    return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
+  })
+  await stockAskFailurePage.goto('http://127.0.0.1:4175/#/research?tab=ask', { waitUntil: 'networkidle' })
+  await stockAskFailurePage.locator('#stock-ask-code').fill('600519')
+  await stockAskFailurePage.locator('.stock-ask-selector button[type="submit"]').click()
+  await stockAskFailurePage.waitForSelector('.stock-evidence__quote')
+  await stockAskFailurePage.addScriptTag({ content: axeSource })
+  const stockAskFailureState = await stockAskFailurePage.evaluate(() => {
+    const text = document.body.innerText
+    return {
+      quoteSurvives: text.includes('贵州茅台') && text.includes('1,488.52') === false && text.includes('1488.52'),
+      localFailure: text.includes('增强证据局部失败') && text.includes('个股增强证据源暂不可用'),
+      inputUsable: !document.querySelector('#stock-ask-prompt').disabled,
+      noPageOverflow: document.documentElement.scrollWidth <= window.innerWidth,
+    }
+  })
+  const stockAskFailureAxe = await stockAskFailurePage.evaluate(async () => window.axe.run(document, {
+    runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+  }))
+  await stockAskFailurePage.screenshot({ path: resolve(outputDir, 'stock-ask-partial-failure-1440.png'), fullPage: true })
+  report.push({
+    page: 'stock-ask', scenario: 'partial-failure', stockAskFailureState,
+    stockAskFailureStateComplete: Object.values(stockAskFailureState).every(Boolean),
+    pageErrors: stockAskFailureErrors,
+    violations: stockAskFailureAxe.violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help, nodes: item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })),
+  })
+  await stockAskFailurePage.close()
+
   const missingPage = await browser.newPage({ viewport: { width: 375, height: 812 } })
   const missingPageErrors = []
   missingPage.on('pageerror', (error) => missingPageErrors.push(error.message))
@@ -1915,6 +2294,13 @@ const failed = report.some((item) =>
   || item.watchlistEmptyStateComplete === false
   || item.watchlistModalStateComplete === false
   || item.watchlistFailureStateComplete === false
+  || item.diagnosisLoadingStateComplete === false
+  || item.diagnosisEmptyStateComplete === false
+  || item.diagnosisFailureStateComplete === false
+  || item.diagnosisEvidenceStateComplete === false
+  || item.stockAskLoadingStateComplete === false
+  || item.stockAskEmptyStateComplete === false
+  || item.stockAskFailureStateComplete === false
   || (item.pageErrors?.length || 0) > 0
   || item.violations.length > 0
 )
