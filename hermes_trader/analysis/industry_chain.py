@@ -1,6 +1,6 @@
 """产业链结构化研究内核。
 
-TDX 板块成员只能证明“某只股票属于某个行业/概念集合”，不能证明其
+公开板块成员只能证明“某只股票属于某个行业/概念集合”，不能证明其
 供应链环节、客户、订单、产能、国产化率或投资价值。本模块把可验证事实
 与待研究框架分开，并产出一份可由研究中心和问股 ``chain`` 模式共同消费
 的冻结契约。模型不得改变候选池和证据，但可把公开产业常识用于定性研究；
@@ -10,14 +10,26 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Iterable
+from concurrent.futures import ThreadPoolExecutor
+from datetime import timedelta
+from pathlib import Path
+import threading
+import time
 from typing import Any
 
-from ..data import market, stock, tdx_api_source as tdx_api
-from ..data.base import now_cn
+from ..data import (
+    free_source,
+    market,
+    official_disclosure,
+    official_interaction,
+    stock,
+    tdx_api_source as tdx_api,
+)
+from ..data.base import get_ak, now_cn, safe, ttl_cache
 
 
 SCHEMA_VERSION = "industry-chain-analysis.v1"
-RULE_VERSION = "industry-chain-evidence-verification-v1"
+RULE_VERSION = "industry-chain-evidence-verification-v2"
 
 _SECTOR_ALIASES = {
     "光模块": ("CPO概念", "光通信"),
@@ -27,6 +39,13 @@ _SECTOR_ALIASES = {
     "液冷": ("液冷服务器",),
 }
 _QUOTE_COVERAGE_FIELDS = ("price", "change_pct", "amount", "pe", "pb", "total_mv")
+_PUBLIC_MEMBERSHIP_SOURCE = "东方财富公开板块（AKShare）"
+_EVIDENCE_CACHE_TTL = 30 * 60
+_EVIDENCE_REFRESH_LIMIT = 5
+_EVIDENCE_POOL = ThreadPoolExecutor(max_workers=2, thread_name_prefix="chain-evidence")
+_EVIDENCE_LOCK = threading.RLock()
+_EVIDENCE_CACHE: dict[tuple[str, str, str], tuple[float, dict]] = {}
+_EVIDENCE_INFLIGHT: set[tuple[str, str, str]] = set()
 
 
 def _number(value: Any) -> float | None:
@@ -49,13 +68,183 @@ def sector_search_terms(industry: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(term for term in terms if term))
 
 
+def _frame_records(frame: Any) -> list[dict]:
+    """兼容 pandas DataFrame 与测试中的普通记录列表。"""
+    if isinstance(frame, list):
+        return [row for row in frame if isinstance(row, dict)]
+    if frame is None or getattr(frame, "empty", False):
+        return []
+    try:
+        rows = frame.to_dict(orient="records")
+    except (AttributeError, TypeError, ValueError):
+        return []
+    return [row for row in rows if isinstance(row, dict)]
+
+
+def _field(row: dict, *names: str) -> str:
+    for name in names:
+        value = row.get(name)
+        if value not in (None, ""):
+            return str(value).strip()
+    return ""
+
+
+def _public_board_matches(
+    industry: str,
+    board_rows: Iterable[dict],
+    *,
+    limit: int = 2,
+) -> list[dict]:
+    """匹配东财公开行业/概念目录，不把模型猜测写入候选池。"""
+    normalized = str(industry or "").strip()
+    terms = sector_search_terms(normalized)
+    matched: list[dict] = []
+    for row in board_rows:
+        name = _field(row, "板块名称", "名称", "name")
+        if not name:
+            continue
+        folded = name.casefold()
+        indexes = [
+            index
+            for index, term in enumerate(terms)
+            if term.casefold() in folded or folded in term.casefold()
+        ]
+        if not indexes:
+            continue
+        kind = _field(row, "_kind", "kind") or "concept"
+        raw_code = _field(row, "板块代码", "代码", "code")
+        code = raw_code or f"em-{kind}-{name}"
+        matched.append({
+            "code": code,
+            "name": name,
+            "kind": kind,
+            "data_date": now_cn().date().isoformat(),
+            "source": _PUBLIC_MEMBERSHIP_SOURCE,
+            "_term_index": min(indexes),
+        })
+    matched.sort(key=lambda item: (
+        0 if item["name"] == normalized else 1,
+        item["_term_index"],
+        0 if item["kind"] == "industry" else 1,
+        len(item["name"]),
+        item["code"],
+    ))
+    return [
+        {key: value for key, value in row.items() if not key.startswith("_")}
+        for row in matched[:max(0, int(limit))]
+    ]
+
+
+def _public_member_rows(frame: Any) -> tuple[list[str], dict[str, str]]:
+    codes: list[str] = []
+    names: dict[str, str] = {}
+    for row in _frame_records(frame):
+        raw = _field(row, "代码", "股票代码", "code").split(".", 1)[0]
+        code = raw.zfill(6)
+        if len(code) != 6 or not code.isdigit():
+            continue
+        codes.append(code)
+        name = _field(row, "名称", "股票简称", "name")
+        if name:
+            names[code] = name
+    return list(dict.fromkeys(codes)), names
+
+
+@ttl_cache(6 * 3600, fail_seconds=120)
+def _public_board_membership(industry: str) -> dict | None:
+    """免密公开回退：最多两次目录调用和两次成分调用，无逐股 N+1。"""
+    ak = get_ak()
+    if ak is None:
+        return None
+
+    board_rows: list[dict] = []
+    degraded: list[str] = []
+    specs = (
+        ("concept", "stock_board_concept_name_em", "东财概念板块目录"),
+        ("industry", "stock_board_industry_name_em", "东财行业板块目录"),
+    )
+
+    def fetch_catalog(spec: tuple[str, str, str]) -> tuple[list[dict], str | None]:
+        kind, function_name, label = spec
+        function = getattr(ak, function_name, None)
+        if function is None:
+            return [], f"{label}函数不可用"
+        frame = safe(function, label=label, timeout=10)
+        rows = _frame_records(frame)
+        return (
+            [{**row, "_kind": kind} for row in rows],
+            None if rows else f"{label}未返回记录",
+        )
+
+    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="chain-public-catalog") as pool:
+        catalog_results = list(pool.map(fetch_catalog, specs))
+    for rows, reason in catalog_results:
+        board_rows.extend(rows)
+        if reason:
+            degraded.append(reason)
+
+    matched = _public_board_matches(industry, board_rows)
+    by_sector: dict[str, tuple[str, ...]] = {}
+    names: dict[str, str] = {}
+
+    def fetch_members(board: dict) -> tuple[dict, list[str], dict[str, str], str | None]:
+        kind = str(board.get("kind") or "concept")
+        function_name = (
+            "stock_board_industry_cons_em"
+            if kind == "industry"
+            else "stock_board_concept_cons_em"
+        )
+        function = getattr(ak, function_name, None)
+        if function is None:
+            return board, [], {}, f"{board.get('name')}成分函数不可用"
+        frame = safe(
+            function,
+            symbol=str(board.get("name") or ""),
+            label=f"东财公开板块成分:{board.get('name')}",
+            timeout=12,
+        )
+        codes, member_names = _public_member_rows(frame)
+        return (
+            board,
+            codes,
+            member_names,
+            None if codes else f"{board.get('name')}未返回成分",
+        )
+
+    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="chain-public-members") as pool:
+        member_results = list(pool.map(fetch_members, matched))
+    for board, codes, member_names, reason in member_results:
+        by_sector[str(board.get("code") or "")] = tuple(codes)
+        names.update(member_names)
+        if reason:
+            degraded.append(reason)
+
+    member_codes = list(dict.fromkeys(
+        code for codes in by_sector.values() for code in codes
+    ))
+    if not member_codes:
+        return None
+    return {
+        "state": "complete",
+        "by_sector": by_sector,
+        "member_count": len(member_codes),
+        "data_date": now_cn().date().isoformat() if matched else None,
+        "names": names,
+        "source": _PUBLIC_MEMBERSHIP_SOURCE,
+        "catalog_source": "东方财富公开行业/概念目录（AKShare）",
+        "verification": "public_board_member",
+        "matched_sectors": matched,
+        "degraded_reasons": degraded,
+    }
+
+
 def match_sector_catalog(
     industry: str,
     catalog: dict[str, dict] | None,
     *,
     limit: int = 6,
 ) -> list[dict]:
-    """按显式名称/别名匹配 TDX 目录；不使用模型猜板块或成分股。"""
+    """按显式名称/别名匹配公开板块目录；不使用模型猜板块或成分股。"""
     normalized = str(industry or "").strip()
     terms = sector_search_terms(normalized)
     if not terms or not isinstance(catalog, dict):
@@ -136,12 +325,233 @@ def _sector_market_rows(matched: list[dict], sector_market: dict | None) -> list
     ]
 
 
+def _matched_evidence_terms(industry: str, texts: Iterable[str]) -> list[str]:
+    haystack = "\n".join(str(text or "") for text in texts).casefold()
+    return [
+        term
+        for term in sector_search_terms(industry)
+        if len(term.strip()) >= 2 and term.casefold() in haystack
+    ]
+
+
+def _compact_company_evidence(code: str, industry: str, data_dir: str) -> dict:
+    """后台抓取单家公司证据；调用方严格限制并发和公司数。"""
+    end = now_cn().date()
+    start = end - timedelta(days=180)
+    disclosure_path = Path(data_dir) / "official-disclosures" / f"{code}.json"
+    try:
+        disclosures = official_disclosure.cached_official_disclosures(
+            code,
+            start.isoformat(),
+            end.isoformat(),
+            8,
+            False,
+            1,
+            str(disclosure_path),
+        )
+    except Exception:  # noqa: BLE001 - 后台增强失败须结构化降级
+        disclosures = {
+            "state": "missing",
+            "verification_state": "unavailable",
+            "data_as_of": None,
+            "items": [],
+        }
+
+    if code.startswith(("0", "3")):
+        try:
+            interactions = official_interaction.cached_official_interactions(
+                code,
+                start.isoformat(),
+                end.isoformat(),
+                6,
+                data_dir,
+            )
+        except Exception:  # noqa: BLE001 - Tier 3 增强不影响主分析
+            interactions = {"state": "missing", "data_as_of": None, "items": []}
+    else:
+        interactions = {
+            "state": "not_supported",
+            "data_as_of": None,
+            "items": [],
+        }
+
+    try:
+        financial = free_source.fina_indicator(code)
+    except Exception:  # noqa: BLE001 - 免费财务源失败须显式缺失
+        financial = None
+
+    formal_items = [
+        {
+            "title": str(item.get("title") or "")[:180],
+            "announcement_date": item.get("announcement_date"),
+            "original_url": item.get("original_url"),
+            "source_confirmations": item.get("source_confirmations") or [],
+            "evidence_level": item.get("evidence_level") or "tier_1",
+        }
+        for item in (disclosures.get("items") or [])[:5]
+        if isinstance(item, dict) and item.get("title")
+    ]
+    interaction_items = [
+        {
+            "question": str(item.get("question") or "")[:180],
+            "answer": str(item.get("answer") or "")[:240],
+            "question_pub_date": item.get("question_pub_date"),
+            "answer_pub_date": item.get("answer_pub_date"),
+            "answered": bool(item.get("answered")),
+            "evidence_level": item.get("evidence_level") or "tier_3",
+        }
+        for item in (interactions.get("items") or [])[:3]
+        if isinstance(item, dict) and (item.get("question") or item.get("answer"))
+    ]
+    texts = [item["title"] for item in formal_items]
+    texts.extend(
+        f"{item.get('question') or ''} {item.get('answer') or ''}"
+        for item in interaction_items
+    )
+    matched_terms = _matched_evidence_terms(industry, texts)
+    selected_financial = None
+    if isinstance(financial, dict):
+        selected_financial = {
+            key: financial.get(key)
+            for key in (
+                "end_date",
+                "roe",
+                "grossprofit_margin",
+                "netprofit_yoy",
+                "or_yoy",
+                "debt_to_assets",
+                "source",
+            )
+            if financial.get(key) is not None
+        } or None
+    available = bool(formal_items or interaction_items or selected_financial)
+    return {
+        "status": "available" if available else "missing",
+        "refreshed_at": now_cn().strftime("%Y-%m-%d %H:%M:%S"),
+        "matched_terms": matched_terms,
+        "business_relevance": (
+            "evidence_clue" if matched_terms else "not_verified"
+        ),
+        "formal_disclosures": formal_items,
+        "formal_disclosure_state": disclosures.get("state"),
+        "formal_verification_state": disclosures.get("verification_state"),
+        "official_interactions": interaction_items,
+        "interaction_state": interactions.get("state"),
+        "financial_snapshot": selected_financial,
+        "data_as_of": max(
+            (
+                str(value)
+                for value in (
+                    disclosures.get("data_as_of"),
+                    interactions.get("data_as_of"),
+                    (selected_financial or {}).get("end_date"),
+                )
+                if value
+            ),
+            default=None,
+        ),
+        "limits": (
+            "公告标题和互动问答中的关键词只构成业务线索；"
+            "仍需公告/年报正文确认产业环节与相关收入，基础财务不能证明产业归因。"
+        ),
+    }
+
+
+def _evidence_done(key: tuple[str, str, str], future: Any) -> None:
+    try:
+        result = future.result()
+    except Exception:  # noqa: BLE001 - 保证后台任务总能释放 in-flight
+        result = {
+            "status": "missing",
+            "refreshed_at": now_cn().strftime("%Y-%m-%d %H:%M:%S"),
+            "matched_terms": [],
+            "limits": "官方公司证据后台刷新失败；未生成替代值。",
+        }
+    with _EVIDENCE_LOCK:
+        _EVIDENCE_CACHE[key] = (time.monotonic(), result)
+        _EVIDENCE_INFLIGHT.discard(key)
+
+
+def _company_evidence_snapshot(
+    codes: Iterable[str],
+    industry: str,
+    data_dir: str | Path | None,
+) -> tuple[dict[str, dict], dict]:
+    """立即返回已有快照，并为前五家公司触发有界后台刷新。"""
+    if data_dir is None:
+        return {}, {
+            "status": "disabled",
+            "scheduled_count": 0,
+            "cached_count": 0,
+            "limit": _EVIDENCE_REFRESH_LIMIT,
+        }
+    root = str(Path(data_dir).resolve())
+    subject_key = "".join(str(industry or "").split()).casefold()
+    clean_codes = list(dict.fromkeys(
+        str(code or "").zfill(6)
+        for code in codes
+        if str(code or "").zfill(6).isdigit()
+        and len(str(code or "").zfill(6)) == 6
+    ))
+    snapshot: dict[str, dict] = {}
+    scheduled = 0
+    refreshing = 0
+    now_mono = time.monotonic()
+    with _EVIDENCE_LOCK:
+        for code in clean_codes:
+            key = (root, subject_key, code)
+            cached = _EVIDENCE_CACHE.get(key)
+            if cached is not None:
+                snapshot[code] = cached[1]
+            if key in _EVIDENCE_INFLIGHT:
+                refreshing += 1
+
+        for code in clean_codes[:_EVIDENCE_REFRESH_LIMIT]:
+            key = (root, subject_key, code)
+            cached = _EVIDENCE_CACHE.get(key)
+            fresh = cached is not None and now_mono - cached[0] < _EVIDENCE_CACHE_TTL
+            if fresh or key in _EVIDENCE_INFLIGHT or len(_EVIDENCE_INFLIGHT) >= 10:
+                continue
+            _EVIDENCE_INFLIGHT.add(key)
+            try:
+                future = _EVIDENCE_POOL.submit(
+                    _compact_company_evidence,
+                    code,
+                    industry,
+                    root,
+                )
+            except RuntimeError:
+                _EVIDENCE_INFLIGHT.discard(key)
+                continue
+            future.add_done_callback(lambda done, item=key: _evidence_done(item, done))
+            scheduled += 1
+
+    available_cached = sum(
+        1 for item in snapshot.values() if item.get("status") == "available"
+    )
+    if scheduled or refreshing:
+        status = "refreshing"
+    elif available_cached:
+        status = "available"
+    else:
+        status = "missing"
+    return snapshot, {
+        "status": status,
+        "scheduled_count": scheduled,
+        "cached_count": len(snapshot),
+        "available_count": available_cached,
+        "limit": _EVIDENCE_REFRESH_LIMIT,
+        "mode": "bounded_background_cache",
+    }
+
+
 def _company_mapping(
     matched: list[dict],
     membership: dict | None,
     quotes: dict[str, dict] | None,
     *,
     limit: int,
+    company_evidence: dict[str, dict] | None = None,
 ) -> tuple[list[dict], list[str]]:
     by_sector = (
         membership.get("by_sector")
@@ -150,6 +560,22 @@ def _company_mapping(
     )
     member_codes = _member_codes(matched, membership)
     quote_map = quotes if isinstance(quotes, dict) else {}
+    evidence_map = company_evidence if isinstance(company_evidence, dict) else {}
+    member_names = (
+        membership.get("names")
+        if isinstance(membership, dict) and isinstance(membership.get("names"), dict)
+        else {}
+    )
+    verification = (
+        str(membership.get("verification") or "tdx_sector_member")
+        if isinstance(membership, dict)
+        else "tdx_sector_member"
+    )
+    membership_source = (
+        str(membership.get("source") or "TDX 数据 API / sector_members")
+        if isinstance(membership, dict)
+        else "TDX 数据 API / sector_members"
+    )
     sector_refs: dict[str, list[dict]] = {code: [] for code in member_codes}
     for sector in matched:
         sector_code = str(sector.get("code") or "")
@@ -177,6 +603,21 @@ def _company_mapping(
     rows: list[dict] = []
     for code in member_codes:
         quote = quote_map.get(code) if isinstance(quote_map.get(code), dict) else {}
+        official_evidence = (
+            evidence_map.get(code) if isinstance(evidence_map.get(code), dict) else None
+        )
+        matched_terms = (
+            official_evidence.get("matched_terms")
+            if isinstance(official_evidence, dict)
+            and isinstance(official_evidence.get("matched_terms"), list)
+            else []
+        )
+        financial_context = (
+            official_evidence.get("financial_snapshot")
+            if isinstance(official_evidence, dict)
+            and isinstance(official_evidence.get("financial_snapshot"), dict)
+            else None
+        )
         present = sum(1 for field in _QUOTE_COVERAGE_FIELDS if _number(quote.get(field)) is not None)
         coverage_points = present * 5
         if code in amount_rank:
@@ -196,13 +637,19 @@ def _company_mapping(
         valuation_available = sum(value is not None for value in valuation_values.values())
         rows.append({
             "code": code,
-            "name": str(quote.get("name") or ""),
-            "verification": "tdx_sector_member",
+            "name": str(quote.get("name") or member_names.get(code) or ""),
+            "verification": verification,
+            "membership_source": membership_source,
             "matched_sectors": sector_refs.get(code, []),
             "chain_role": {
-                "status": "unverified",
+                "status": "evidence_clue" if matched_terms else "unverified",
                 "value": None,
-                "note": "板块成分关系不能证明上游/中游/下游角色，须用公告或财报核验。",
+                "matched_terms": matched_terms,
+                "note": (
+                    "官方公告标题或交易所互动问答出现产业关键词，但仍须公告/年报正文确认具体环节。"
+                    if matched_terms
+                    else "板块成分关系不能证明上游/中游/下游角色，须用公告或财报核验。"
+                ),
             },
             "quote": {
                 "price": _number(quote.get("price")),
@@ -213,7 +660,8 @@ def _company_mapping(
                 "stale": bool(quote.get("stale")) if quote else None,
             },
             "realization": {
-                "status": "not_verified",
+                "status": "financial_context_only" if financial_context else "not_verified",
+                "financial_snapshot": financial_context,
                 "required_evidence": ["相关业务收入占比", "订单/出货", "毛利率与产能利用率", "客户或产品公告"],
             },
             "valuation": {
@@ -227,19 +675,24 @@ def _company_mapping(
             },
             "data_researchability_score": score,
             "data_researchability_components": {
-                "tdx_membership": 50,
+                (
+                    "tdx_membership"
+                    if verification == "tdx_sector_member"
+                    else "public_board_membership"
+                ): 50,
                 "quote_coverage": coverage_points,
                 "liquidity_researchability": liquidity_points,
             },
             "data_researchability_rule": (
-                "50(TDX成员验证)+5×有效报价/估值字段数(最多30)"
+                f"50({membership_source}成员验证)+5×有效报价/估值字段数(最多30)"
                 "+成交额横截面分位(0-20)；仅用于排证据核验顺序，"
                 "不得作为产业研究、投资价值或交易排名。"
             ),
+            "company_evidence": official_evidence,
             "missing": [
                 label
                 for label, value in (
-                    ("股票名称", quote.get("name")),
+                    ("股票名称", quote.get("name") or member_names.get(code)),
                     ("实时报价", quote.get("price")),
                     ("成交额", quote.get("amount")),
                     ("PE", quote.get("pe")),
@@ -270,19 +723,41 @@ def build_analysis(
     sector_market: dict | None = None,
     generated_at: str | None = None,
     company_limit: int = 20,
+    company_evidence: dict[str, dict] | None = None,
+    evidence_refresh: dict | None = None,
 ) -> dict:
     """从冻结数据构造可复算产业链研究契约。"""
     subject = str(industry or "").strip()
     generated = generated_at or now_cn().strftime("%Y-%m-%d %H:%M:%S")
     sector_market_data = sector_market if isinstance(sector_market, dict) else {}
     quote_data = quotes if isinstance(quotes, dict) else {}
+    membership_data = membership if isinstance(membership, dict) else {}
+    membership_source = str(
+        membership_data.get("source") or "TDX 数据 API / sector_members"
+    )
+    catalog_source = str(
+        membership_data.get("catalog_source") or "TDX 数据 API / sectors"
+    )
+    membership_verification = str(
+        membership_data.get("verification") or "tdx_sector_member"
+    )
+    refresh_state = evidence_refresh if isinstance(evidence_refresh, dict) else {
+        "status": "disabled",
+        "scheduled_count": 0,
+        "cached_count": 0,
+        "limit": _EVIDENCE_REFRESH_LIMIT,
+    }
     matched = match_sector_catalog(subject, catalog)
     companies, all_member_codes = _company_mapping(
-        matched, membership, quote_data, limit=company_limit,
+        matched,
+        membership_data,
+        quote_data,
+        limit=company_limit,
+        company_evidence=company_evidence,
     )
     market_rows = _sector_market_rows(matched, sector_market_data)
     membership_date = (
-        membership.get("data_date") if isinstance(membership, dict) else None
+        membership_data.get("data_date")
     )
     catalog_dates = sorted({
         str(item.get("data_date"))
@@ -294,19 +769,31 @@ def build_analysis(
         for row in companies
         if (row.get("quote") or {}).get("data_as_of")
     })
+    company_evidence_count = sum(
+        1
+        for row in companies
+        if isinstance(row.get("company_evidence"), dict)
+        and (row.get("company_evidence") or {}).get("status") == "available"
+    )
+    company_evidence_dates = sorted({
+        str((row.get("company_evidence") or {}).get("data_as_of"))
+        for row in companies
+        if isinstance(row.get("company_evidence"), dict)
+        and (row.get("company_evidence") or {}).get("data_as_of")
+    })
 
     evidence = [
         {
-            "id": "tdx_sector_catalog",
-            "source": "TDX 数据 API / sectors",
+            "id": "sector_catalog",
+            "source": catalog_source,
             "status": "available" if matched else "missing",
             "data_as_of": catalog_dates[-1] if catalog_dates else None,
             "supports": "板块名称与分类",
             "does_not_support": "公司业务角色、订单、客户、产能或投资结论",
         },
         {
-            "id": "tdx_sector_members",
-            "source": "TDX 数据 API / sector_members",
+            "id": "sector_members",
+            "source": membership_source,
             "status": "available" if all_member_codes else "missing",
             "data_as_of": membership_date,
             "supports": "股票属于匹配板块集合",
@@ -331,6 +818,18 @@ def build_analysis(
             "supports": "匹配板块当前行情状态",
             "does_not_support": "中长期产业景气和公司基本面",
         },
+        {
+            "id": "official_company_evidence",
+            "source": "巨潮/交易所公告 + 深交所互动问答 + 免费基础财务",
+            "status": (
+                "available"
+                if company_evidence_count
+                else str(refresh_state.get("status") or "missing")
+            ),
+            "data_as_of": company_evidence_dates[-1] if company_evidence_dates else None,
+            "supports": "公告与互动问答线索、公司基础财务上下文",
+            "does_not_support": "仅凭标题/问答关键词确认产业环节、相关收入或投资价值",
+        },
     ]
     data_gaps = [
         {
@@ -350,27 +849,33 @@ def build_analysis(
         },
         {
             "dimension": "公司业务映射与兑现",
-            "status": "missing",
+            "status": "partial" if company_evidence_count else (
+                "refreshing" if refresh_state.get("status") == "refreshing" else "missing"
+            ),
             "needed": ["公告/年报业务收入占比", "订单与出货", "产能利用率", "客户验证"],
         },
     ]
     if not matched:
         data_gaps.insert(0, {
-            "dimension": "TDX 板块匹配",
+            "dimension": (
+                "TDX 板块匹配"
+                if membership_verification == "tdx_sector_member"
+                else "公开板块匹配"
+            ),
             "status": "missing",
-            "needed": [f"与“{subject}”一致的 TDX 行业/概念名称或显式别名"],
+            "needed": [f"与“{subject}”一致的行业/概念名称或显式别名"],
         })
     if matched and not all_member_codes:
         data_gaps.insert(0, {
-            "dimension": "TDX 成分关系",
+            "dimension": "板块成分关系",
             "status": "missing",
-            "needed": ["匹配板块的 sector_members 数据"],
+            "needed": [f"{membership_source}的匹配板块成分数据"],
         })
     if all_member_codes and not companies:
         data_gaps.append({
             "dimension": "成员行情",
             "status": "missing",
-            "needed": ["TDX 实时或收盘快照", "腾讯行情降级源"],
+            "needed": ["TDX 实时或收盘快照", "腾讯行情降级源（均为可选）"],
         })
 
     return {
@@ -383,16 +888,17 @@ def build_analysis(
             "sector_catalog": catalog_dates[-1] if catalog_dates else None,
             "sector_members": membership_date,
             "quotes": quote_times[-1] if quote_times else None,
+            "company_evidence": company_evidence_dates[-1] if company_evidence_dates else None,
             "sector_market": next(
                 (row.get("data_as_of") for row in market_rows if row.get("data_as_of")),
                 None,
             ),
         },
         "conclusion": (
-            f"已用 TDX 验证 {len(matched)} 个相关板块、{len(all_member_codes)} 只去重成员；"
+            f"已用{membership_source}验证 {len(matched)} 个相关板块、{len(all_member_codes)} 只去重成员；"
             "这只能建立研究候选集合，不能证明供应链角色、业绩兑现或可交易性。"
             if matched
-            else f"TDX 目录未匹配“{subject}”；本轮只保留研究框架，不生成公司排名。"
+            else f"板块目录未匹配“{subject}”；本轮只保留研究框架，不生成公司排名。"
         ),
         "research_trade_separation": {
             "industry_conclusion": "只描述产业传导假设、证据状态与研究顺序。",
@@ -446,9 +952,7 @@ def build_analysis(
                 **item,
                 "member_count": len(
                     (
-                        membership.get("by_sector", {}).get(item.get("code"), ())
-                        if isinstance(membership, dict)
-                        else ()
+                        membership_data.get("by_sector", {}).get(item.get("code"), ())
                     ) or ()
                 ),
             }
@@ -458,6 +962,10 @@ def build_analysis(
         "company_mapping": companies,
         "coverage": {
             "matched_sector_count": len(matched),
+            "verified_member_count": len(all_member_codes),
+            "membership_source": membership_source,
+            "membership_verification": membership_verification,
+            # 兼容既有前端；新代码应读取 verified_member_count。
             "tdx_member_count": len(all_member_codes),
             "quote_requested_count": min(len(all_member_codes), 300),
             "quoted_count": sum(
@@ -467,9 +975,15 @@ def build_analysis(
                 and _number((quote_data.get(code) or {}).get("price")) is not None
             ),
             "displayed_company_count": len(companies),
+            "company_evidence_available_count": company_evidence_count,
         },
+        "company_evidence_refresh": refresh_state,
         "realization_and_valuation": {
-            "realization_status": "not_verified",
+            "realization_status": (
+                "financial_context_only"
+                if any((row.get("realization") or {}).get("financial_snapshot") for row in companies)
+                else "not_verified"
+            ),
             "valuation_status": (
                 "partial"
                 if any((row.get("valuation") or {}).get("status") != "missing" for row in companies)
@@ -495,7 +1009,7 @@ def build_analysis(
             "公司公告/财报无法证明其与目标产业存在实质业务收入时，剔除公司映射。",
             "终端销量、渗透率、价格或客户资本开支连续弱于研究假设时，下调产业景气判断。",
             "关键瓶颈被替代、认证失败、良率/交付不达标或供给快速过剩时，原价值捕获假设失效。",
-            "TDX 板块口径或成分数据日期变化时，必须重跑成员集合与研究顺序。",
+            "公开板块口径、来源或成分数据日期变化时，必须重跑成员集合与研究顺序。",
         ],
         "evidence": evidence,
         "data_gaps": data_gaps,
@@ -509,7 +1023,12 @@ async def _bounded_call(fn, *args, timeout: float, default):
         return default
 
 
-async def collect_analysis(industry: str, *, company_limit: int = 20) -> dict:
+async def collect_analysis(
+    industry: str,
+    *,
+    company_limit: int = 20,
+    data_dir: str | Path | None = None,
+) -> dict:
     """按交互预算采集一次产业链证据并构造共享契约。"""
     catalog, sector_market = await asyncio.gather(
         _bounded_call(tdx_api.sector_catalog, timeout=7.0, default={}),
@@ -524,6 +1043,31 @@ async def collect_analysis(industry: str, *, company_limit: int = 20) -> dict:
         default={},
     ) if sector_codes else {}
     member_codes = _member_codes(matched, membership)
+    effective_catalog = catalog
+    if not member_codes:
+        public_membership = await _bounded_call(
+            _public_board_membership,
+            industry,
+            timeout=24.0,
+            default={},
+        )
+        public_matched = (
+            public_membership.get("matched_sectors")
+            if isinstance(public_membership, dict)
+            and isinstance(public_membership.get("matched_sectors"), list)
+            else []
+        )
+        public_catalog = {
+            str(item.get("code") or ""): item
+            for item in public_matched
+            if isinstance(item, dict) and item.get("code")
+        }
+        public_codes = _member_codes(public_matched, public_membership)
+        if public_catalog and public_codes:
+            membership = public_membership
+            effective_catalog = public_catalog
+            matched = public_matched
+            member_codes = public_codes
     quote_codes = member_codes[:300]
     quotes = await _bounded_call(
         stock.quick_quotes,
@@ -531,13 +1075,27 @@ async def collect_analysis(industry: str, *, company_limit: int = 20) -> dict:
         timeout=5.0,
         default={},
     ) if quote_codes else {}
+    evidence_codes = sorted(
+        member_codes,
+        key=lambda code: (
+            -(_number(((quotes or {}).get(code) or {}).get("amount")) or 0.0),
+            code,
+        ),
+    )
+    company_evidence, evidence_refresh = _company_evidence_snapshot(
+        evidence_codes,
+        industry,
+        data_dir,
+    )
     return build_analysis(
         industry,
-        catalog=catalog,
+        catalog=effective_catalog,
         membership=membership,
         quotes=quotes,
         sector_market=sector_market,
         company_limit=company_limit,
+        company_evidence=company_evidence,
+        evidence_refresh=evidence_refresh,
     )
 
 
@@ -575,6 +1133,7 @@ def _header_lines(analysis: dict) -> list[str]:
         "",
         f"> 数据时点：板块目录 {as_of.get('sector_catalog') or '缺失'}；"
         f"成分 {as_of.get('sector_members') or '缺失'}；报价 {as_of.get('quotes') or '缺失'}；"
+        f"公司证据 {as_of.get('company_evidence') or '刷新中/缺失'}；"
         f"板块行情 {as_of.get('sector_market') or '缺失'}。",
         f"> 来源覆盖：{source_summary}。",
         f"> 页首缺口：{gap_summary}。",
@@ -583,8 +1142,8 @@ def _header_lines(analysis: dict) -> list[str]:
 
 def _company_table_lines(analysis: dict) -> list[str]:
     lines = [
-        "|核验序|代码|名称|TDX板块|现价|涨跌幅|PE|PB|数据可研分|",
-        "|---:|---|---|---|---:|---:|---:|---:|---:|",
+        "|核验序|代码|名称|板块集合|公司证据|现价|涨跌幅|PE|PB|数据可研分|",
+        "|---:|---|---|---|---|---:|---:|---:|---:|---:|",
     ]
     companies = analysis.get("company_mapping") or []
     for row in companies[:10]:
@@ -593,20 +1152,27 @@ def _company_table_lines(analysis: dict) -> list[str]:
         ) or "—"
         quote = row.get("quote") or {}
         valuation = row.get("valuation") or {}
+        company_evidence = row.get("company_evidence") or {}
+        evidence_status = company_evidence.get("status") or (
+            (analysis.get("company_evidence_refresh") or {}).get("status")
+            or "missing"
+        )
         lines.append(
             f"|{row.get('evidence_verification_priority') or '—'}|{row.get('code') or '—'}|"
             f"{row.get('name') or '名称待行情补齐'}|{sectors}|"
+            f"{evidence_status}|"
             f"{_fmt_number(quote.get('price'))}|{_fmt_number(quote.get('change_pct'))}%|"
             f"{_fmt_number(valuation.get('pe'))}|{_fmt_number(valuation.get('pb'))}|"
             f"{_fmt_number(row.get('data_researchability_score'))}|"
         )
     if not companies:
-        lines.append("|—|—|—|未取得可验证的 TDX 成分关系|—|—|—|—|—|")
+        lines.append("|—|—|—|未取得可验证的板块成分关系|missing|—|—|—|—|—|")
     lines.extend([
         "",
-        "- “数据可研分”=TDX成员验证 + 字段覆盖 + 成交额数据可得性；"
+        "- “数据可研分”=公开板块成员验证 + 字段覆盖 + 成交额数据可得性；"
         "**只用于决定先核验谁，不是产业研究优先级、投资排名或买入排名。**",
-        "- 公司产业链角色、相关收入、订单与国产替代仍须公告/财报证明；TDX 成分本身不作业务背书。",
+        "- 公司产业链角色、相关收入、订单与国产替代仍须公告/财报正文证明；"
+        "板块成分和互动问答关键词本身不作业务背书。",
     ])
     return lines
 
@@ -631,7 +1197,7 @@ def render_evidence_baseline(analysis: dict) -> str:
         *_header_lines(analysis),
         "",
         "### 冻结证据底座",
-        "- TDX 匹配板块："
+        "- 公开来源匹配板块："
         + (
             "；".join(
                 f"{item.get('name')}（{item.get('code')}，{item.get('member_count')}只）"
@@ -678,7 +1244,7 @@ def render_markdown(analysis: dict) -> str:
         "### 5. 国产替代",
         f"- 国产替代：{((analysis.get('domestic_substitution') or {}).get('current_conclusion') or '待核验')}",
         "",
-        "### 6. 公司映射（TDX 真实成分约束）",
+        "### 6. 公司映射（公开板块真实成分约束）",
         *_company_table_lines(analysis),
         "",
         "### 7. 兑现与估值",

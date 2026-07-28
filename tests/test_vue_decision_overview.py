@@ -203,10 +203,18 @@ def test_vue_sidebar_rebuilds_the_grouped_desktop_workspace_contract() -> None:
         "决策总览", "盘前报告", "尾盘决策", "今日复盘", "次日策略",
         "涨停题材", "主线深研", "资金追踪", "资金择时", "舆情事件",
         "我的持仓", "观察池", "问股", "个股诊断", "条件选股",
-        "每日量化选股", "事件掘金", "产业链分析", "公司研究", "海外市场",
-        "重组拆解", "宏观风险", "全部报告", "知识库",
+        "事件掘金", "产业链分析", "公司研究", "全部报告", "知识库",
     ):
         assert f"label: '{child}'" in navigation
+    assert "每日量化选股" not in navigation
+    assert "tab: 'quant-pick'" not in navigation
+    for retired_child, retired_tab in (
+        ("海外市场", "overseas"),
+        ("重组拆解", "restructuring"),
+        ("宏观风险", "macro"),
+    ):
+        assert retired_child not in navigation
+        assert f"tab: '{retired_tab}'" not in navigation
     assert "模拟执行" not in navigation
     assert "tab: 'simulation'" not in navigation
     assert "requestedTab === 'simulation'" in app

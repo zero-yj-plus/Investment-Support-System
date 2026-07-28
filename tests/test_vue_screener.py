@@ -20,7 +20,7 @@ def test_vue_screener_route_is_reachable_without_migrating_research_siblings() -
     assert 'v-else-if="isScreener"' in app
     assert "if (isScreener.value && screenerPage.value)" in app
     assert "{ path: 'research', tab: 'screener', label: '条件选股' }" in navigation
-    assert "{ path: 'research', tab: 'quant-pick', label: '每日量化选股' }" in navigation
+    assert "{ path: 'research', tab: 'quant-pick', label: '每日量化选股' }" not in navigation
     assert "{ path: 'research', tab: 'events', label: '事件掘金' }" in navigation
 
 

@@ -51,13 +51,31 @@ def test_vue_technical_screener_preserves_missing_empty_and_degraded_semantics()
         "真实空数组",
         "局部失败",
         "平台已接受并进入后台队列；数据尚未更新",
-        "缺失、降级、空数组和传输失败分别展示",
     ):
         assert token in page + results + read("frontend-vue/src/composables/useTechnicalScreener.ts")
     assert "value == null" in formatter
     assert "signal_score || 0" not in combined
     assert "row.signal_score ||" not in combined
     assert "示例股票" in results
+
+
+def test_vue_technical_screener_exposes_six_presets_without_boundary_or_sort_forms() -> None:
+    page = read("frontend-vue/src/components/TechnicalScreenerPage.vue")
+    rules = read("frontend-vue/src/components/TechnicalScreenerRules.vue")
+    composable = read("frontend-vue/src/composables/useTechnicalScreener.ts")
+    for preset in (
+        "强势MACD金叉",
+        "均线多头启动",
+        "放量突破",
+        "超卖修复",
+        "周线趋势转强",
+        "日周共振",
+    ):
+        assert preset in composable
+    assert 'label="预置方案"' in rules
+    assert "technical-boundaries" not in page
+    assert "服务端排序" not in rules
+    assert "technical-sort" not in rules
 
 
 def test_vue_technical_screener_cleans_every_request_and_page_resource() -> None:

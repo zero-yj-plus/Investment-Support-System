@@ -2229,11 +2229,16 @@ async def management_interactions(
 # ---------------------------------------------------------------- 业绩预告掘金（确定性规则）
 
 @router.get("/forecast/mining")
-async def forecast_mining_api(period: str = ""):
+async def forecast_mining_api(request: Request, period: str = ""):
     """中报/年报预告掘金榜：主板±50%阈值/扭亏 + 披露时点分层 + 基数陷阱沉底 + 扣非疑点标记。
-    数字全部来自免费公开业绩预告汇总（元/%，供应方口径），规则判定、AI 不参与；失败→ok:false 绝不编。"""
+    数字全部来自免费公开业绩预告汇总（元/%，供应方口径），规则判定、AI 不参与；
+    公开源失败时只回放同客户、同报告期的显式 stale last-good，绝不编造。"""
     from ..analysis import forecast_mining  # noqa: PLC0415
-    return await asyncio.to_thread(forecast_mining.mine, period or None)
+    return await asyncio.to_thread(
+        forecast_mining.mine,
+        period or None,
+        _state(request).config.data_dir,
+    )
 
 
 # ---------------------------------------------------------------- AI 对话（SSE）
@@ -2608,7 +2613,7 @@ async def _governed_chain_chat_stream(
         analysis["data_gaps"].insert(0, {
             "dimension": "本轮结构化采集",
             "status": "failed",
-            "needed": ["稍后重试 TDX 板块目录、成分关系与行情"],
+            "needed": ["稍后重试 TDX/公开板块目录、成分关系与可选行情"],
         })
     analysis["request_contract"] = (
         research_contract if research_contract == "chain-research-v2" else "legacy-compatible"
@@ -2752,7 +2757,7 @@ async def chat(request: Request):
                 model_available=model_status == "available",
                 research_contract=research_contract,
             ),
-            stage="正在匹配 TDX 板块目录、成员关系与当前行情…",
+            stage="正在匹配公开板块目录、成员关系与可选行情…",
         ))
     return _sse(st.engine.chat_stream(mode, message, code=code, industry=industry,
                                       history=history, images=images, codes=codes))

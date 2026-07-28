@@ -150,6 +150,158 @@ def test_unmatched_chain_keeps_framework_and_refuses_company_ranking() -> None:
     assert any(gap["dimension"] == "TDX 板块匹配" for gap in analysis["data_gaps"])
 
 
+def test_public_board_normalization_uses_real_constituents_and_names() -> None:
+    matched = industry_chain._public_board_matches(
+        "光模块",
+        [
+            {"板块代码": "BK1234", "板块名称": "CPO概念", "_kind": "concept"},
+            {"板块代码": "BK5678", "板块名称": "食品饮料", "_kind": "industry"},
+        ],
+    )
+    codes, names = industry_chain._public_member_rows([
+        {"代码": "300001", "名称": "甲光电"},
+        {"代码": "000002", "名称": "乙通信"},
+        {"代码": "invalid", "名称": "无效记录"},
+    ])
+
+    assert [row["code"] for row in matched] == ["BK1234"]
+    assert codes == ["300001", "000002"]
+    assert names == {"300001": "甲光电", "000002": "乙通信"}
+
+
+def test_public_board_adapter_calls_keyless_akshare_endpoints(monkeypatch) -> None:
+    class FakeAk:
+        @staticmethod
+        def stock_board_concept_name_em():
+            return [{"板块代码": "BK1234", "板块名称": "CPO概念"}]
+
+        @staticmethod
+        def stock_board_industry_name_em():
+            return []
+
+        @staticmethod
+        def stock_board_concept_cons_em(*, symbol):
+            assert symbol == "CPO概念"
+            return [{"代码": "300001", "名称": "甲光电"}]
+
+    def fake_safe(function, *args, **kwargs):
+        kwargs.pop("label", None)
+        kwargs.pop("timeout", None)
+        return function(*args, **kwargs)
+
+    monkeypatch.setattr(industry_chain, "get_ak", lambda: FakeAk())
+    monkeypatch.setattr(industry_chain, "safe", fake_safe)
+
+    result = industry_chain._public_board_membership.__wrapped__("光模块")
+
+    assert result is not None
+    assert result["verification"] == "public_board_member"
+    assert result["by_sector"] == {"BK1234": ("300001",)}
+    assert result["names"] == {"300001": "甲光电"}
+
+
+def test_public_membership_and_official_clue_work_without_realtime_quotes() -> None:
+    analysis = industry_chain.build_analysis(
+        "光模块",
+        catalog={
+            "BK1234": {
+                "code": "BK1234",
+                "name": "CPO概念",
+                "kind": "concept",
+                "data_date": "2026-07-28",
+            },
+        },
+        membership={
+            "by_sector": {"BK1234": ("300001",)},
+            "names": {"300001": "甲光电"},
+            "data_date": "2026-07-28",
+            "source": "东方财富公开板块（AKShare）",
+            "catalog_source": "东方财富公开行业/概念目录（AKShare）",
+            "verification": "public_board_member",
+        },
+        quotes={},
+        company_evidence={
+            "300001": {
+                "status": "available",
+                "data_as_of": "2026-07-27",
+                "matched_terms": ["光模块"],
+                "formal_disclosures": [
+                    {"title": "关于光模块项目进展的公告", "evidence_level": "tier_1"},
+                ],
+                "financial_snapshot": {"end_date": "20260331", "roe": 5.0},
+            },
+        },
+        evidence_refresh={"status": "available", "cached_count": 1, "limit": 5},
+        generated_at="2026-07-28 10:00:00",
+    )
+
+    company = analysis["company_mapping"][0]
+    assert company["name"] == "甲光电"
+    assert company["verification"] == "public_board_member"
+    assert company["quote"]["price"] is None
+    assert company["chain_role"]["status"] == "evidence_clue"
+    assert company["chain_role"]["value"] is None
+    assert company["realization"]["status"] == "financial_context_only"
+    assert analysis["research_trade_separation"]["trade_timing"] == "not_evaluated"
+    assert analysis["coverage"]["company_evidence_available_count"] == 1
+
+
+def test_collect_analysis_falls_back_when_tdx_members_are_empty(monkeypatch) -> None:
+    monkeypatch.setattr(
+        industry_chain.tdx_api,
+        "sector_catalog",
+        lambda: {
+            "880001": {
+                "code": "880001",
+                "name": "CPO概念",
+                "kind": "concept",
+                "data_date": "2026-07-28",
+            },
+        },
+    )
+    monkeypatch.setattr(
+        industry_chain.tdx_api,
+        "sector_members_for_codes",
+        lambda _codes: {"by_sector": {"880001": ()}},
+    )
+    monkeypatch.setattr(
+        industry_chain.market,
+        "market_sectors",
+        lambda: {"sectors": []},
+    )
+    monkeypatch.setattr(
+        industry_chain.stock,
+        "quick_quotes",
+        lambda _codes: {},
+    )
+    monkeypatch.setattr(
+        industry_chain,
+        "_public_board_membership",
+        lambda _industry: {
+            "state": "complete",
+            "matched_sectors": [{
+                "code": "BK1234",
+                "name": "CPO概念",
+                "kind": "concept",
+                "data_date": "2026-07-28",
+            }],
+            "by_sector": {"BK1234": ("300001",)},
+            "names": {"300001": "甲光电"},
+            "data_date": "2026-07-28",
+            "source": "东方财富公开板块（AKShare）",
+            "catalog_source": "东方财富公开行业/概念目录（AKShare）",
+            "verification": "public_board_member",
+        },
+    )
+
+    analysis = asyncio.run(industry_chain.collect_analysis("光模块"))
+
+    assert analysis["coverage"]["verified_member_count"] == 1
+    assert analysis["coverage"]["membership_verification"] == "public_board_member"
+    assert analysis["company_mapping"][0]["name"] == "甲光电"
+    assert analysis["company_evidence_refresh"]["status"] == "disabled"
+
+
 def test_governed_chain_stream_accepts_v2_and_model_only_adds_explanation() -> None:
     analysis = _sample_analysis()
 

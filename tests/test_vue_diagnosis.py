@@ -20,7 +20,7 @@ def test_vue_diagnosis_route_is_reachable_without_migrating_research_siblings() 
     assert 'v-else-if="isDiagnosis"' in app
     assert "{ path: 'research', tab: 'diagnosis', label: '个股诊断' }" in navigation
     assert "{ path: 'research', tab: 'screener', label: '条件选股' }" in navigation
-    assert "{ path: 'research', tab: 'quant-pick', label: '每日量化选股' }" in navigation
+    assert "{ path: 'research', tab: 'quant-pick', label: '每日量化选股' }" not in navigation
 
 
 def test_vue_diagnosis_uses_only_real_quote_and_governed_diagnosis_endpoints() -> None:

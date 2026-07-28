@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -108,7 +109,8 @@ async def test_company_context_includes_bounded_official_disclosure_metadata(
     assert seen["limit"] == 12
     assert seen["verify_pdf"] is False
     assert seen["hash_limit"] == 1
-    assert seen["cache_path"].endswith("official-disclosures/000001.json")
+    cache_path = Path(seen["cache_path"])
+    assert cache_path.parts[-2:] == ("official-disclosures", "000001.json")
     interactions = context["交易所互动问答(近90日·Tier3·不参与日内评分)"]
     assert interactions["is_formal_disclosure"] is False
     assert interactions["items"] == [{

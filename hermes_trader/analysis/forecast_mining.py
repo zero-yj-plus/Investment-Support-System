@@ -14,10 +14,16 @@
 其它客户零影响）。所有数值来自免费公开业绩预告汇总（供应方口径），缺失标 missing，绝不编造。"""
 from __future__ import annotations
 
+from datetime import datetime, timezone
+import json
 import logging
+import os
+from pathlib import Path
+import re
+import tempfile
 
 from ..data import free_source as tx
-from ..data.base import now_cn, ts_str
+from ..data.base import now_cn
 
 log = logging.getLogger(__name__)
 
@@ -31,6 +37,84 @@ _NONREC_WORDS = ("非经常", "出售", "处置", "政府补助", "补贴", "公
 
 # 正向类型（掘金池）；负向类型只进统计（风险面），不进榜单
 _POSITIVE_TYPES = ("预增", "扭亏", "续盈", "略增")
+
+_LAST_GOOD_SCHEMA = "forecast-mining-last-good-v1"
+_LAST_GOOD_MAX_AGE_SECONDS = 7 * 24 * 3600
+_PERIOD_RE = re.compile(r"^\d{8}$")
+
+
+def _last_good_path(data_dir: str | Path | None, period: str) -> Path | None:
+    """每个客户、每个报告期独立保存，非法 period 不参与文件路径拼接。"""
+    if data_dir is None or not _PERIOD_RE.fullmatch(period):
+        return None
+    return Path(data_dir) / "forecast_mining" / f"last-good-{period}.json"
+
+
+def _save_last_good(path: Path, period: str, result: dict, fetched_at: datetime) -> None:
+    """原子保存非空公开源结果；快照是缓存，不覆盖任何业务事件账本。"""
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    try:
+        os.chmod(path.parent, 0o700)
+    except OSError:
+        pass
+    payload = {
+        "schema_version": _LAST_GOOD_SCHEMA,
+        "period": period,
+        "fetched_at": fetched_at.isoformat(timespec="seconds"),
+        "result": result,
+    }
+    tmp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            json.dump(payload, handle, ensure_ascii=False, separators=(",", ":"))
+            tmp_path = Path(handle.name)
+        try:
+            os.chmod(tmp_path, 0o600)
+        except OSError:
+            pass
+        os.replace(tmp_path, path)
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass
+    finally:
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
+
+
+def _load_last_good(path: Path, period: str, replayed_at: datetime) -> tuple[dict, int] | None:
+    """只回放同报告期、七天内、结构完整的成功快照。"""
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        result = payload.get("result")
+        if (
+            payload.get("schema_version") != _LAST_GOOD_SCHEMA
+            or payload.get("period") != period
+            or not isinstance(result, dict)
+            or result.get("ok") is not True
+            or not isinstance(result.get("items"), list)
+            or not isinstance(result.get("traps"), list)
+            or not isinstance(result.get("stats"), dict)
+        ):
+            return None
+        fetched_at = datetime.fromisoformat(str(payload.get("fetched_at") or "").replace("Z", "+00:00"))
+        if fetched_at.tzinfo is None or fetched_at.utcoffset() is None:
+            return None
+        age = int(
+            (replayed_at.astimezone(timezone.utc) - fetched_at.astimezone(timezone.utc)).total_seconds()
+        )
+        if age < 0 or age > _LAST_GOOD_MAX_AGE_SECONDS:
+            return None
+        return dict(result), age
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return None
 
 
 def _board_of(code: str) -> tuple[str, bool]:
@@ -86,16 +170,47 @@ def _layer_of(ann_date: str, period: str) -> str:
 _LAYER_RANK = {"主动交卷": 0, "提前披露": 1, "中性": 2, "非强制窗口": 3, "未知": 4, "超期/更正": 5, "压哨": 6}
 
 
-def mine(period: str | None = None) -> dict:
+def mine(period: str | None = None, data_dir: str | Path | None = None) -> dict:
     """业绩预告掘金榜（确定性规则）。返回 {ok, ts, period, deadline, stats, items, traps, missing}。
     items=达标掘金池（按 陷阱否→披露分层→同比下限 排序）；traps=被标记沉底的陷阱池（透明可见）。"""
     period = _resolve_period(period)
+    captured_at = now_cn()
+    snapshot_path = _last_good_path(data_dir, period)
     missing: list[str] = []
     raw = tx.forecast_list(period)
     if raw is None:
-        return {"ok": False, "ts": ts_str(), "period": period, "deadline": "", "stats": {},
-                "items": [], "traps": [],
-                "missing": ["业绩预告公开源不可用——绝不编造"]}
+        cached = _load_last_good(snapshot_path, period, captured_at) if snapshot_path else None
+        if cached is not None:
+            result, age = cached
+            note = f"业绩预告公开源当前不可用，展示最近成功榜单（距采集约{age}秒）"
+            result.update({
+                "ok": True,
+                "ts": captured_at.strftime("%Y-%m-%d %H:%M:%S"),
+                "state": "last_good",
+                "degraded": True,
+                "stale": True,
+                "used_last_good": True,
+                "snapshot_age_seconds": age,
+                "source_error": "业绩预告公开源不可用",
+                "missing": [note, *[item for item in result.get("missing", []) if item != note]],
+            })
+            return result
+        return {
+            "ok": False,
+            "ts": captured_at.strftime("%Y-%m-%d %H:%M:%S"),
+            "data_ts": None,
+            "period": period,
+            "deadline": "",
+            "state": "missing",
+            "degraded": False,
+            "stale": False,
+            "used_last_good": False,
+            "snapshot_age_seconds": None,
+            "stats": {},
+            "items": [],
+            "traps": [],
+            "missing": ["业绩预告公开源不可用——绝不编造"],
+        }
     if len(raw) >= 990:
         missing.append(f"预告数据量 {len(raw)} 行接近单次上限，可能截断（后续窗口内会随每日更新补全）")
 
@@ -162,13 +277,36 @@ def mine(period: str | None = None) -> dict:
 
     year, md = period[:4], period[4:]
     deadline = f"{year}-07-15" if md == "0630" else (f"{int(year) + 1}-01-31" if md == "1231" else "")
-    return {"ok": True, "ts": ts_str(), "period": period, "deadline": deadline,
-            "stats": stats, "items": items, "traps": traps, "missing": missing}
+    result = {
+        "ok": True,
+        "ts": captured_at.strftime("%Y-%m-%d %H:%M:%S"),
+        "data_ts": captured_at.isoformat(timespec="seconds"),
+        "period": period,
+        "deadline": deadline,
+        "state": "complete" if raw else "complete_empty",
+        "degraded": bool(missing),
+        "stale": False,
+        "used_last_good": False,
+        "snapshot_age_seconds": 0,
+        "stats": stats,
+        "items": items,
+        "traps": traps,
+        "missing": missing,
+    }
+    # 成功但真实空数组保持 complete_empty，不能用旧数据覆盖；也不能让空响应
+    # 覆盖此前非空 last-good，否则下一次瞬时故障仍会被放大成整页无数据。
+    if raw and snapshot_path is not None:
+        try:
+            _save_last_good(snapshot_path, period, result, captured_at)
+        except Exception as exc:  # noqa: BLE001 -- 快照失败不影响本次真实结果
+            log.info("业绩预告 last-good 写入失败: %s", str(exc)[:140])
+    return result
 
 
 def build_push_text(d: dict, top_n: int = 10) -> str | None:
     """掘金榜 → 推送文本（纯规则拼接，无 AI）。空榜/失败 → None 不推（避免噪音）。"""
-    if not d.get("ok") or not d.get("items"):
+    # last-good 只解决页面瞬时空白；主动推送不能把旧榜伪装成当天新采集结果。
+    if not d.get("ok") or d.get("used_last_good") or d.get("stale") or not d.get("items"):
         return None
     items = d["items"][:max(1, top_n)]
     st = d.get("stats", {})
@@ -199,7 +337,7 @@ async def push_daily(engine) -> None:
     import asyncio  # noqa: PLC0415
 
     cfg = engine.config.section("forecast_mining")
-    d = await asyncio.to_thread(mine, cfg.get("period") or None)
+    d = await asyncio.to_thread(mine, cfg.get("period") or None, engine.config.data_dir)
     text = build_push_text(d, int(cfg.get("top_n", 10)))
     if not text:
         log.info("预告掘金推送跳过：无达标榜单（%s）", "; ".join(d.get("missing", [])) or "空榜")

@@ -3,16 +3,20 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import AppIcon from './components/AppIcon.vue'
 import CapitalTrackingPage from './components/CapitalTrackingPage.vue'
 import CloseReviewPage from './components/CloseReviewPage.vue'
+import CompanyResearchPage from './components/CompanyResearchPage.vue'
 import DataStatus from './components/DataStatus.vue'
 import DecisionCommand from './components/DecisionCommand.vue'
 import DiagnosisPage from './components/DiagnosisPage.vue'
+import ForecastMiningPage from './components/ForecastMiningPage.vue'
 import HotboardPage from './components/HotboardPage.vue'
 import HoldingsPage from './components/HoldingsPage.vue'
+import IndustryChainPage from './components/IndustryChainPage.vue'
 import MainlineOverview from './components/MainlineOverview.vue'
 import MainlineResearchPage from './components/MainlineResearchPage.vue'
 import MarketEvidence from './components/MarketEvidence.vue'
 import MarketOverview from './components/MarketOverview.vue'
 import PremarketReportPage from './components/PremarketReportPage.vue'
+import ReportCenterPage from './components/ReportCenterPage.vue'
 import RiskOverview from './components/RiskOverview.vue'
 import ScreenerPage from './components/ScreenerPage.vue'
 import SentimentEventsPage from './components/SentimentEventsPage.vue'
@@ -32,8 +36,10 @@ const menuOpen = ref(false)
 const menuButton = ref<HTMLButtonElement | null>(null)
 const sidebar = ref<InstanceType<typeof SidebarNavigation> | null>(null)
 const premarketPage = ref<InstanceType<typeof PremarketReportPage> | null>(null)
+const reportCenterPage = ref<InstanceType<typeof ReportCenterPage> | null>(null)
 const tailPage = ref<InstanceType<typeof TailReportPage> | null>(null)
 const closeReviewPage = ref<InstanceType<typeof CloseReviewPage> | null>(null)
+const companyResearchPage = ref<InstanceType<typeof CompanyResearchPage> | null>(null)
 const capitalTrackingPage = ref<InstanceType<typeof CapitalTrackingPage> | null>(null)
 const hotboardPage = ref<InstanceType<typeof HotboardPage> | null>(null)
 const holdingsPage = ref<InstanceType<typeof HoldingsPage> | null>(null)
@@ -42,6 +48,8 @@ const mainlineResearchPage = ref<InstanceType<typeof MainlineResearchPage> | nul
 const sentimentEventsPage = ref<InstanceType<typeof SentimentEventsPage> | null>(null)
 const stockAskPage = ref<InstanceType<typeof StockAskPage> | null>(null)
 const diagnosisPage = ref<InstanceType<typeof DiagnosisPage> | null>(null)
+const forecastMiningPage = ref<InstanceType<typeof ForecastMiningPage> | null>(null)
+const industryChainPage = ref<InstanceType<typeof IndustryChainPage> | null>(null)
 const screenerPage = ref<InstanceType<typeof ScreenerPage> | null>(null)
 const technicalScreenerPage = ref<InstanceType<typeof TechnicalScreenerPage> | null>(null)
 const tomorrowPage = ref<InstanceType<typeof TomorrowStrategyPage> | null>(null)
@@ -68,15 +76,19 @@ const isTomorrowStrategy = computed(() => routePath.value === 'review' && routeT
 const isWatchlist = computed(() => routePath.value === 'risk' && routeTab.value === 'watchlist')
 const isStockAsk = computed(() => routePath.value === 'research' && routeTab.value === 'ask')
 const isDiagnosis = computed(() => routePath.value === 'research' && routeTab.value === 'diagnosis')
+const isForecastMining = computed(() => routePath.value === 'research' && routeTab.value === 'events')
+const isIndustryChain = computed(() => routePath.value === 'research' && routeTab.value === 'chain')
+const isCompanyResearch = computed(() => routePath.value === 'research' && routeTab.value === 'company')
 const isScreener = computed(() => routePath.value === 'research' && routeTab.value === 'screener')
 const isTechnicalScreener = computed(() => routePath.value === 'research' && routeTab.value === 'technical-screener')
+const isReportCenter = computed(() => routePath.value === 'history' && routeTab.value === 'reports')
 const activeNavigation = computed(() => findActiveNavigation(routePath.value, routeTab.value))
 const moduleTitle = computed(() => activeNavigation.value?.group.label || (routePath.value === 'settings' ? '系统设置' : '交易工作台'))
 const pageTitle = computed(() => activeNavigation.value?.child.label || (routePath.value === 'settings' ? '系统设置' : '页面迁移中'))
-const pageRefreshing = computed(() => isHotboard.value || isHoldings.value || isWatchlist.value || isTiming.value || isMainlineResearch.value || isSentimentEvents.value || isTomorrowStrategy.value || isCapitalTracking.value || isStockAsk.value || isDiagnosis.value || isScreener.value || isTechnicalScreener.value
+const pageRefreshing = computed(() => isHotboard.value || isHoldings.value || isWatchlist.value || isTiming.value || isMainlineResearch.value || isSentimentEvents.value || isTomorrowStrategy.value || isCapitalTracking.value || isStockAsk.value || isDiagnosis.value || isForecastMining.value || isIndustryChain.value || isCompanyResearch.value || isScreener.value || isTechnicalScreener.value || isReportCenter.value
   ? reportRefreshing.value
   : refreshing.value || reportRefreshing.value)
-const pageBusy = computed(() => isHotboard.value || isHoldings.value || isWatchlist.value || isTiming.value || isMainlineResearch.value || isSentimentEvents.value || isTomorrowStrategy.value || isCapitalTracking.value || isStockAsk.value || isDiagnosis.value || isScreener.value || isTechnicalScreener.value
+const pageBusy = computed(() => isHotboard.value || isHoldings.value || isWatchlist.value || isTiming.value || isMainlineResearch.value || isSentimentEvents.value || isTomorrowStrategy.value || isCapitalTracking.value || isStockAsk.value || isDiagnosis.value || isForecastMining.value || isIndustryChain.value || isCompanyResearch.value || isScreener.value || isTechnicalScreener.value || isReportCenter.value
   ? reportRefreshing.value
   : loading.value || pageRefreshing.value)
 
@@ -175,6 +187,22 @@ function expandSidebar() {
 }
 
 async function refreshCurrentPage() {
+  if (isReportCenter.value && reportCenterPage.value) {
+    await Promise.resolve(reportCenterPage.value.refresh())
+    return
+  }
+  if (isCompanyResearch.value && companyResearchPage.value) {
+    await Promise.resolve(companyResearchPage.value.refresh())
+    return
+  }
+  if (isIndustryChain.value && industryChainPage.value) {
+    await Promise.resolve(industryChainPage.value.refresh())
+    return
+  }
+  if (isForecastMining.value && forecastMiningPage.value) {
+    await Promise.resolve(forecastMiningPage.value.refresh())
+    return
+  }
   if (isTechnicalScreener.value && technicalScreenerPage.value) {
     await Promise.resolve(technicalScreenerPage.value.refresh())
     return
@@ -411,6 +439,30 @@ watch(pageTitle, (value) => { document.title = `${value} · W.U.D.I.` }, { immed
         <TechnicalScreenerPage
           v-else-if="isTechnicalScreener"
           ref="technicalScreenerPage"
+          @refresh-state="reportRefreshing = $event"
+        />
+
+        <ForecastMiningPage
+          v-else-if="isForecastMining"
+          ref="forecastMiningPage"
+          @refresh-state="reportRefreshing = $event"
+        />
+
+        <IndustryChainPage
+          v-else-if="isIndustryChain"
+          ref="industryChainPage"
+          @refresh-state="reportRefreshing = $event"
+        />
+
+        <CompanyResearchPage
+          v-else-if="isCompanyResearch"
+          ref="companyResearchPage"
+          @refresh-state="reportRefreshing = $event"
+        />
+
+        <ReportCenterPage
+          v-else-if="isReportCenter"
+          ref="reportCenterPage"
           @refresh-state="reportRefreshing = $event"
         />
 

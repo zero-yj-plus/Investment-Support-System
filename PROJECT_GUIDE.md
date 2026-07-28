@@ -394,6 +394,10 @@ Vite。首屏继续复用 `/api/shell-status`、`/api/pulse`、`/api/market/over
 个股诊断页并行读取 `/api/quote/{code}` 与 `/api/diagnose?code={code}`；快速报价只作身份和行情预览，正式动作、仓位上限、价格条件、风险闸与证据链完全展示服务端治理卡。页面区分缺失、降级、冲突、陈旧、真实空数组和局部请求失败，不请求模型或其他研究接口，也不在浏览器中重算交易结论。
 条件选股页仅在用户明确提交时调用 `/api/screen`，展示服务端 80% 全市场覆盖门槛、确定性候选和行业低频补全状态；表单市值/成交额使用亿元入参，结果保持元口径。八个数值列表头使用原生按钮重排当前返回行，缺失值保持末位且不改变候选集合。候选通过真实链接进入个股诊断，加入观察池只准确展示接受与排队状态；页面不把候选包装为推荐、风险或仓位结论。
 技术面选股页读取 `/api/technical-screen/catalog`、`/status` 与保存方案，且只在用户明确提交时调用 `/api/technical-screen/query`；显式缓存刷新通过 `/api/technical-screen/refresh` 排队并轮询状态。页面使用前复权本地技术信号缓存，保留事件/状态、两层满足/排除规则、旧方案只读兼容与追加式历史命中；候选仅表示规则命中，不在浏览器生成推荐、仓位或价格结论。
+业绩预告掘金页只读取 `/api/forecast/mining`，展示服务端主板阈值、披露时点、扣非疑点与基数陷阱分池结果；同比单位为百分数，利润与上年基数原始单位为人民币元。页面保持服务端顺序，区分接口失败、`ok:false`、真实空数组、数值缺失与 `missing[]` 部分覆盖；接口未提供独立数据日期或陈旧标记时不得把计算时点称为实时数据。
+产业链研究页仅在用户主动提交时调用 `/api/chat` 的 `mode=chain` SSE，并可显式写入 `/api/knowledge`；页面复用 `chain-research-v2`，把产业结论、交易时点、证据时点、真实空映射和不完整流分开呈现。TDX 成员只证明板块归属，现价单位为元、涨跌幅为百分比、PE/PB 为倍数、数据可研分无量纲且仅用于证据核验排序；前端不重算产业角色、价格、仓位或风险结论。
+公司研究页在用户提交 6 位代码后独立读取 `/api/stock/{code}/research-enrichment`、`/api/disclosures/announcements` 与 `/api/interactions/management`，并以 `/api/chat` 的 `mode=company` SSE 生成服务端治理后的研究正文；三类结构化证据各自降级，不完整流隔离，本地历史只追加。页面不从模型正文重算风险等级、仓位上限或价格结论，知识库存入仅表示服务端已接受保存。
+报告中心读取 `/api/archive/dates`、`/api/reports/{rtype}` 与追加式 `/api/delivery/receipts`，保留六类报告查看、今日 SSE 生成、打印/PDF 和推送提交；页面严格区分真实空报告、局部接口失败、历史 `pushed` 标记、平台接受与最终送达，不从 Markdown 重算风险或仓位结论。
 
 | 文件 / 目录 | 说明 |
 | --- | --- |
@@ -410,6 +414,10 @@ Vite。首屏继续复用 `/api/shell-status`、`/api/pulse`、`/api/market/over
 | `src/components/Diagnosis*.vue` | 个股诊断的代码查询、确定性结论、风险/价格边界、结构化证据与数据治理。 |
 | `src/components/Screener*.vue` | 条件选股的结论边界、原生筛选表单、响应式候选明细和覆盖率治理。 |
 | `src/components/TechnicalScreener*.vue`、`TechnicalSignalDialog.vue` | 技术面选股的缓存结论、自然语言规则编辑、信号库、响应式候选明细、事件历史与数据治理。 |
+| `src/components/ForecastMining*.vue` | 业绩预告掘金的确定性结论、风险/仓位边界、规则解释与响应式候选/陷阱明细。 |
+| `src/components/IndustryChain*.vue` | 产业链研究输入、产业/交易边界、真实空映射、安全 Markdown 正文、本地历史和数据治理。 |
+| `src/components/CompanyResearch*.vue` | 公司研究输入、结论边界、盘后研究底座、官方公告/互动证据、安全 Markdown 正文与追加式本地历史。 |
+| `src/components/ReportCenter*.vue` | 报告中心的历史日期、服务端定稿摘要、安全正文、章节目录、版本治理与真实交付回执。 |
 | `src/composables/useDecisionOverview.ts` | 并行请求、超时、刷新、可见性恢复和卸载清理。 |
 | `src/composables/useMarketEvidence.ts` | 盘面证据与深度结构的延迟请求、独立降级、刷新和卸载清理。 |
 | `src/composables/usePremarketReport.ts` | 盘前报告读取、资金验证、SSE 生成、推送和独立请求/定时器清理。 |
@@ -424,6 +432,10 @@ Vite。首屏继续复用 `/api/shell-status`、`/api/pulse`、`/api/market/over
 | `src/composables/useDiagnosis.ts` | 快速报价与正式诊断的独立请求控制、跨页代码意图、刷新保留和卸载清理。 |
 | `src/composables/useScreener.ts` | 条件筛选与观察池提交的独立请求控制、覆盖/空值语义、结果保留和卸载清理。 |
 | `src/composables/useTechnicalScreener.ts` | 技术信号目录、缓存状态、显式筛选/刷新、方案 CRUD、历史事件的独立请求控制与卸载清理。 |
+| `src/composables/useForecastMining.ts` | 业绩预告单接口读取、防重复刷新、超时、可见性恢复与卸载清理。 |
+| `src/composables/useIndustryChain.ts` | 产业链 SSE、知识库写入、本地 append-only 历史、防重复动作、独立请求控制和卸载清理。 |
+| `src/composables/useCompanyResearch.ts` | 公司研究状态预检、三路结构化证据、SSE 正文、知识库写入、追加式历史与独立请求/定时器清理。 |
+| `src/composables/useReportCenter.ts` | 六类报告读取、历史日期、交付回执、SSE 生成、推送提交及各请求独立取消和生命周期清理。 |
 | `src/utils/reportMarkdown.ts` | 把受治理报告 Markdown 解析为安全的 Vue 渲染块和章节目录，不使用原始 HTML 注入。 |
 | `src/styles.css` | 深浅主题、响应式断点、焦点和 reduced-motion 规则。 |
 | `scripts/audit-ui.mjs` | 使用本机 Chrome + axe-core 检查已迁移页面的 375/768/1024/1440 布局、深浅主题、关键状态和 WCAG。 |

@@ -525,6 +525,15 @@ code 为 6 位数字（自动识别沪深）。
 - `mode`: `free`(自由问答) | `stock`(盘中问股，需 code) | `position`(持仓诊断，后端自动读取已保存持仓) | `chain`(产业链挖掘，需 industry)
 - 后端自动注入对应实时数据上下文（个股盘口/板块/资金/市场情绪），再调 Hermes。
 
+`chain` 模式的数据与降级约定：
+
+- 候选池优先使用 TDX 板块成分；TDX 返回空成分时，后端自动回退到 AKShare 暴露的东方财富公开行业/概念板块及其成分。该回退不需要 API Key。
+- 板块成分只证明“属于该公开集合”，不证明公司处于产业链哪个环节、相关收入占比、订单或国产替代进度。
+- 实时行情不是产业研究的前置条件。行情缺失时仍返回公开成分候选与名称，但价格/估值保持缺失，`trade_timing` 语义固定为 `not_evaluated`。
+- 后端仅对证据核验队列前 5 家公司异步刷新巨潮/交易所公告、深交所互动问答和免费基础财务；冷启动首轮可显示 `refreshing`，后续请求复用 30 分钟进程缓存与既有 last-good 快照。普通请求不会逐股同步抓取整个板块。
+- 公告标题或互动问答命中产业关键词时只标记为 `evidence_clue`；没有公告/年报正文和分部收入证据时，不得标记为已验证产业角色或业绩兑现。
+- 以上公开源均不新增密钥配置；上游不可用时字段保持 `missing`、`refreshing` 或明确降级状态，不用模型生成值补齐。
+
 SSE 事件流，每条 `data:` 一个 JSON：
 ```
 data: {"stage": "采集实时行情数据…"}
@@ -743,6 +752,33 @@ level∈{过热拥挤,偏拥挤,正常,冷清}；crowd_score 0-100 横截面分�
    "float_mv":2.8e10,"amount":1.8e9,"turnover_rate":5.2,"main_net":null,"trend":"多头","score":82}]}
 ```
 > 注：`main_net` 暂不逐票拉取（全市场快照不含单票主力净额），恒为 `null` 并在 `missing` 标注；筛选/打分不依赖它。空缺即缺数据，绝不以 0 或估值冒充。
+
+### GET /api/forecast/mining
+
+业绩预告掘金。`period` 可选，格式为 `YYYYMMDD`；默认按北京时间选择当前中报或年报报告期。
+数值只来自公开业绩预告汇总，服务端执行确定性阈值、披露时点和基数陷阱规则。
+
+实时公开源成功时返回：
+
+```json
+{"ok":true,"state":"complete","degraded":false,"stale":false,"used_last_good":false,
+ "ts":"2026-07-28 10:00:00","data_ts":"2026-07-28T10:00:00+08:00","period":"20260630",
+ "snapshot_age_seconds":0,"stats":{"总数":100,"掘金池":12,"陷阱池":3},"items":[],"traps":[],"missing":[]}
+```
+
+公开源失败时，只允许回放同客户、同报告期且不超过七天的最近非空成功快照：
+
+```json
+{"ok":true,"state":"last_good","degraded":true,"stale":true,"used_last_good":true,
+ "ts":"2026-07-28 14:30:00","data_ts":"2026-07-28T10:00:00+08:00","period":"20260630",
+ "snapshot_age_seconds":16200,"source_error":"业绩预告公开源不可用",
+ "missing":["业绩预告公开源当前不可用，展示最近成功榜单（距采集约16200秒）"],"items":[],"traps":[]}
+```
+
+`ts` 是本次响应计算/回放时点，`data_ts` 是榜单最近成功采集时点，两者不得混用。
+成功但真实空数组返回 `state=complete_empty`，不会用历史快照冒充当前结果，也不会覆盖此前非空 last-good。
+没有合格快照时返回 `ok=false,state=missing,items=[],traps=[]`。快照按 `server.data_dir` 客户隔离，不跨报告期复用。
+`state=last_good` 只供页面显式降级展示，不进入每日主动推送，避免把旧榜伪装成当天新榜。
 
 ## 13. DIY 研究工作流 diy
 

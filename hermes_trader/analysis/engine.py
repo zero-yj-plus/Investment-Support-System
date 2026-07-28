@@ -1966,7 +1966,10 @@ class Engine:
 
     async def industry_chain_analysis(self, industry: str) -> dict:
         """研究中心与问股 chain 模式共用的冻结结构化分析。"""
-        return await industry_chain_mod.collect_analysis(industry)
+        return await industry_chain_mod.collect_analysis(
+            industry,
+            data_dir=self.config.data_dir,
+        )
 
     async def governed_chain_explanation_stream(
         self,
@@ -1980,7 +1983,7 @@ class Engine:
         allowed_codes = [
             str(row.get("code") or "")
             for row in (analysis.get("company_mapping") or [])
-            if row.get("verification") == "tdx_sector_member"
+            if row.get("verification") in {"tdx_sector_member", "public_board_member"}
         ]
         candidate_pool = [
             {
@@ -1992,6 +1995,7 @@ class Engine:
                 "quote": row.get("quote"),
                 "valuation": row.get("valuation"),
                 "realization": row.get("realization"),
+                "company_evidence": row.get("company_evidence"),
                 "missing": row.get("missing"),
             }
             for row in sorted(
@@ -2009,6 +2013,7 @@ class Engine:
             "company_candidate_pool": candidate_pool,
             "candidate_pool_order": "code_ascending_not_research_rank",
             "coverage": analysis.get("coverage"),
+            "company_evidence_refresh": analysis.get("company_evidence_refresh"),
             "evidence": analysis.get("evidence"),
             "data_gaps": analysis.get("data_gaps"),
             "research_trade_separation": analysis.get("research_trade_separation"),
@@ -2026,13 +2031,15 @@ class Engine:
         system = (
             prompts.system_prompt(self.store.knowledge_digest())
             + "\n\n【产业链研究·证据冻结与定性推演边界】"
-            "下方只冻结 TDX 候选池、行情、来源、时点与缺口。你可以基于广泛公开的产业常识"
+            "下方冻结公开板块候选池、行情、官方公司证据、来源、时点与缺口。你可以基于广泛公开的产业常识"
             "完成有内容的定性推演，但每个产业常识判断都必须显式标注"
             "『[public_knowledge / 待公告核验]』，不能伪装成数据源事实，也不得编造任何份额、国产化率、"
             "订单、产能、价格、客户、收入、利润或估值数字。"
             f"允许点名的 A 股代码仅限：{allowed_codes or ['无']}。"
             "候选池外公司一律不得点名；候选池内公司的上中下游角色也只能作"
-            "『[public_knowledge / 待公告核验]』映射。TDX 成分只证明集合关系，不证明业务角色或投资价值。"
+            "『[public_knowledge / 待公告核验]』映射。板块成分只证明集合关系，不证明业务角色或投资价值。"
+            "company_evidence 中的公告标题、互动问答关键词只能称为业务线索；"
+            "没有公告/年报正文和分部收入时，不得升级为已验证产业角色或业绩兑现。"
             "company_candidate_pool 已按代码排序，绝不是产业、投资或交易优先级。"
             "第8段可以提出『研究建议优先级』，但必须逐项说明定性产业依据与待核证据，"
             "不得按当日涨跌幅、成交额或数据可研分排序，不得写成确定性核心标的排名。"

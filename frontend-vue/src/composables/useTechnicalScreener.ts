@@ -8,6 +8,7 @@ import type {
   TechnicalHistoryEvent,
   TechnicalHistoryResponse,
   TechnicalOccurrence,
+  TechnicalPreset,
   TechnicalQueryRequest,
   TechnicalRuleConfig,
   TechnicalRuleGroup,
@@ -36,30 +37,67 @@ function makeId(prefix: string): string {
   return `${prefix}_${globalThis.crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(16).slice(2)}`}`
 }
 
-function makeCondition(signalCode = 'MACD_GOLDEN_CROSS'): TechnicalCondition {
+function makeCondition(signalCode = 'MACD_GOLDEN_CROSS', extra: Partial<TechnicalCondition> = {}): TechnicalCondition {
   return {
     id: makeId('condition'),
     signal_code: signalCode,
     timeframe: 'D',
     occurrence: 'TODAY',
     params: signalCode === 'MACD_GOLDEN_CROSS' ? { fast: 12, slow: 26, signal: 9 } : {},
+    ...extra,
   }
 }
 
-function makeGroup(kind: 'satisfy' | 'exclude', conditions: TechnicalCondition[] = []): TechnicalRuleGroup {
+function makeGroup(kind: 'satisfy' | 'exclude', conditions: TechnicalCondition[] = [], conditionMatch?: MatchMode): TechnicalRuleGroup {
   return {
     id: makeId(kind === 'satisfy' ? 'satisfy' : 'exclude'),
-    conditionMatch: kind === 'exclude' ? 'ANY' : 'ALL',
+    conditionMatch: conditionMatch || (kind === 'exclude' ? 'ANY' : 'ALL'),
     conditions,
   }
 }
 
-function defaultRules(): TechnicalRuleConfig {
+function makePreset(id: string, name: string, summary: string, conditionMatch: MatchMode, conditions: TechnicalCondition[]): TechnicalPreset {
   return {
-    schemaVersion: 2,
-    satisfy: { groupMatch: 'ALL', groups: [makeGroup('satisfy', [makeCondition()])] },
-    exclude: { groups: [] },
+    id,
+    name,
+    summary,
+    config: {
+      schemaVersion: 2,
+      satisfy: { groupMatch: 'ALL', groups: [makeGroup('satisfy', conditions, conditionMatch)] },
+      exclude: { groups: [] },
+    },
   }
+}
+
+const TECHNICAL_PRESETS: TechnicalPreset[] = [
+  makePreset('strong_macd', '强势MACD金叉', '日线MACD今日金叉、价格位于MA60上方且ADX不低于20。', 'ALL', [
+    makeCondition(),
+    makeCondition('CLOSE_ABOVE_MA', { occurrence: 'CURRENT', params: { period: 60 } }),
+    makeCondition('ADX_STRONG', { occurrence: 'CURRENT', params: { threshold: 20 } }),
+  ]),
+  makePreset('ma_start', '均线多头启动', '刚形成均线多头排列，且成交量不低于20日均量。', 'ALL', [
+    makeCondition('LONG_MA_ARRAY_START'),
+    makeCondition('VOLUME_AT_LEAST_AVERAGE', { occurrence: 'CURRENT', params: { period: 20 } }),
+  ]),
+  makePreset('volume_breakout', '放量突破', '突破此前20日高点，成交量达到20日均量1.5倍。', 'ALL', [
+    makeCondition('VOLUME_BREAKOUT', { params: { period: 20, volume_period: 20, multiplier: 1.5 } }),
+  ]),
+  makePreset('oversold', '超卖修复', 'RSI向上穿越30，并重新站上MA5。', 'ALL', [
+    makeCondition('RSI_OVERSOLD_RECOVERY', { params: { period: 14, threshold: 30 } }),
+    makeCondition('CLOSE_ABOVE_MA', { occurrence: 'CURRENT', params: { period: 5 } }),
+  ]),
+  makePreset('weekly_turn', '周线趋势转强', '确认完成的周线出现MACD金叉或Supertrend转多。', 'ANY', [
+    makeCondition('MACD_GOLDEN_CROSS', { timeframe: 'W', params: { fast: 12, slow: 26, signal: 9 } }),
+    makeCondition('SUPERTREND_BULLISH_FLIP', { timeframe: 'W', params: { period: 14, multiplier: 3 } }),
+  ]),
+  makePreset('resonance', '日周共振', '日线MACD刚转强，同时周线DIF仍位于DEA上方。', 'ALL', [
+    makeCondition(),
+    makeCondition('MACD_BULLISH_STATE', { timeframe: 'W', occurrence: 'CURRENT', params: { fast: 12, slow: 26, signal: 9 } }),
+  ]),
+]
+
+function defaultRules(): TechnicalRuleConfig {
+  return clone(TECHNICAL_PRESETS[0].config)
 }
 
 function readableError(error: unknown, fallback: string): string {
@@ -87,7 +125,8 @@ export function useTechnicalScreener() {
   const schemeBusy = ref(false)
   const schemeFeedback = ref('')
   const selectedSchemeId = ref('')
-  const schemeName = ref('强势 MACD 金叉')
+  const selectedPresetId = ref(TECHNICAL_PRESETS[0].id)
+  const schemeName = ref(TECHNICAL_PRESETS[0].name)
   const presetReadOnly = ref(true)
   const legacyReadOnly = ref(false)
   const legacyReason = ref('')
@@ -396,14 +435,16 @@ export function useTechnicalScreener() {
     }
   }
 
-  function loadPreset() {
+  function loadPreset(id = TECHNICAL_PRESETS[0].id) {
+    const preset = TECHNICAL_PRESETS.find((item) => item.id === id) || TECHNICAL_PRESETS[0]
     selectedSchemeId.value = ''
-    schemeName.value = '强势 MACD 金叉'
+    selectedPresetId.value = preset.id
+    schemeName.value = preset.name
     presetReadOnly.value = true
     legacyReadOnly.value = false
     legacyReason.value = ''
     legacyPayload.value = null
-    replaceRules(defaultRules())
+    replaceRules(preset.config)
     Object.assign(universe, clone(DEFAULT_UNIVERSE))
     minimumAmountWan.value = String(DEFAULT_UNIVERSE.min_amount_ma20 / 10_000)
     defaultTimeframe.value = 'D'
@@ -413,13 +454,15 @@ export function useTechnicalScreener() {
   }
 
   function loadScheme(id: string) {
-    if (!id) {
-      loadPreset()
+    if (id.startsWith('preset:')) {
+      loadPreset(id.slice('preset:'.length))
       return
     }
-    const item = schemes.value.find((scheme) => scheme.id === id)
+    const schemeId = id.startsWith('scheme:') ? id.slice('scheme:'.length) : id
+    const item = schemes.value.find((scheme) => scheme.id === schemeId)
     if (!item) return
     selectedSchemeId.value = item.id
+    selectedPresetId.value = ''
     schemeName.value = item.name
     presetReadOnly.value = false
     legacyReadOnly.value = item.editable === false || item.schemaVersion !== 2 || !item.satisfy || !item.exclude
@@ -439,6 +482,7 @@ export function useTechnicalScreener() {
 
   function copyToDraft() {
     selectedSchemeId.value = ''
+    selectedPresetId.value = ''
     schemeName.value = `${schemeName.value || '技术选股方案'} 副本`
     presetReadOnly.value = false
     if (legacyReadOnly.value) {
@@ -474,6 +518,7 @@ export function useTechnicalScreener() {
         : await postJson<TechnicalScheme & { ok: boolean }>('/technical-screen/schemes', payload, controller.signal)
       if (!alive || controller !== schemeController || generation !== lifecycleGeneration) return false
       selectedSchemeId.value = saved.id
+      selectedPresetId.value = ''
       schemeName.value = saved.name || name
       schemeFeedback.value = '方案已保存。'
       await loadSchemes()
@@ -573,6 +618,7 @@ export function useTechnicalScreener() {
     catalog,
     status,
     schemes,
+    presets: TECHNICAL_PRESETS,
     result,
     stocks,
     bootstrapLoading,
@@ -589,6 +635,7 @@ export function useTechnicalScreener() {
     schemeBusy,
     schemeFeedback,
     selectedSchemeId,
+    selectedPresetId,
     schemeName,
     presetReadOnly,
     legacyReadOnly,

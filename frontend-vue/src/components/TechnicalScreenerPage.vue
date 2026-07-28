@@ -15,6 +15,7 @@ const {
   catalog,
   status,
   schemes,
+  presets,
   result,
   stocks,
   bootstrapLoading,
@@ -31,6 +32,7 @@ const {
   schemeBusy,
   schemeFeedback,
   selectedSchemeId,
+  selectedPresetId,
   schemeName,
   presetReadOnly,
   legacyReadOnly,
@@ -39,8 +41,6 @@ const {
   universe,
   minimumAmountWan,
   defaultTimeframe,
-  sortField,
-  sortDirection,
   historyCode,
   historyEvents,
   historyLoading,
@@ -163,12 +163,6 @@ defineExpose({ refresh })
       </div>
     </section>
 
-    <div class="technical-boundaries" aria-label="风险、仓位与禁止条件">
-      <article class="panel"><span>结论边界</span><strong>规则命中，不是买入推荐</strong><p>本页不在浏览器中生成评级、目标价或买卖结论。</p></article>
-      <article class="panel"><span>仓位边界</span><strong>本接口不提供仓位上限</strong><p>任何仓位数字都必须来自后续服务端风险闸。</p></article>
-      <article class="panel"><span>禁止条件</span><strong>缓存缺失或规则冲突时不筛选</strong><p>缺失、降级、空数组和传输失败分别展示。</p></article>
-    </div>
-
     <p v-if="refreshFeedback" class="technical-refresh-feedback" :class="{ 'is-error': refreshFeedback.includes('失败') }" aria-live="polite">{{ refreshFeedback }}</p>
 
     <div v-if="bootstrapLoading" class="panel technical-screener-loading" aria-live="polite">
@@ -182,10 +176,10 @@ defineExpose({ refresh })
         :universe="universe"
         :minimum-amount-wan="minimumAmountWan"
         :default-timeframe="defaultTimeframe"
-        :sort-field="sortField"
-        :sort-direction="sortDirection"
+        :presets="presets"
         :schemes="schemes"
         :selected-scheme-id="selectedSchemeId"
+        :selected-preset-id="selectedPresetId"
         :scheme-name="schemeName"
         :preset-read-only="presetReadOnly"
         :legacy-read-only="legacyReadOnly"
@@ -197,7 +191,7 @@ defineExpose({ refresh })
         :definitions="definitions"
         @dirty="markDirty"
         @load-scheme="loadScheme"
-        @update-scheme-name="schemeName = $event; presetReadOnly = false; markDirty()"
+        @update-scheme-name="schemeName = $event; selectedPresetId = ''; presetReadOnly = false; markDirty()"
         @copy-draft="copyToDraft"
         @save-scheme="saveScheme"
         @delete-scheme="deleteScheme"
@@ -209,8 +203,6 @@ defineExpose({ refresh })
         @set-signal="setConditionSignal"
         @update-minimum-amount="minimumAmountWan = $event"
         @update-default-timeframe="defaultTimeframe = $event as TechnicalTimeframe"
-        @update-sort-field="sortField = $event"
-        @update-sort-direction="sortDirection = $event"
         @run="runScreen"
       />
 
@@ -280,12 +272,6 @@ defineExpose({ refresh })
 .technical-decision__action { display: grid; align-content: center; gap: 6px; padding: 12px; background: var(--surface-2); }
 .technical-decision__action button { width: 100%; }
 .technical-decision__action small { color: var(--text-3); font-size: 12px; line-height: 1.4; }
-.technical-boundaries { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-.technical-boundaries article { padding: 10px 12px; }
-.technical-boundaries span, .technical-boundaries strong { display: block; }
-.technical-boundaries span { color: var(--text-3); font-size: 12px; }
-.technical-boundaries strong { margin-top: 3px; font-size: 15px; }
-.technical-boundaries p { margin: 4px 0 0; color: var(--text-2); font-size: 13px; }
 .technical-refresh-feedback { margin: 0; padding: 9px 11px; border-left: 3px solid var(--info); background: color-mix(in srgb, var(--info) 8%, var(--surface)); }
 .technical-refresh-feedback.is-error { border-left-color: var(--danger); }
 .technical-screener-loading { min-height: 320px; display: grid; place-content: center; justify-items: center; gap: 8px; text-align: center; }
@@ -302,7 +288,6 @@ defineExpose({ refresh })
 @media (max-width: 860px) {
   .technical-decision { grid-template-columns: minmax(0, 1fr); }
   .technical-decision__stats { border-top: 1px solid var(--border); border-left: 0; }
-  .technical-boundaries { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 720px) {
   .technical-screener-page { gap: 8px; }

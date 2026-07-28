@@ -11,7 +11,199 @@ const outputDir = resolve(root, 'audit-output')
 const axeSource = await readFile(require.resolve('axe-core/axe.min.js'), 'utf8')
 const chromePath = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
 
+const industryChainMarkdown = `## 光模块·产业链结构化研究
+
+**产业结论：已用 TDX 验证 2 个相关板块、3 只去重成员；这只能建立研究候选集合，不能证明供应链角色、业绩兑现或可交易性。**
+**当前交易时点：未评估。当前是否可交易、价格、仓位和风险必须另用当时实时行情与风险闸复核。**
+
+> 数据时点：板块目录 2026-07-22；成分 2026-07-22；报价 2026-07-22 10:31:00；板块行情 2026-07-22 10:31:05。
+> 来源覆盖：TDX 数据 API / sectors=available；TDX 数据 API / sector_members=available；TDX 数据 API（主）/腾讯财经（降级合并）=available；市场板块行情聚合=available。
+> 页首缺口：需求本质；链条结构与价值捕获；卡点与国产替代；公司业务映射与兑现。
+
+### 1. 需求本质
+- 当前结构化数据未覆盖终端需求，不能判断景气上行或下行。
+
+### 2. 产业地图
+- **上游·材料/设备/关键输入**：哪些输入决定成本、供给弹性与扩产周期？（unverified_framework）
+- **中游·制造/加工/模组/系统**：核心工艺、良率、规模效应和议价权集中在哪里？（unverified_framework）
+- **下游·应用/渠道/终端**：谁采购、为何采购、需求何时兑现，替代品是什么？（unverified_framework）
+
+### 3. 价值捕获
+- 缺少分环节毛利、供需与议价数据，不能断言利润留在哪个环节。
+
+### 4. 卡点
+- 尚未取得能证明实际卡点的供应链证据。
+
+### 5. 国产替代
+- 没有进口依赖、国产认证和份额数据，不输出国产化率。
+
+### 6. 公司映射（TDX 真实成分约束）
+|核验序|代码|名称|TDX板块|现价|涨跌幅|PE|PB|数据可研分|
+|---:|---|---|---|---:|---:|---:|---:|---:|
+|1|300308|审计光通信甲|CPO概念|88.40|2.30%|34.20|5.10|96.00|
+|2|002281|审计光通信乙|光通信|31.70|-0.80%|—|3.40|82.00|
+
+- “数据可研分”只用于决定先核验谁，不是产业研究优先级、投资排名或买入排名。
+
+### 7. 兑现与估值
+- 估值快照与业务兑现分开；PE/PB/市值可用也不能替代订单、收入和利润证据。
+
+### 8. 研究优先级与失效条件
+- P1：审计光通信甲（300308）—先核业务角色/收入占比，再核订单与毛利，最后做同环节估值。
+- P2：审计光通信乙（002281）—先核业务角色/收入占比，再核订单与毛利，最后做同环节估值。
+
+**失效条件**
+- 公司公告/财报无法证明其与目标产业存在实质业务收入时，剔除公司映射。
+
+---
+**页末证据与缺口复核**
+- TDX 数据 API / sectors：available；截至 2026-07-22；只支持“板块名称与分类”。
+- 缺口·需求本质：终端销量/装机/渗透率、价格与库存。`
+
+const emptyIndustryChainMarkdown = `## 未匹配产业·产业链结构化研究
+
+**产业结论：TDX 目录未匹配“未匹配产业”；本轮只保留研究框架，不生成公司排名。**
+**当前交易时点：未评估。当前是否可交易、价格、仓位和风险必须另用当时实时行情与风险闸复核。**
+
+> 数据时点：板块目录 缺失；成分 缺失；报价 缺失；板块行情 缺失。
+> 来源覆盖：TDX 数据 API / sectors=missing；TDX 数据 API / sector_members=missing。
+> 页首缺口：TDX 板块匹配；需求本质；链条结构与价值捕获。
+
+### 6. 公司映射（TDX 真实成分约束）
+|核验序|代码|名称|TDX板块|现价|涨跌幅|PE|PB|数据可研分|
+|---:|---|---|---|---:|---:|---:|---:|---:|
+|—|—|—|未取得可验证的 TDX 成分关系|—|—|—|—|—|
+
+**页末证据与缺口复核**
+- 缺口·TDX 板块匹配：需要一致的 TDX 行业/概念名称或显式别名。`
+
+const chainSse = (markdown, { complete = true } = {}) => [
+  'data: ' + JSON.stringify({ stage: '正在匹配 TDX 板块目录、成员关系与当前行情…' }),
+  'data: ' + JSON.stringify({ delta: markdown }),
+  ...(complete ? ['data: ' + JSON.stringify({ done: true, truncated: false })] : []),
+  '',
+].join('\n\n')
+
+const companyResearchMarkdown = `# 审计公司（000001）深度研究
+
+## 一、结论速览
+
+服务端已完成公司研究正文治理；本页不把模型正文提升为独立风险等级或仓位上限。
+
+## 二、核心事件
+
+- 审计公司年度报告已进入官方公告证据区，正文只作解释，不替代公告原文。
+
+## 三、产业链位置
+
+当前结构化接口未提供上下游收入占比，保持缺失，不推测供应链角色。
+
+## 四、财务与一致预期
+
+|指标|数值|单位|口径|
+|---|---:|---|---|
+|机构目标价|12.80|元|一致预期，非公司承诺|
+|2026E EPS|1.25|元/股|盘后低频辅助|
+|前十大股东合计|61.20|%|2026-03-31 报告期|
+|收入预测|—|亿元|接口未返回，保持缺失|
+
+## 五、估值
+
+接口未返回历史分位，不输出“低估”或“高估”的精确结论。
+
+## 六、多空推演
+
+- 多头条件与空头条件均需结合后续真实披露继续核验。
+
+## 七、交易边界
+
+本页没有独立结构化风险等级和仓位上限；请进入个股诊断复核。
+
+## 八、风险提示
+
+- 一致预期不等于公司承诺；互动易回复不是法定公告。`
+
+const companySse = (markdown, { complete = true } = {}) => [
+  'data: ' + JSON.stringify({ stage: '正在生成受治理的单公司研究正文…' }),
+  'data: ' + JSON.stringify({ delta: markdown }),
+  ...(complete ? ['data: ' + JSON.stringify({ done: true, truncated: false })] : []),
+  '',
+].join('\n\n')
+
+const reportCenterMarkdown = `# 审计早盘内参
+
+## 一、当前结论
+
+服务端定稿结论：中等风险，只做主线内有承接的确认机会，不追一致加速。
+
+## 二、风险与仓位
+
+- 总仓不超过 50%。
+- 结构化价格条件缺失时保持等待，不以 0 补位。
+
+## 三、证据完整性
+
+|证据项|状态|数据时点|
+|---|---|---|
+|风险快照|完整|2026-07-28 08:50:00|
+|结构化价格条件|缺失|—|
+
+> 本报告正文只作受约束解释，确定性风险与仓位边界来自服务端定格快照。`
+
 const fixtures = {
+  '/api/archive/dates': {
+    ok: true,
+    dates: ['2026-07-28', '2026-07-27', '2026-07-24'],
+  },
+  '/api/reports/morning': {
+    ok: true,
+    schema_version: 'daily-report-v2',
+    rtype: 'morning',
+    date: '2026-07-28',
+    title: '审计早盘内参',
+    content_md: reportCenterMarkdown,
+    content_id: 'report:morning:2026-07-28',
+    content_hash: 'a82be94d0a932b467dac5289f8a1c77b047191787599574b62e1294c0f8dc321',
+    report_version: 1,
+    created_at: '2026-07-28 08:51:12',
+    pushed: true,
+    cockpit: {
+      as_of: '2026-07-28 08:50:00',
+      command: {
+        risk_level: 3,
+        level_name: '中等风险 · 条件参与',
+        today_action: '只做主线内有承接的确认机会，不追一致加速',
+        position_cap: '总仓不超过 50%',
+        first_principle: '先确认风险边界，再验证价格条件',
+        forbid: ['不追一致加速', '价格条件缺失时不新增风险'],
+      },
+    },
+    claim_validation: { ok: true, status: 'passed', errors: [] },
+    advice_governance: { ok: true, status: 'passed', proposal_only: true, errors: [] },
+    input_lineage: { evidence_as_of: '2026-07-28 08:50:00' },
+  },
+  '/api/delivery/receipts': {
+    ok: true,
+    schema_version: 'delivery-receipt.v1',
+    receipts: [{
+      receipt_id: 'dr_audit_report',
+      content_id: 'report:morning:2026-07-28',
+      content_hash: 'a82be94d0a932b467dac5289f8a1c77b047191787599574b62e1294c0f8dc321',
+      channel: 'gateway',
+      attempt: 1,
+      status: 'accepted',
+      attempted_at: '2026-07-22T00:52:00Z',
+      sent_at: '2026-07-22T00:52:01Z',
+      ack_at: null,
+      target_results: [{ target: 'feishu', status: 'accepted' }],
+    }],
+    count: 1,
+    total: 1,
+  },
+  '/api/status': {
+    model_connection: { configured: true, connected: true, status: 'connected' },
+    hermes: { agent_capability: { ready: true, status: 'ready', reason: '' } },
+  },
   '/api/shell-status': {
     ok: true,
     is_trade_day: true,
@@ -940,6 +1132,78 @@ const fixtures = {
     algorithm_ver: 'local-signal-v1',
     events: [{ code: '600123', signal_code: 'MACD_GOLDEN_CROSS', signal_name: 'MACD金叉', timeframe: 'D', event_date: '2026-07-22', metrics: { dif: 0.42, dea: 0.38 }, is_confirmed: true }],
   },
+  '/api/forecast/mining': {
+    ok: true,
+    ts: '2026-07-22 10:31:38',
+    period: '20260630',
+    deadline: '2026-07-15',
+    stats: { '总数': 186, '今日新增': 12, '按类型': { '预增': 96, '扭亏': 31, '略增': 59 }, '掘金池': 2, '陷阱池': 1 },
+    missing: [],
+    items: [
+      { code: '600321', name: '审计预增制造', ann_date: '20260708', type: '预增', p_chg_min: 68, p_chg_max: 82, net_min: 438000000, net_max: 492000000, last_net: 271000000, summary: '主营产品需求增长，订单交付节奏改善。', reason: '主营产品需求增长，订单交付节奏改善。', source: '公开业绩预告', board: '沪主板', mandatory: true, layer: '主动交卷', trap: false, trap_reason: '', nonrec_flag: false, is_new_today: false },
+      { code: '301678', name: '审计自愿科技', ann_date: '20260722', type: '扭亏', p_chg_min: null, p_chg_max: null, net_min: 52000000, net_max: null, last_net: null, summary: '预计实现扭亏，具体同比幅度和上年同期基数未披露。', reason: '产品结构改善并收到政府补助。', source: '公开业绩预告', board: '创业板', mandatory: false, layer: '超期/更正', trap: false, trap_reason: '', nonrec_flag: true, is_new_today: true },
+    ],
+    traps: [
+      { code: '002789', name: '审计低基数股份', ann_date: '20260714', type: '预增', p_chg_min: 1280, p_chg_max: 1360, net_min: 41000000, net_max: 45000000, last_net: 3100000, summary: '上年同期基数较低。', reason: '上年同期基数较低。', source: '公开业绩预告', board: '深主板', mandatory: true, layer: '压哨', trap: true, trap_reason: '同比下限≥1000%，数千倍式高增大多来自极低基数', nonrec_flag: false, is_new_today: false },
+    ],
+  },
+  '/api/stock/000001/research-enrichment': {
+    ok: true,
+    ts: '2026-07-22 19:42:00',
+    code: '000001',
+    scope: 'after_hours_research_only',
+    intraday_score_weight: 0,
+    data_state: 'degraded',
+    missing: ['收入一致预期仅覆盖 2026E'],
+    consensus: {
+      status: 'available', as_of: '20260722', target_price_cny: 12.8,
+      eps_cny: [{ year: 2026, value: 1.25, as_of: '20260722' }],
+      net_profit_yi_cny: [{ year: 2026, value: 468.2, as_of: '20260722' }],
+      revenue_yi_cny: [], roe_pct: [{ year: 2026, value: 11.4, as_of: '20260722' }],
+      coverage: { complete: 4, total: 5 },
+      note: '一致预期仅作盘后辅助，不参与日内评分',
+    },
+    holders_top10: {
+      status: 'available', report_date: '20260331', top10_total_ratio_pct: 61.2,
+      hk_clearing_ratio_pct: null,
+      largest_holder: { rank: 1, name: '审计国有资本运营公司', shares: null, ratio_pct: 49.56 },
+    },
+    gpjy: { status: 'blocked', reason: 'GP字段语义/单位验真失败，不输出疑似精确数字', replacement: [] },
+  },
+  '/api/disclosures/announcements': {
+    ok: true,
+    code: '000001',
+    exchange: 'szse',
+    state: 'complete',
+    verification_state: 'cross_confirmed',
+    used_last_good: false,
+    data_as_of: '2026-07-22',
+    requested_window: { start: '2026-06-22', end: '2026-07-22' },
+    items: [{
+      announcement_id: 'audit-company-report',
+      announcement_date: '2026-07-18',
+      published_at: '2026-07-18',
+      title: '审计公司年度报告',
+      original_url: 'https://disc.static.szse.cn/download/disc/audit-company-report.pdf',
+      source_confirmations: ['cninfo', 'szse'],
+    }],
+    degraded_reasons: [],
+  },
+  '/api/interactions/management': {
+    ok: true,
+    code: '000001',
+    state: 'complete',
+    data_as_of: '2026-07-22',
+    is_formal_disclosure: false,
+    items: [{
+      question: '年度经营目标的执行进度如何？',
+      question_pub_date: '2026-07-20T09:18:00+08:00',
+      answered: true,
+      answer: '公司按已披露的年度经营计划推进，具体经营结果以定期报告为准。',
+      answer_pub_date: '2026-07-21T15:06:00+08:00',
+    }],
+    degraded_reasons: [],
+  },
 }
 
 const viewports = [
@@ -965,6 +1229,10 @@ const auditedPages = [
   { name: 'diagnosis', hash: '#/research?tab=diagnosis&code=600519', titleSelector: '#diagnosis-page-title' },
   { name: 'screener', hash: '#/research?tab=screener', titleSelector: '#screener-page-title' },
   { name: 'technical-screener', hash: '#/research?tab=technical-screener', titleSelector: '#technical-screener-page-title' },
+  { name: 'forecast-mining', hash: '#/research?tab=events', titleSelector: '#forecast-page-title' },
+  { name: 'industry-chain', hash: '#/research?tab=chain', titleSelector: '#industry-chain-page-title' },
+  { name: 'company-research', hash: '#/research?tab=company', titleSelector: '#company-page-title' },
+  { name: 'reports', hash: '#/history?tab=reports', titleSelector: '#report-center-page-title' },
 ]
 
 await mkdir(outputDir, { recursive: true })
@@ -2537,6 +2805,585 @@ try {
   })
   await technicalScreenerFailurePage.close()
 
+  const forecastLoadingPage = await browser.newPage({ viewport: { width: 375, height: 812 }, deviceScaleFactor: 1 })
+  const forecastLoadingErrors = []
+  forecastLoadingPage.on('pageerror', (error) => forecastLoadingErrors.push(error.message))
+  await forecastLoadingPage.addInitScript(() => localStorage.setItem('wudi-vue-theme', 'dark'))
+  await forecastLoadingPage.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    if (path === '/api/forecast/mining') await new Promise((resolveDelay) => setTimeout(resolveDelay, 1800))
+    const body = fixtures[path]
+    return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
+  })
+  await forecastLoadingPage.goto('http://127.0.0.1:4175/#/research?tab=events', { waitUntil: 'domcontentloaded' })
+  await forecastLoadingPage.waitForSelector('.forecast-loading')
+  await forecastLoadingPage.addScriptTag({ content: axeSource })
+  const forecastLoadingState = await forecastLoadingPage.evaluate(() => ({
+    loadingVisible: Boolean(document.querySelector('.forecast-loading')),
+    titleVisible: document.body.innerText.includes('业绩预告掘金'),
+    refreshDisabled: Boolean(document.querySelector('.refresh-button')?.disabled),
+    fixtureAbsent: !document.body.innerText.includes('审计预增制造'),
+    noPageOverflow: document.documentElement.scrollWidth <= window.innerWidth,
+  }))
+  const forecastLoadingAxe = await forecastLoadingPage.evaluate(async () => window.axe.run(document, {
+    runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+  }))
+  await forecastLoadingPage.screenshot({ path: resolve(outputDir, 'forecast-loading-375.png'), fullPage: true })
+  report.push({
+    page: 'forecast-mining', scenario: 'loading', forecastLoadingState,
+    forecastLoadingStateComplete: Object.values(forecastLoadingState).every(Boolean),
+    pageErrors: forecastLoadingErrors,
+    violations: forecastLoadingAxe.violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help, nodes: item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })),
+  })
+  await forecastLoadingPage.close()
+
+  const forecastEmptyPage = await browser.newPage({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 1 })
+  const forecastEmptyErrors = []
+  forecastEmptyPage.on('pageerror', (error) => forecastEmptyErrors.push(error.message))
+  await forecastEmptyPage.addInitScript(() => localStorage.setItem('wudi-vue-theme', 'dark'))
+  await forecastEmptyPage.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    const body = path === '/api/forecast/mining'
+      ? { ...fixtures[path], stats: { '总数': 0, '今日新增': 0, '按类型': {}, '掘金池': 0, '陷阱池': 0 }, items: [], traps: [], missing: [] }
+      : fixtures[path]
+    return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
+  })
+  await forecastEmptyPage.goto('http://127.0.0.1:4175/#/research?tab=events', { waitUntil: 'networkidle' })
+  await forecastEmptyPage.waitForSelector('.forecast-empty')
+  await forecastEmptyPage.addScriptTag({ content: axeSource })
+  const forecastEmptyState = await forecastEmptyPage.evaluate(() => ({
+    trueEmpty: document.body.innerText.includes('接口成功返回 `items=[]` 与 `traps=[]`'),
+    noFixtureStocks: !document.querySelector('.forecast-stock-link'),
+    unavailableAbsent: !document.body.innerText.includes('榜单暂不可用'),
+    nativeRetry: document.querySelector('.forecast-empty button')?.tagName === 'BUTTON',
+    noPageOverflow: document.documentElement.scrollWidth <= window.innerWidth,
+  }))
+  const forecastEmptyAxe = await forecastEmptyPage.evaluate(async () => window.axe.run(document, {
+    runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+  }))
+  await forecastEmptyPage.screenshot({ path: resolve(outputDir, 'forecast-empty-1440.png'), fullPage: true })
+  report.push({
+    page: 'forecast-mining', scenario: 'empty', forecastEmptyState,
+    forecastEmptyStateComplete: Object.values(forecastEmptyState).every(Boolean),
+    pageErrors: forecastEmptyErrors,
+    violations: forecastEmptyAxe.violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help, nodes: item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })),
+  })
+  await forecastEmptyPage.close()
+
+  const forecastFailurePage = await browser.newPage({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 1 })
+  const forecastFailureErrors = []
+  let forecastCalls = 0
+  forecastFailurePage.on('pageerror', (error) => forecastFailureErrors.push(error.message))
+  await forecastFailurePage.addInitScript(() => localStorage.setItem('wudi-vue-theme', 'dark'))
+  await forecastFailurePage.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    if (path === '/api/forecast/mining') {
+      forecastCalls += 1
+      if (forecastCalls > 1) return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: '审计场景：公开业绩预告源暂不可达' }) })
+    }
+    const body = fixtures[path]
+    return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
+  })
+  await forecastFailurePage.goto('http://127.0.0.1:4175/#/research?tab=events', { waitUntil: 'networkidle' })
+  await forecastFailurePage.waitForSelector('.forecast-table')
+  const forecastTypeFilter = forecastFailurePage.locator('.forecast-type-filter', { hasText: '扭亏' })
+  await forecastTypeFilter.click()
+  await forecastFailurePage.waitForFunction(() => document.querySelectorAll('.forecast-table tbody tr').length === 1)
+  await forecastFailurePage.locator('#forecast-code-search').fill('301678')
+  const forecastFilterState = await forecastFailurePage.evaluate(() => ({
+    typeFilter: document.querySelectorAll('.forecast-table tbody tr').length === 1
+      && document.querySelector('.forecast-table tbody tr')?.textContent?.includes('审计自愿科技'),
+    codeFilter: document.querySelector('#forecast-code-search')?.value === '301678'
+      && document.querySelectorAll('.forecast-table tbody tr').length === 1,
+    activeTypeAnnounced: document.querySelector('.forecast-type-filter[aria-pressed="true"]')?.textContent?.includes('扭亏'),
+  }))
+  await forecastTypeFilter.click()
+  await forecastFailurePage.locator('#forecast-code-search').fill('')
+  await forecastFailurePage.waitForFunction(() => document.querySelectorAll('.forecast-table tbody tr').length === 2)
+  await forecastFailurePage.locator('.refresh-button').click()
+  await forecastFailurePage.waitForSelector('.forecast-alert')
+  await forecastFailurePage.addScriptTag({ content: axeSource })
+  const forecastFailureDetails = await forecastFailurePage.evaluate(() => {
+    const secondRow = document.querySelector('.forecast-table tbody tr:nth-child(2)')?.textContent || ''
+    return {
+      localFailure: document.body.innerText.includes('最新刷新失败，保留已加载榜单') && document.body.innerText.includes('公开业绩预告源暂不可达'),
+      resultsSurvive: document.querySelectorAll('.forecast-table tbody tr').length === 2,
+      missingPreserved: secondRow.includes('—') && !secondRow.includes('0%') && !secondRow.includes('0 元'),
+      realDiagnosisLink: document.querySelector('.forecast-stock-link')?.tagName === 'A',
+      tableContained: document.querySelector('.forecast-table-wrap')?.scrollWidth >= document.querySelector('.forecast-table-wrap')?.clientWidth,
+      noPageOverflow: document.documentElement.scrollWidth <= window.innerWidth,
+    }
+  })
+  const forecastFailureState = { ...forecastFilterState, ...forecastFailureDetails }
+  const forecastFailureAxe = await forecastFailurePage.evaluate(async () => window.axe.run(document, {
+    runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+  }))
+  await forecastFailurePage.screenshot({ path: resolve(outputDir, 'forecast-partial-failure-1440.png'), fullPage: true })
+  report.push({
+    page: 'forecast-mining', scenario: 'partial-failure', forecastFailureState,
+    forecastFailureStateComplete: Object.values(forecastFailureState).every(Boolean),
+    pageErrors: forecastFailureErrors,
+    violations: forecastFailureAxe.violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help, nodes: item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })),
+  })
+  await forecastFailurePage.close()
+
+  for (const variant of [
+    { name: '375-dark', width: 375, height: 812, theme: 'dark' },
+    { name: '1440-dark', width: 1440, height: 1000, theme: 'dark' },
+    { name: '1440-light', width: 1440, height: 1000, theme: 'light' },
+  ]) {
+    const chainPage = await browser.newPage({ viewport: { width: variant.width, height: variant.height }, deviceScaleFactor: 1 })
+    const chainErrors = []
+    chainPage.on('pageerror', (error) => chainErrors.push(error.message))
+    await chainPage.addInitScript((theme) => localStorage.setItem('wudi-vue-theme', theme), variant.theme)
+    await chainPage.route('**/api/**', async (route) => {
+      const url = new URL(route.request().url())
+      if (url.pathname === '/api/chat' && route.request().method() === 'POST') {
+        return route.fulfill({ status: 200, contentType: 'text/event-stream; charset=utf-8', body: chainSse(industryChainMarkdown) })
+      }
+      if (url.pathname === '/api/knowledge' && route.request().method() === 'POST') {
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, id: 'audit-chain-note' }) })
+      }
+      const body = fixtures[url.pathname]
+      return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
+    })
+    await chainPage.goto('http://127.0.0.1:4175/#/research?tab=chain', { waitUntil: 'networkidle' })
+    await chainPage.locator('#industry-chain-input').fill('光模块')
+    await chainPage.locator('.chain-form .primary-button').click()
+    await chainPage.waitForSelector('.chain-company-links a')
+    if (variant.name === '1440-dark') {
+      await chainPage.locator('.chain-document__actions .primary-button').click()
+      await chainPage.waitForSelector('.chain-save-feedback .is-success')
+    }
+    await chainPage.addScriptTag({ content: axeSource })
+    const chainCompleteState = await chainPage.evaluate((expectedTheme) => {
+      const targets = [...document.querySelectorAll('.industry-chain-page button, .industry-chain-page a')]
+        .filter((node) => {
+          const rect = node.getBoundingClientRect()
+          const style = getComputedStyle(node)
+          return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0
+        })
+        .map((node) => {
+          const rect = node.getBoundingClientRect()
+          return { width: rect.width, height: rect.height }
+        })
+      const table = document.querySelector('.chain-document .report-table-wrap')
+      return {
+        titleVisible: document.body.innerText.includes('产业链研究'),
+        conclusionVisible: document.body.innerText.includes('产业结论：已用 TDX 验证'),
+        tradeBoundaryVisible: document.body.innerText.includes('当前是否可交易、价格、仓位和风险必须另用当时实时行情与风险闸复核'),
+        realCompanyLinks: document.querySelectorAll('.chain-company-links a[href*="tab=diagnosis&code="]').length === 2,
+        semanticForm: document.querySelector('.chain-form')?.tagName === 'FORM',
+        nativeActions: [...document.querySelectorAll('.chain-document__actions button')].every((node) => node.tagName === 'BUTTON'),
+        tableContained: Boolean(table && table.scrollWidth >= table.clientWidth),
+        noPageOverflow: document.documentElement.scrollWidth <= window.innerWidth,
+        targetsAtLeast44: targets.every((target) => target.width >= 44 && target.height >= 44),
+        themeApplied: document.documentElement.dataset.theme === expectedTheme,
+        missingPreserved: document.body.innerText.includes('—') && !document.body.innerText.includes('0.00%'),
+      }
+    }, variant.theme)
+    const chainAxe = await chainPage.evaluate(async () => window.axe.run(document, {
+      runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+    }))
+    await chainPage.screenshot({ path: resolve(outputDir, `industry-chain-complete-${variant.name}.png`), fullPage: true })
+    report.push({
+      page: 'industry-chain', scenario: `complete-${variant.name}`, chainCompleteState,
+      industryChainCompleteStateComplete: Object.values(chainCompleteState).every(Boolean),
+      pageErrors: chainErrors,
+      violations: chainAxe.violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help, nodes: item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })),
+    })
+    await chainPage.close()
+  }
+
+  const chainLoadingPage = await browser.newPage({ viewport: { width: 375, height: 812 }, deviceScaleFactor: 1 })
+  const chainLoadingErrors = []
+  chainLoadingPage.on('pageerror', (error) => chainLoadingErrors.push(error.message))
+  await chainLoadingPage.addInitScript(() => localStorage.setItem('wudi-vue-theme', 'dark'))
+  await chainLoadingPage.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    if (path === '/api/chat') {
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 1800))
+      return route.fulfill({ status: 200, contentType: 'text/event-stream; charset=utf-8', body: chainSse(industryChainMarkdown) })
+    }
+    const body = fixtures[path]
+    return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
+  })
+  await chainLoadingPage.goto('http://127.0.0.1:4175/#/research?tab=chain', { waitUntil: 'networkidle' })
+  await chainLoadingPage.locator('#industry-chain-input').fill('光模块')
+  await chainLoadingPage.locator('.chain-form .primary-button').click()
+  await chainLoadingPage.waitForSelector('.chain-progress')
+  await chainLoadingPage.addScriptTag({ content: axeSource })
+  const chainLoadingState = await chainLoadingPage.evaluate(() => ({
+    loadingVisible: Boolean(document.querySelector('.chain-progress')),
+    stopNative: document.querySelector('.chain-form .danger-button')?.tagName === 'BUTTON',
+    conclusionDeferred: document.body.innerText.includes('正在建立证据底座，暂不形成结论'),
+    fixtureAbsent: !document.body.innerText.includes('审计光通信甲'),
+    refreshDisabled: Boolean(document.querySelector('.refresh-button')?.disabled),
+    noPageOverflow: document.documentElement.scrollWidth <= window.innerWidth,
+  }))
+  const chainLoadingAxe = await chainLoadingPage.evaluate(async () => window.axe.run(document, {
+    runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+  }))
+  await chainLoadingPage.screenshot({ path: resolve(outputDir, 'industry-chain-loading-375-dark.png'), fullPage: true })
+  report.push({
+    page: 'industry-chain', scenario: 'loading', chainLoadingState,
+    industryChainLoadingStateComplete: Object.values(chainLoadingState).every(Boolean),
+    pageErrors: chainLoadingErrors,
+    violations: chainLoadingAxe.violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help, nodes: item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })),
+  })
+  await chainLoadingPage.close()
+
+  const chainEmptyPage = await browser.newPage({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 1 })
+  const chainEmptyErrors = []
+  chainEmptyPage.on('pageerror', (error) => chainEmptyErrors.push(error.message))
+  await chainEmptyPage.addInitScript(() => localStorage.setItem('wudi-vue-theme', 'dark'))
+  await chainEmptyPage.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    if (path === '/api/chat') return route.fulfill({ status: 200, contentType: 'text/event-stream; charset=utf-8', body: chainSse(emptyIndustryChainMarkdown) })
+    const body = fixtures[path]
+    return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
+  })
+  await chainEmptyPage.goto('http://127.0.0.1:4175/#/research?tab=chain', { waitUntil: 'networkidle' })
+  await chainEmptyPage.locator('#industry-chain-input').fill('未匹配产业')
+  await chainEmptyPage.locator('.chain-form .primary-button').click()
+  await chainEmptyPage.waitForSelector('.chain-true-empty')
+  await chainEmptyPage.addScriptTag({ content: axeSource })
+  const chainEmptyState = await chainEmptyPage.evaluate(() => ({
+    trueEmpty: document.body.innerText.includes('真实空结果：TDX 板块或成分关系未匹配'),
+    noCompanyLinks: !document.querySelector('.chain-company-links a'),
+    noInventedZero: !document.body.innerText.includes('0.00%') && !document.body.innerText.includes('0 元'),
+    missingTimeVisible: document.body.innerText.includes('板块目录 缺失'),
+    noPageOverflow: document.documentElement.scrollWidth <= window.innerWidth,
+  }))
+  const chainEmptyAxe = await chainEmptyPage.evaluate(async () => window.axe.run(document, {
+    runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+  }))
+  await chainEmptyPage.screenshot({ path: resolve(outputDir, 'industry-chain-empty-1440-dark.png'), fullPage: true })
+  report.push({
+    page: 'industry-chain', scenario: 'empty', chainEmptyState,
+    industryChainEmptyStateComplete: Object.values(chainEmptyState).every(Boolean),
+    pageErrors: chainEmptyErrors,
+    violations: chainEmptyAxe.violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help, nodes: item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })),
+  })
+  await chainEmptyPage.close()
+
+  const chainFailurePage = await browser.newPage({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 1 })
+  const chainFailureErrors = []
+  chainFailurePage.on('pageerror', (error) => chainFailureErrors.push(error.message))
+  await chainFailurePage.addInitScript(() => localStorage.setItem('wudi-vue-theme', 'dark'))
+  await chainFailurePage.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    if (path === '/api/chat') return route.fulfill({ status: 200, contentType: 'text/event-stream; charset=utf-8', body: chainSse(industryChainMarkdown.slice(0, 760), { complete: false }) })
+    const body = fixtures[path]
+    return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
+  })
+  await chainFailurePage.goto('http://127.0.0.1:4175/#/research?tab=chain', { waitUntil: 'networkidle' })
+  await chainFailurePage.locator('#industry-chain-input').fill('光模块')
+  await chainFailurePage.locator('.chain-form .primary-button').click()
+  await chainFailurePage.waitForSelector('.chain-quarantine')
+  await chainFailurePage.addScriptTag({ content: axeSource })
+  const chainFailureState = await chainFailurePage.evaluate(() => ({
+    partialIsolated: document.body.innerText.includes('不完整输出 · 已隔离 · 不可存入知识库'),
+    localFailureExplained: document.body.innerText.includes('研究流未完整结束'),
+    partialContentVisible: document.body.innerText.includes('产业结论'),
+    saveUnavailable: !document.querySelector('.chain-document__actions .primary-button'),
+    shellSurvives: Boolean(document.querySelector('.topbar')),
+    noPageOverflow: document.documentElement.scrollWidth <= window.innerWidth,
+  }))
+  const chainFailureAxe = await chainFailurePage.evaluate(async () => window.axe.run(document, {
+    runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+  }))
+  await chainFailurePage.screenshot({ path: resolve(outputDir, 'industry-chain-partial-failure-1440-dark.png'), fullPage: true })
+  report.push({
+    page: 'industry-chain', scenario: 'partial-failure', chainFailureState,
+    industryChainFailureStateComplete: Object.values(chainFailureState).every(Boolean),
+    pageErrors: chainFailureErrors,
+    violations: chainFailureAxe.violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help, nodes: item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })),
+  })
+  await chainFailurePage.close()
+
+  for (const variant of [
+    { name: '375-dark', width: 375, height: 812, theme: 'dark' },
+    { name: '1440-dark', width: 1440, height: 1000, theme: 'dark' },
+    { name: '1440-light', width: 1440, height: 1000, theme: 'light' },
+  ]) {
+    const companyPage = await browser.newPage({ viewport: { width: variant.width, height: variant.height }, deviceScaleFactor: 1 })
+    const companyErrors = []
+    companyPage.on('pageerror', (error) => companyErrors.push(error.message))
+    await companyPage.addInitScript((theme) => localStorage.setItem('wudi-vue-theme', theme), variant.theme)
+    await companyPage.route('**/api/**', async (route) => {
+      const url = new URL(route.request().url())
+      if (url.pathname === '/api/chat' && route.request().method() === 'POST') {
+        return route.fulfill({ status: 200, contentType: 'text/event-stream; charset=utf-8', body: companySse(companyResearchMarkdown) })
+      }
+      if (url.pathname === '/api/knowledge' && route.request().method() === 'POST') {
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, id: 'audit-company-note' }) })
+      }
+      const body = fixtures[url.pathname]
+      return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
+    })
+    await companyPage.goto('http://127.0.0.1:4175/#/research?tab=company', { waitUntil: 'networkidle' })
+    await companyPage.locator('#company-research-code').fill('000001')
+    await companyPage.locator('.company-form .primary-button').click()
+    await companyPage.waitForSelector('.company-report__body')
+    await companyPage.getByText('审计公司年度报告', { exact: true }).first().waitFor()
+    if (variant.name === '1440-dark') {
+      await companyPage.locator('.company-report__actions .primary-button').click()
+      await companyPage.waitForSelector('.company-save-feedback .is-success')
+    }
+    await companyPage.evaluate(() => window.scrollTo(0, 0))
+    await companyPage.addScriptTag({ content: axeSource })
+    const companyCompleteState = await companyPage.evaluate((expectedTheme) => {
+      const targets = [...document.querySelectorAll('.company-research-page button, .company-research-page a')]
+        .filter((node) => {
+          const rect = node.getBoundingClientRect()
+          const style = getComputedStyle(node)
+          return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0
+        })
+        .map((node) => {
+          const rect = node.getBoundingClientRect()
+          return { width: rect.width, height: rect.height }
+        })
+      const table = document.querySelector('.company-report .report-table-wrap')
+      return {
+        titleVisible: document.body.innerText.includes('公司研究'),
+        reportVisible: document.body.innerText.includes('审计公司（000001）深度研究'),
+        officialEvidenceVisible: document.body.innerText.includes('审计公司年度报告'),
+        managementReplySeparated: document.body.innerText.includes('投资者提问') && document.body.innerText.includes('管理层回复'),
+        deterministicBoundaryVisible: document.body.innerText.includes('本页接口未独立提供，不从报告文本推导'),
+        realDiagnosisLink: Boolean(document.querySelector('a[href*="tab=diagnosis&code=000001"]')),
+        safeOfficialLink: Boolean(document.querySelector('a[href^="https://disc.static.szse.cn/"][rel="noopener noreferrer"]')),
+        semanticForm: document.querySelector('.company-form')?.tagName === 'FORM',
+        nativeActions: [...document.querySelectorAll('.company-report__actions button')].every((node) => node.tagName === 'BUTTON'),
+        tableContained: Boolean(table && table.scrollWidth >= table.clientWidth),
+        noPageOverflow: document.documentElement.scrollWidth <= window.innerWidth,
+        targetsAtLeast44: targets.every((target) => target.width >= 44 && target.height >= 44),
+        themeApplied: document.documentElement.dataset.theme === expectedTheme,
+        missingPreserved: document.body.innerText.includes('—') && !document.body.innerText.includes('0.00%'),
+      }
+    }, variant.theme)
+    const companyAxe = await companyPage.evaluate(async () => window.axe.run(document, {
+      runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+    }))
+    await companyPage.screenshot({ path: resolve(outputDir, `company-research-complete-${variant.name}.png`), fullPage: true })
+    report.push({
+      page: 'company-research', scenario: `complete-${variant.name}`, companyCompleteState,
+      companyResearchCompleteStateComplete: Object.values(companyCompleteState).every(Boolean),
+      pageErrors: companyErrors,
+      violations: companyAxe.violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help, nodes: item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })),
+    })
+    await companyPage.close()
+  }
+
+  const companyLoadingPage = await browser.newPage({ viewport: { width: 375, height: 812 }, deviceScaleFactor: 1 })
+  const companyLoadingErrors = []
+  companyLoadingPage.on('pageerror', (error) => companyLoadingErrors.push(error.message))
+  await companyLoadingPage.addInitScript(() => localStorage.setItem('wudi-vue-theme', 'dark'))
+  await companyLoadingPage.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    if (path === '/api/chat') {
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 1800))
+      return route.fulfill({ status: 200, contentType: 'text/event-stream; charset=utf-8', body: companySse(companyResearchMarkdown) })
+    }
+    const body = fixtures[path]
+    return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
+  })
+  await companyLoadingPage.goto('http://127.0.0.1:4175/#/research?tab=company', { waitUntil: 'networkidle' })
+  await companyLoadingPage.locator('#company-research-code').fill('000001')
+  await companyLoadingPage.locator('.company-form .primary-button').click()
+  await companyLoadingPage.waitForSelector('.company-progress')
+  await companyLoadingPage.addScriptTag({ content: axeSource })
+  const companyLoadingState = await companyLoadingPage.evaluate(() => ({
+    loadingVisible: Boolean(document.querySelector('.company-progress')),
+    stopNative: document.querySelector('.company-form .danger-button')?.tagName === 'BUTTON',
+    conclusionDeferred: document.body.innerText.includes('暂不形成新结论'),
+    fixtureReportAbsent: !document.body.innerText.includes('审计公司（000001）深度研究'),
+    refreshDisabled: Boolean(document.querySelector('.refresh-button')?.disabled),
+    noPageOverflow: document.documentElement.scrollWidth <= window.innerWidth,
+  }))
+  const companyLoadingAxe = await companyLoadingPage.evaluate(async () => window.axe.run(document, {
+    runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+  }))
+  await companyLoadingPage.screenshot({ path: resolve(outputDir, 'company-research-loading-375-dark.png'), fullPage: true })
+  report.push({
+    page: 'company-research', scenario: 'loading', companyLoadingState,
+    companyResearchLoadingStateComplete: Object.values(companyLoadingState).every(Boolean),
+    pageErrors: companyLoadingErrors,
+    violations: companyLoadingAxe.violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help, nodes: item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })),
+  })
+  await companyLoadingPage.close()
+
+  const companyEmptyPage = await browser.newPage({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 1 })
+  const companyEmptyErrors = []
+  companyEmptyPage.on('pageerror', (error) => companyEmptyErrors.push(error.message))
+  await companyEmptyPage.addInitScript(() => localStorage.setItem('wudi-vue-theme', 'dark'))
+  await companyEmptyPage.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    if (path === '/api/status') return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ model_connection: { configured: false, connected: null }, hermes: { agent_capability: { ready: false, reason: '审计场景：模型未配置' } } }) })
+    if (path === '/api/stock/000001/research-enrichment') return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: false, ts: '2026-07-22 19:42:00', code: '000001', data_state: 'missing', missing: ['该股无非零机构预测', '该股无有效十大股东报告期'], consensus: { status: 'missing', target_price_cny: null, eps_cny: [] }, holders_top10: { status: 'missing', report_date: null, top10_total_ratio_pct: null, largest_holder: null }, gpjy: { status: 'blocked', reason: '字段语义与单位待核验' } }) })
+    if (path === '/api/disclosures/announcements') return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, code: '000001', exchange: 'szse', state: 'complete', verification_state: 'empty_confirmed', used_last_good: false, data_as_of: '2026-07-22', requested_window: { start: '2026-06-22', end: '2026-07-22' }, items: [] }) })
+    if (path === '/api/interactions/management') return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, code: '000001', state: 'complete_empty', data_as_of: '2026-07-22', is_formal_disclosure: false, items: [] }) })
+    const body = fixtures[path]
+    return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
+  })
+  await companyEmptyPage.goto('http://127.0.0.1:4175/#/research?tab=company', { waitUntil: 'networkidle' })
+  await companyEmptyPage.locator('#company-research-code').fill('000001')
+  await companyEmptyPage.locator('.company-form .primary-button').click()
+  await companyEmptyPage.getByText('双目录空结果已核对', { exact: true }).waitFor()
+  await companyEmptyPage.addScriptTag({ content: axeSource })
+  const companyEmptyState = await companyEmptyPage.evaluate(() => ({
+    disclosureTrueEmpty: document.body.innerText.includes('查询窗口内未发现公告'),
+    interactionTrueEmpty: document.body.innerText.includes('查询窗口内暂无公开互动问答'),
+    enrichmentMissing: document.body.innerText.includes('该股无非零机构预测'),
+    reportAbsent: document.body.innerText.includes('本轮没有形成研究正文'),
+    noInventedZero: !document.body.innerText.includes('0.00%') && !document.body.innerText.includes('0 元'),
+    noPageOverflow: document.documentElement.scrollWidth <= window.innerWidth,
+  }))
+  const companyEmptyAxe = await companyEmptyPage.evaluate(async () => window.axe.run(document, {
+    runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+  }))
+  await companyEmptyPage.screenshot({ path: resolve(outputDir, 'company-research-empty-1440-dark.png'), fullPage: true })
+  report.push({
+    page: 'company-research', scenario: 'empty', companyEmptyState,
+    companyResearchEmptyStateComplete: Object.values(companyEmptyState).every(Boolean),
+    pageErrors: companyEmptyErrors,
+    violations: companyEmptyAxe.violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help, nodes: item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })),
+  })
+  await companyEmptyPage.close()
+
+  const companyFailurePage = await browser.newPage({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 1 })
+  const companyFailureErrors = []
+  companyFailurePage.on('pageerror', (error) => companyFailureErrors.push(error.message))
+  await companyFailurePage.addInitScript(() => localStorage.setItem('wudi-vue-theme', 'dark'))
+  await companyFailurePage.route('**/api/**', async (route) => {
+    const url = new URL(route.request().url())
+    if (url.pathname === '/api/chat') return route.fulfill({ status: 200, contentType: 'text/event-stream; charset=utf-8', body: companySse(companyResearchMarkdown) })
+    if (url.pathname === '/api/disclosures/announcements') return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: '审计场景：公告链路暂不可用' }) })
+    const body = fixtures[url.pathname]
+    return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
+  })
+  await companyFailurePage.goto('http://127.0.0.1:4175/#/research?tab=company', { waitUntil: 'networkidle' })
+  await companyFailurePage.locator('#company-research-code').fill('000001')
+  await companyFailurePage.locator('.company-form .primary-button').click()
+  await companyFailurePage.waitForSelector('.company-report__body')
+  await companyFailurePage.getByText('当前无法读取官方公告', { exact: true }).waitFor()
+  await companyFailurePage.addScriptTag({ content: axeSource })
+  const companyFailureState = await companyFailurePage.evaluate(() => ({
+    localFailureExplained: document.body.innerText.includes('审计场景：公告链路暂不可用'),
+    cannotClaimEmpty: document.body.innerText.includes('不能据此判断查询窗口内“无公告”'),
+    reportSurvives: document.body.innerText.includes('审计公司（000001）深度研究'),
+    otherEvidenceSurvives: document.body.innerText.includes('年度经营目标的执行进度如何'),
+    shellSurvives: Boolean(document.querySelector('.topbar')),
+    noPageOverflow: document.documentElement.scrollWidth <= window.innerWidth,
+  }))
+  const companyFailureAxe = await companyFailurePage.evaluate(async () => window.axe.run(document, {
+    runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+  }))
+  await companyFailurePage.screenshot({ path: resolve(outputDir, 'company-research-partial-failure-1440-dark.png'), fullPage: true })
+  report.push({
+    page: 'company-research', scenario: 'partial-failure', companyFailureState,
+    companyResearchFailureStateComplete: Object.values(companyFailureState).every(Boolean),
+    pageErrors: companyFailureErrors,
+    violations: companyFailureAxe.violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help, nodes: item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })),
+  })
+  await companyFailurePage.close()
+
+  const reportsLoadingPage = await browser.newPage({ viewport: { width: 375, height: 812 }, deviceScaleFactor: 1 })
+  const reportsLoadingErrors = []
+  reportsLoadingPage.on('pageerror', (error) => reportsLoadingErrors.push(error.message))
+  await reportsLoadingPage.addInitScript(() => localStorage.setItem('wudi-vue-theme', 'dark'))
+  await reportsLoadingPage.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    if (['/api/archive/dates', '/api/reports/morning', '/api/delivery/receipts'].includes(path)) {
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 1800))
+    }
+    const body = fixtures[path]
+    return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
+  })
+  await reportsLoadingPage.goto('http://127.0.0.1:4175/#/history?tab=reports', { waitUntil: 'domcontentloaded' })
+  await reportsLoadingPage.waitForSelector('.report-center-loading')
+  await reportsLoadingPage.addScriptTag({ content: axeSource })
+  const reportsLoadingState = await reportsLoadingPage.evaluate(() => ({
+    skeletonsVisible: document.querySelectorAll('.report-center-loading .skeleton-block').length === 2,
+    shellSurvives: Boolean(document.querySelector('.topbar')),
+    noPageOverflow: document.documentElement.scrollWidth <= window.innerWidth,
+  }))
+  const reportsLoadingAxe = await reportsLoadingPage.evaluate(async () => window.axe.run(document, {
+    runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+  }))
+  await reportsLoadingPage.screenshot({ path: resolve(outputDir, 'reports-loading-375-dark.png'), fullPage: true })
+  report.push({
+    page: 'reports', scenario: 'reports-loading-375', reportsLoadingState,
+    reportsLoadingStateComplete: Object.values(reportsLoadingState).every(Boolean),
+    pageErrors: reportsLoadingErrors,
+    violations: reportsLoadingAxe.violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help, nodes: item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })),
+  })
+  await reportsLoadingPage.close()
+
+  const reportsEmptyPage = await browser.newPage({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 1 })
+  const reportsEmptyErrors = []
+  reportsEmptyPage.on('pageerror', (error) => reportsEmptyErrors.push(error.message))
+  await reportsEmptyPage.addInitScript(() => localStorage.setItem('wudi-vue-theme', 'dark'))
+  await reportsEmptyPage.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    const body = path === '/api/reports/morning'
+      ? { ok: false, error: '该日期无此报告' }
+      : fixtures[path]
+    return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
+  })
+  await reportsEmptyPage.goto('http://127.0.0.1:4175/#/history?tab=reports', { waitUntil: 'networkidle' })
+  await reportsEmptyPage.addScriptTag({ content: axeSource })
+  const reportsEmptyState = await reportsEmptyPage.evaluate(() => ({
+    emptyExplained: document.body.innerText.includes('暂无「早盘内参」') && document.body.innerText.includes('该日期无此报告'),
+    generationAvailable: Boolean([...document.querySelectorAll('button')].find((node) => node.textContent?.includes('生成今日报告'))),
+    noExampleNumbers: !document.body.innerText.includes('审计早盘内参'),
+    noPageOverflow: document.documentElement.scrollWidth <= window.innerWidth,
+  }))
+  const reportsEmptyAxe = await reportsEmptyPage.evaluate(async () => window.axe.run(document, {
+    runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+  }))
+  await reportsEmptyPage.screenshot({ path: resolve(outputDir, 'reports-empty-1440-dark.png'), fullPage: true })
+  report.push({
+    page: 'reports', scenario: 'reports-empty-1440', reportsEmptyState,
+    reportsEmptyStateComplete: Object.values(reportsEmptyState).every(Boolean),
+    pageErrors: reportsEmptyErrors,
+    violations: reportsEmptyAxe.violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help, nodes: item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })),
+  })
+  await reportsEmptyPage.close()
+
+  const reportsFailurePage = await browser.newPage({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 1 })
+  const reportsFailureErrors = []
+  reportsFailurePage.on('pageerror', (error) => reportsFailureErrors.push(error.message))
+  await reportsFailurePage.addInitScript(() => localStorage.setItem('wudi-vue-theme', 'dark'))
+  await reportsFailurePage.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    if (path === '/api/archive/dates' || path === '/api/delivery/receipts') {
+      return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: '审计场景：局部链路暂不可用' }) })
+    }
+    const body = fixtures[path]
+    return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
+  })
+  await reportsFailurePage.goto('http://127.0.0.1:4175/#/history?tab=reports', { waitUntil: 'networkidle' })
+  await reportsFailurePage.addScriptTag({ content: axeSource })
+  const reportsFailureState = await reportsFailurePage.evaluate(() => ({
+    reportSurvives: document.body.innerText.includes('审计早盘内参'),
+    historyFailureExplained: document.body.innerText.includes('历史日期读取失败'),
+    receiptFailureExplained: document.body.innerText.includes('回执读取失败'),
+    deliveryNotOverstated: document.body.innerText.includes('历史推送记录') && document.body.innerText.includes('未提供平台接受或送达层级'),
+    noPageOverflow: document.documentElement.scrollWidth <= window.innerWidth,
+  }))
+  const reportsFailureAxe = await reportsFailurePage.evaluate(async () => window.axe.run(document, {
+    runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+  }))
+  await reportsFailurePage.screenshot({ path: resolve(outputDir, 'reports-partial-failure-1440-dark.png'), fullPage: true })
+  report.push({
+    page: 'reports', scenario: 'reports-partial-failure-1440', reportsFailureState,
+    reportsFailureStateComplete: Object.values(reportsFailureState).every(Boolean),
+    pageErrors: reportsFailureErrors,
+    violations: reportsFailureAxe.violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help, nodes: item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })),
+  })
+  await reportsFailurePage.close()
+
   const missingPage = await browser.newPage({ viewport: { width: 375, height: 812 } })
   const missingPageErrors = []
   missingPage.on('pageerror', (error) => missingPageErrors.push(error.message))
@@ -2635,6 +3482,20 @@ const failed = report.some((item) =>
   || item.technicalScreenerLoadingStateComplete === false
   || item.technicalScreenerEmptyStateComplete === false
   || item.technicalScreenerFailureStateComplete === false
+  || item.forecastLoadingStateComplete === false
+  || item.forecastEmptyStateComplete === false
+  || item.forecastFailureStateComplete === false
+  || item.industryChainCompleteStateComplete === false
+  || item.industryChainLoadingStateComplete === false
+  || item.industryChainEmptyStateComplete === false
+  || item.industryChainFailureStateComplete === false
+  || item.companyResearchCompleteStateComplete === false
+  || item.companyResearchLoadingStateComplete === false
+  || item.companyResearchEmptyStateComplete === false
+  || item.companyResearchFailureStateComplete === false
+  || item.reportsLoadingStateComplete === false
+  || item.reportsEmptyStateComplete === false
+  || item.reportsFailureStateComplete === false
   || (item.pageErrors?.length || 0) > 0
   || item.violations.length > 0
 )

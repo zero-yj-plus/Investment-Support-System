@@ -51,13 +51,9 @@ export const sidebarNavigation: NavigationGroup[] = [
       { path: 'research', tab: 'diagnosis', label: '个股诊断' },
       { path: 'research', tab: 'screener', label: '条件选股' },
       { path: 'research', tab: 'technical-screener', label: '技术面选股' },
-      { path: 'research', tab: 'quant-pick', label: '每日量化选股' },
       { path: 'research', tab: 'events', label: '事件掘金' },
       { path: 'research', tab: 'chain', label: '产业链分析' },
       { path: 'research', tab: 'company', label: '公司研究' },
-      { path: 'research', tab: 'overseas', label: '海外市场' },
-      { path: 'research', tab: 'restructuring', label: '重组拆解', placement: 'more' },
-      { path: 'research', tab: 'macro', label: '宏观风险', placement: 'more' },
     ],
   },
   {

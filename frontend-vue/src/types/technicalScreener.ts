@@ -75,6 +75,13 @@ export interface TechnicalRuleConfig {
   exclude: { groups: TechnicalRuleGroup[] }
 }
 
+export interface TechnicalPreset {
+  id: string
+  name: string
+  summary: string
+  config: TechnicalRuleConfig
+}
+
 export interface TechnicalUniverse {
   markets: string[]
   exclude_st: boolean

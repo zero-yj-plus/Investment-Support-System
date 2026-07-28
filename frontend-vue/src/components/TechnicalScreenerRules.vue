@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import type {
   MatchMode,
   TechnicalCondition,
+  TechnicalPreset,
   TechnicalRuleConfig,
   TechnicalScheme,
   TechnicalSignalDefinition,
@@ -15,9 +16,9 @@ const props = defineProps<{
   universe: TechnicalUniverse
   minimumAmountWan: string
   defaultTimeframe: TechnicalTimeframe
-  sortField: string
-  sortDirection: 'asc' | 'desc'
+  presets: TechnicalPreset[]
   schemes: TechnicalScheme[]
+  selectedPresetId: string
   selectedSchemeId: string
   schemeName: string
   presetReadOnly: boolean
@@ -45,8 +46,6 @@ const emit = defineEmits<{
   setSignal: [condition: TechnicalCondition, code: string]
   updateMinimumAmount: [value: string]
   updateDefaultTimeframe: [value: TechnicalTimeframe]
-  updateSortField: [value: string]
-  updateSortDirection: [value: 'asc' | 'desc']
   run: []
 }>()
 
@@ -65,6 +64,8 @@ const naturalPreview = computed(() => {
     exclude: exclude.length ? exclude.join('；或者 ') : '当前没有排除规则',
   }
 })
+
+const selectedPresetSummary = computed(() => props.presets.find((item) => item.id === props.selectedPresetId)?.summary || '')
 
 function definition(code: string) {
   return props.definitions.find((item) => item.signal_code === code)
@@ -93,10 +94,15 @@ function markEdited() {
       </header>
       <div class="technical-scheme-grid">
         <label>选择方案
-          <select :value="selectedSchemeId" @change="emit('loadScheme', ($event.target as HTMLSelectElement).value)">
-            <option value="">预置：强势 MACD 金叉</option>
-            <option v-for="item in schemes" :key="item.id" :value="item.id">{{ item.name }}{{ item.editable === false ? '（旧方案只读）' : '' }}</option>
+          <select :value="selectedPresetId ? `preset:${selectedPresetId}` : `scheme:${selectedSchemeId}`" @change="emit('loadScheme', ($event.target as HTMLSelectElement).value)">
+            <optgroup label="预置方案">
+              <option v-for="item in presets" :key="item.id" :value="`preset:${item.id}`">{{ item.name }}</option>
+            </optgroup>
+            <optgroup v-if="schemes.length" label="自定义方案">
+              <option v-for="item in schemes" :key="item.id" :value="`scheme:${item.id}`">{{ item.name }}{{ item.editable === false ? '（旧方案只读）' : '' }}</option>
+            </optgroup>
           </select>
+          <small v-if="selectedPresetSummary" class="technical-scheme-summary">{{ selectedPresetSummary }}</small>
         </label>
         <label>方案名称
           <input :value="schemeName" maxlength="80" :disabled="legacyReadOnly" @input="emit('updateSchemeName', ($event.target as HTMLInputElement).value)" @change="markEdited">
@@ -239,20 +245,6 @@ function markEdited() {
       </section>
     </template>
 
-    <section class="panel technical-sort" aria-labelledby="technical-sort-title">
-      <div><p class="eyebrow">服务端排序</p><h2 id="technical-sort-title">结果顺序</h2></div>
-      <label>排序字段
-        <select :value="sortField" :disabled="presetReadOnly || legacyReadOnly" @change="emit('updateSortField', ($event.target as HTMLSelectElement).value); markEdited()">
-          <option value="signal_score">综合信号分</option><option value="change_pct">涨跌幅</option><option value="last_amount">成交额</option><option value="avg_amount20">20 日均成交额</option><option value="last_price">最新价</option>
-        </select>
-      </label>
-      <label>排序方向
-        <select :value="sortDirection" :disabled="presetReadOnly || legacyReadOnly" @change="emit('updateSortDirection', ($event.target as HTMLSelectElement).value as 'asc' | 'desc'); markEdited()">
-          <option value="desc">从高到低</option><option value="asc">从低到高</option>
-        </select>
-      </label>
-    </section>
-
     <div v-if="conflicts.length" class="technical-conflicts" role="alert">
       <strong>规则尚不能执行</strong>
       <span v-for="item in conflicts" :key="item">{{ item }}</span>
@@ -265,11 +257,12 @@ function markEdited() {
 .technical-rules h2 { margin: 0; font-size: 17px; }
 .technical-rules input:not([type="checkbox"]):not([type="radio"]), .technical-rules select { width: 100%; min-height: 44px; margin-top: 5px; padding: 7px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); color: var(--text); }
 .technical-rules label { min-width: 0; color: var(--text-2); font-size: 13px; }
-.technical-scheme-panel, .technical-universe, .technical-period, .technical-rule-section, .technical-preview, .technical-sort, .technical-legacy { padding: 12px; }
+.technical-scheme-panel, .technical-universe, .technical-period, .technical-rule-section, .technical-preview, .technical-legacy { padding: 12px; }
 .technical-scheme-panel > header, .technical-rule-section > header, .technical-group > header, .technical-condition > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .technical-scheme-panel > header > span { padding: 3px 7px; border-radius: 999px; background: color-mix(in srgb, var(--info) 9%, var(--surface)); color: var(--info); font-size: 12px; }
 .technical-scheme-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
 .technical-scheme-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.technical-scheme-summary { display: block; margin-top: 5px; color: var(--text-3); line-height: 1.45; }
 .technical-feedback, .technical-notice, .technical-inline-error { margin: 8px 0 0; padding: 8px 10px; border-left: 3px solid var(--info); background: color-mix(in srgb, var(--info) 8%, var(--surface)); color: var(--text-2); }
 .technical-notice { border-left-color: var(--warning); background: color-mix(in srgb, var(--warning) 8%, var(--surface)); }
 .technical-inline-error { border-left-color: var(--danger); background: color-mix(in srgb, var(--danger) 8%, var(--surface)); }
@@ -280,8 +273,8 @@ function markEdited() {
 .technical-market-grid label, .technical-partial-period { min-height: 44px; display: inline-flex; align-items: center; gap: 7px; }
 .technical-market-grid input, .technical-partial-period input { width: 18px; height: 18px; accent-color: var(--accent); }
 .technical-universe-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
-.technical-period, .technical-sort { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: center; gap: 8px; }
-.technical-period > div, .technical-sort > div { grid-column: 1 / -1; }
+.technical-period { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: center; gap: 8px; }
+.technical-period > div { grid-column: 1 / -1; }
 .technical-period details { grid-column: 1 / -1; color: var(--text-2); }
 .technical-period details p { margin: 6px 0 0; color: var(--text-3); line-height: 1.5; }
 .technical-rule-section > header p:last-child { margin: 4px 0 0; color: var(--text-3); }
@@ -304,7 +297,7 @@ function markEdited() {
 .technical-conflicts { display: grid; gap: 4px; padding: 10px; border-left: 3px solid var(--danger); background: color-mix(in srgb, var(--danger) 8%, var(--surface)); }
 @media (max-width: 720px) {
   .technical-scheme-grid, .technical-universe-fields, .technical-condition-fields { grid-template-columns: minmax(0, 1fr); }
-  .technical-period, .technical-sort { grid-template-columns: minmax(0, 1fr); }
+  .technical-period { grid-template-columns: minmax(0, 1fr); }
   .technical-scheme-actions { display: grid; grid-template-columns: minmax(0, 1fr); }
   .technical-rule-section > header { flex-direction: column; }
 }
