@@ -200,6 +200,65 @@ const fixtures = {
     count: 1,
     total: 1,
   },
+  '/api/knowledge': {
+    ok: true,
+    schema_version: 'KnowledgeRule.v1',
+    summary: { approved: 2, draft: 1, legacy_unverified: 1, rejected: 1, superseded: 1 },
+    review_queue_count: 2,
+    items: [
+      {
+        schema: 'KnowledgeRule.v1', id: 'k_audit_approved', rule_id: 'rule_audit_position',
+        category: '仓位规则', title: '审计规则：风险期降低试错频率',
+        content: '仅在已核验的市场风险边界内执行；没有服务端价格条件时保持等待。',
+        status: 'approved', version: 2, origin: 'explicit_user_input',
+        source_report_ids: [], evidence_ids: [], sample_count: 1,
+        created_at: '2026-07-28 09:12:00', created_by: 'user:web',
+        approved_at: '2026-07-28 09:12:00', approved_by: 'user:web',
+        supersedes_id: 'k_audit_superseded',
+      },
+      {
+        schema: 'KnowledgeRule.v1', id: 'k_audit_draft', rule_id: 'k_audit_draft',
+        category: '复盘笔记', title: '审计待复核：确认信号需跨日验证',
+        content: '该归纳来自一次收盘复盘，尚不能泛化为稳定交易原则。',
+        status: 'draft', version: 1, origin: 'auto_summary',
+        source_report_ids: ['report:close:2026-07-28'], evidence_ids: [], sample_count: 1,
+        created_at: '2026-07-28 15:38:00', created_by: 'system:auto_summary',
+        approved_at: null, rejected_at: null,
+      },
+      {
+        schema: 'KnowledgeRule.v1', id: 'k_audit_legacy', rule_id: 'k_audit_legacy',
+        category: '经验教训', title: '审计历史条目：来源待补充',
+        content: '旧版本没有来源和样本信息，保持待补证状态。',
+        status: 'legacy_unverified', version: 1, origin: 'legacy_import',
+        source_report_ids: [], evidence_ids: [], sample_count: 0,
+        created_at: '2024-01-03 10:00:00', created_by: 'legacy',
+      },
+      {
+        schema: 'KnowledgeRule.v1', id: 'k_audit_rejected', rule_id: 'k_audit_rejected',
+        category: '经验教训', title: '审计已拒绝：单日归因',
+        content: '仅有单日样本，不能形成稳定规则。',
+        status: 'rejected', version: 1, origin: 'auto_summary',
+        source_report_ids: ['report:close:2026-07-24'], evidence_ids: [], sample_count: 1,
+        created_at: '2026-07-24 15:40:00', rejected_at: '2026-07-25 08:30:00',
+        rejection_reason: '样本不足，不能泛化',
+      },
+      {
+        schema: 'KnowledgeRule.v1', id: 'k_audit_superseded', rule_id: 'rule_audit_position',
+        category: '仓位规则', title: '审计旧版仓位规则',
+        content: '旧版正文保留，仅用于版本审计。',
+        status: 'superseded', version: 1, origin: 'explicit_user_input',
+        source_report_ids: [], evidence_ids: [], sample_count: 1,
+        created_at: '2026-07-20 09:00:00', superseded_at: '2026-07-28 09:12:00',
+        replacement_id: 'k_audit_approved',
+      },
+      {
+        schema: 'KnowledgeRule.v1', id: 'k_audit_missing', rule_id: 'k_audit_missing',
+        category: null, title: null, content: null, status: null, version: null,
+        origin: null, source_report_ids: null, evidence_ids: null, sample_count: null,
+        created_at: null, created_by: null,
+      },
+    ],
+  },
   '/api/status': {
     model_connection: { configured: true, connected: true, status: 'connected' },
     hermes: { agent_capability: { ready: true, status: 'ready', reason: '' } },
@@ -1233,6 +1292,7 @@ const auditedPages = [
   { name: 'industry-chain', hash: '#/research?tab=chain', titleSelector: '#industry-chain-page-title' },
   { name: 'company-research', hash: '#/research?tab=company', titleSelector: '#company-page-title' },
   { name: 'reports', hash: '#/history?tab=reports', titleSelector: '#report-center-page-title' },
+  { name: 'knowledge', hash: '#/history?tab=knowledge', titleSelector: '#knowledge-page-title' },
 ]
 
 await mkdir(outputDir, { recursive: true })
@@ -3384,6 +3444,103 @@ try {
   })
   await reportsFailurePage.close()
 
+  const knowledgeLoadingPage = await browser.newPage({ viewport: { width: 375, height: 812 }, deviceScaleFactor: 1 })
+  const knowledgeLoadingErrors = []
+  knowledgeLoadingPage.on('pageerror', (error) => knowledgeLoadingErrors.push(error.message))
+  await knowledgeLoadingPage.addInitScript(() => localStorage.setItem('wudi-vue-theme', 'dark'))
+  await knowledgeLoadingPage.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    if (path === '/api/knowledge') await new Promise((resolveDelay) => setTimeout(resolveDelay, 1800))
+    const body = fixtures[path]
+    return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
+  })
+  await knowledgeLoadingPage.goto('http://127.0.0.1:4175/#/history?tab=knowledge', { waitUntil: 'domcontentloaded' })
+  await knowledgeLoadingPage.waitForSelector('.knowledge-loading')
+  await knowledgeLoadingPage.addScriptTag({ content: axeSource })
+  const knowledgeLoadingState = await knowledgeLoadingPage.evaluate(() => ({
+    delayedSkeletonVisible: document.querySelectorAll('.knowledge-loading__cards > .panel').length === 4,
+    shellSurvives: Boolean(document.querySelector('.topbar')),
+    noPageOverflow: document.documentElement.scrollWidth <= window.innerWidth,
+  }))
+  const knowledgeLoadingAxe = await knowledgeLoadingPage.evaluate(async () => window.axe.run(document, {
+    runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+  }))
+  await knowledgeLoadingPage.screenshot({ path: resolve(outputDir, 'knowledge-loading-375-dark.png'), fullPage: true })
+  report.push({
+    page: 'knowledge', scenario: 'knowledge-loading-375', knowledgeLoadingState,
+    knowledgeLoadingStateComplete: Object.values(knowledgeLoadingState).every(Boolean),
+    pageErrors: knowledgeLoadingErrors,
+    violations: knowledgeLoadingAxe.violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help, nodes: item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })),
+  })
+  await knowledgeLoadingPage.close()
+
+  const knowledgeEmptyPage = await browser.newPage({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 1 })
+  const knowledgeEmptyErrors = []
+  knowledgeEmptyPage.on('pageerror', (error) => knowledgeEmptyErrors.push(error.message))
+  await knowledgeEmptyPage.addInitScript(() => localStorage.setItem('wudi-vue-theme', 'dark'))
+  await knowledgeEmptyPage.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    const body = path === '/api/knowledge'
+      ? { ok: true, schema_version: 'KnowledgeRule.v1', summary: { approved: 0 }, review_queue_count: 0, items: [] }
+      : fixtures[path]
+    return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
+  })
+  await knowledgeEmptyPage.goto('http://127.0.0.1:4175/#/history?tab=knowledge', { waitUntil: 'networkidle' })
+  await knowledgeEmptyPage.addScriptTag({ content: axeSource })
+  const knowledgeEmptyState = await knowledgeEmptyPage.evaluate(() => ({
+    emptyExplained: document.body.innerText.includes('知识库暂无条目') && document.body.innerText.includes('真实空数组'),
+    createAvailable: Boolean([...document.querySelectorAll('button')].find((node) => node.textContent?.includes('新增第一条知识'))),
+    noFixtureContent: !document.body.innerText.includes('审计规则：风险期降低试错频率'),
+    noPageOverflow: document.documentElement.scrollWidth <= window.innerWidth,
+  }))
+  const knowledgeEmptyAxe = await knowledgeEmptyPage.evaluate(async () => window.axe.run(document, {
+    runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+  }))
+  await knowledgeEmptyPage.screenshot({ path: resolve(outputDir, 'knowledge-empty-1440-dark.png'), fullPage: true })
+  report.push({
+    page: 'knowledge', scenario: 'knowledge-empty-1440', knowledgeEmptyState,
+    knowledgeEmptyStateComplete: Object.values(knowledgeEmptyState).every(Boolean),
+    pageErrors: knowledgeEmptyErrors,
+    violations: knowledgeEmptyAxe.violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help, nodes: item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })),
+  })
+  await knowledgeEmptyPage.close()
+
+  const knowledgeFailurePage = await browser.newPage({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 1 })
+  const knowledgeFailureErrors = []
+  knowledgeFailurePage.on('pageerror', (error) => knowledgeFailureErrors.push(error.message))
+  await knowledgeFailurePage.addInitScript(() => localStorage.setItem('wudi-vue-theme', 'dark'))
+  await knowledgeFailurePage.route('**/api/**', async (route) => {
+    const url = new URL(route.request().url())
+    if (url.pathname === '/api/knowledge/k_audit_draft/approve' && route.request().method() === 'POST') {
+      return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: '审计场景：审批链路暂不可用' }) })
+    }
+    const body = fixtures[url.pathname]
+    return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
+  })
+  await knowledgeFailurePage.goto('http://127.0.0.1:4175/#/history?tab=knowledge', { waitUntil: 'networkidle' })
+  await knowledgeFailurePage.getByRole('button', { name: '审批', exact: true }).first().click()
+  await knowledgeFailurePage.getByRole('button', { name: '确认批准' }).click()
+  await knowledgeFailurePage.getByText('审计场景：审批链路暂不可用', { exact: true }).waitFor()
+  await knowledgeFailurePage.addScriptTag({ content: axeSource })
+  const knowledgeFailureState = await knowledgeFailurePage.evaluate(() => ({
+    actionFailureExplained: document.body.innerText.includes('审计场景：审批链路暂不可用'),
+    listSurvives: document.body.innerText.includes('审计待复核：确认信号需跨日验证') && document.body.innerText.includes('审计规则：风险期降低试错频率'),
+    dialogStaysOpen: Boolean(document.querySelector('.knowledge-dialog[open]')),
+    shellSurvives: Boolean(document.querySelector('.topbar')),
+    noPageOverflow: document.documentElement.scrollWidth <= window.innerWidth,
+  }))
+  const knowledgeFailureAxe = await knowledgeFailurePage.evaluate(async () => window.axe.run(document, {
+    runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+  }))
+  await knowledgeFailurePage.screenshot({ path: resolve(outputDir, 'knowledge-partial-failure-1440-dark.png'), fullPage: true })
+  report.push({
+    page: 'knowledge', scenario: 'knowledge-partial-failure-1440', knowledgeFailureState,
+    knowledgeFailureStateComplete: Object.values(knowledgeFailureState).every(Boolean),
+    pageErrors: knowledgeFailureErrors,
+    violations: knowledgeFailureAxe.violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help, nodes: item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })),
+  })
+  await knowledgeFailurePage.close()
+
   const missingPage = await browser.newPage({ viewport: { width: 375, height: 812 } })
   const missingPageErrors = []
   missingPage.on('pageerror', (error) => missingPageErrors.push(error.message))
@@ -3496,6 +3653,9 @@ const failed = report.some((item) =>
   || item.reportsLoadingStateComplete === false
   || item.reportsEmptyStateComplete === false
   || item.reportsFailureStateComplete === false
+  || item.knowledgeLoadingStateComplete === false
+  || item.knowledgeEmptyStateComplete === false
+  || item.knowledgeFailureStateComplete === false
   || (item.pageErrors?.length || 0) > 0
   || item.violations.length > 0
 )

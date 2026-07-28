@@ -22,7 +22,7 @@ def production_source() -> str:
     return "\n".join(read(path) for path in (PAGE, SUMMARY, GOVERNANCE, COMPOSABLE, TYPES))
 
 
-def test_vue_report_center_route_is_reachable_without_migrating_history_siblings() -> None:
+def test_vue_report_center_route_is_reachable() -> None:
     app = read(VUE / "src/App.vue")
     navigation = read(VUE / "src/navigation.ts")
 
@@ -32,7 +32,6 @@ def test_vue_report_center_route_is_reachable_without_migrating_history_siblings
     assert '<ReportCenterPage' in app
     assert "if (isReportCenter.value && reportCenterPage.value)" in app
     assert "{ path: 'history', tab: 'reports', label: '全部报告' }" in navigation
-    assert "isKnowledge" not in app
 
 
 def test_vue_report_center_uses_only_real_report_and_delivery_contracts() -> None:

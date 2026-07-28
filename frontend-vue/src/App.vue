@@ -11,6 +11,7 @@ import ForecastMiningPage from './components/ForecastMiningPage.vue'
 import HotboardPage from './components/HotboardPage.vue'
 import HoldingsPage from './components/HoldingsPage.vue'
 import IndustryChainPage from './components/IndustryChainPage.vue'
+import KnowledgePage from './components/KnowledgePage.vue'
 import MainlineOverview from './components/MainlineOverview.vue'
 import MainlineResearchPage from './components/MainlineResearchPage.vue'
 import MarketEvidence from './components/MarketEvidence.vue'
@@ -50,6 +51,7 @@ const stockAskPage = ref<InstanceType<typeof StockAskPage> | null>(null)
 const diagnosisPage = ref<InstanceType<typeof DiagnosisPage> | null>(null)
 const forecastMiningPage = ref<InstanceType<typeof ForecastMiningPage> | null>(null)
 const industryChainPage = ref<InstanceType<typeof IndustryChainPage> | null>(null)
+const knowledgePage = ref<InstanceType<typeof KnowledgePage> | null>(null)
 const screenerPage = ref<InstanceType<typeof ScreenerPage> | null>(null)
 const technicalScreenerPage = ref<InstanceType<typeof TechnicalScreenerPage> | null>(null)
 const tomorrowPage = ref<InstanceType<typeof TomorrowStrategyPage> | null>(null)
@@ -82,13 +84,14 @@ const isCompanyResearch = computed(() => routePath.value === 'research' && route
 const isScreener = computed(() => routePath.value === 'research' && routeTab.value === 'screener')
 const isTechnicalScreener = computed(() => routePath.value === 'research' && routeTab.value === 'technical-screener')
 const isReportCenter = computed(() => routePath.value === 'history' && routeTab.value === 'reports')
+const isKnowledge = computed(() => routePath.value === 'history' && routeTab.value === 'knowledge')
 const activeNavigation = computed(() => findActiveNavigation(routePath.value, routeTab.value))
 const moduleTitle = computed(() => activeNavigation.value?.group.label || (routePath.value === 'settings' ? '系统设置' : '交易工作台'))
 const pageTitle = computed(() => activeNavigation.value?.child.label || (routePath.value === 'settings' ? '系统设置' : '页面迁移中'))
-const pageRefreshing = computed(() => isHotboard.value || isHoldings.value || isWatchlist.value || isTiming.value || isMainlineResearch.value || isSentimentEvents.value || isTomorrowStrategy.value || isCapitalTracking.value || isStockAsk.value || isDiagnosis.value || isForecastMining.value || isIndustryChain.value || isCompanyResearch.value || isScreener.value || isTechnicalScreener.value || isReportCenter.value
+const pageRefreshing = computed(() => isHotboard.value || isHoldings.value || isWatchlist.value || isTiming.value || isMainlineResearch.value || isSentimentEvents.value || isTomorrowStrategy.value || isCapitalTracking.value || isStockAsk.value || isDiagnosis.value || isForecastMining.value || isIndustryChain.value || isCompanyResearch.value || isScreener.value || isTechnicalScreener.value || isReportCenter.value || isKnowledge.value
   ? reportRefreshing.value
   : refreshing.value || reportRefreshing.value)
-const pageBusy = computed(() => isHotboard.value || isHoldings.value || isWatchlist.value || isTiming.value || isMainlineResearch.value || isSentimentEvents.value || isTomorrowStrategy.value || isCapitalTracking.value || isStockAsk.value || isDiagnosis.value || isForecastMining.value || isIndustryChain.value || isCompanyResearch.value || isScreener.value || isTechnicalScreener.value || isReportCenter.value
+const pageBusy = computed(() => isHotboard.value || isHoldings.value || isWatchlist.value || isTiming.value || isMainlineResearch.value || isSentimentEvents.value || isTomorrowStrategy.value || isCapitalTracking.value || isStockAsk.value || isDiagnosis.value || isForecastMining.value || isIndustryChain.value || isCompanyResearch.value || isScreener.value || isTechnicalScreener.value || isReportCenter.value || isKnowledge.value
   ? reportRefreshing.value
   : loading.value || pageRefreshing.value)
 
@@ -187,6 +190,10 @@ function expandSidebar() {
 }
 
 async function refreshCurrentPage() {
+  if (isKnowledge.value && knowledgePage.value) {
+    await Promise.resolve(knowledgePage.value.refresh())
+    return
+  }
   if (isReportCenter.value && reportCenterPage.value) {
     await Promise.resolve(reportCenterPage.value.refresh())
     return
@@ -463,6 +470,12 @@ watch(pageTitle, (value) => { document.title = `${value} · W.U.D.I.` }, { immed
         <ReportCenterPage
           v-else-if="isReportCenter"
           ref="reportCenterPage"
+          @refresh-state="reportRefreshing = $event"
+        />
+
+        <KnowledgePage
+          v-else-if="isKnowledge"
+          ref="knowledgePage"
           @refresh-state="reportRefreshing = $event"
         />
 

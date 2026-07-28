@@ -398,6 +398,7 @@ Vite。首屏继续复用 `/api/shell-status`、`/api/pulse`、`/api/market/over
 产业链研究页仅在用户主动提交时调用 `/api/chat` 的 `mode=chain` SSE，并可显式写入 `/api/knowledge`；页面复用 `chain-research-v2`，把产业结论、交易时点、证据时点、真实空映射和不完整流分开呈现。TDX 成员只证明板块归属，现价单位为元、涨跌幅为百分比、PE/PB 为倍数、数据可研分无量纲且仅用于证据核验排序；前端不重算产业角色、价格、仓位或风险结论。
 公司研究页在用户提交 6 位代码后独立读取 `/api/stock/{code}/research-enrichment`、`/api/disclosures/announcements` 与 `/api/interactions/management`，并以 `/api/chat` 的 `mode=company` SSE 生成服务端治理后的研究正文；三类结构化证据各自降级，不完整流隔离，本地历史只追加。页面不从模型正文重算风险等级、仓位上限或价格结论，知识库存入仅表示服务端已接受保存。
 报告中心读取 `/api/archive/dates`、`/api/reports/{rtype}` 与追加式 `/api/delivery/receipts`，保留六类报告查看、今日 SSE 生成、打印/PDF 和推送提交；页面严格区分真实空报告、局部接口失败、历史 `pushed` 标记、平台接受与最终送达，不从 Markdown 重算风险或仓位结论。
+知识库页只读取 `/api/knowledge`，并通过知识库治理端点新增、批准、拒绝、追加式替代和删除条目；页面保持服务端状态、来源、样本数、版本关系与字段缺失语义，不请求行情、报告或研究接口，也不推断风险、仓位或新鲜度。
 
 | 文件 / 目录 | 说明 |
 | --- | --- |
@@ -418,6 +419,7 @@ Vite。首屏继续复用 `/api/shell-status`、`/api/pulse`、`/api/market/over
 | `src/components/IndustryChain*.vue` | 产业链研究输入、产业/交易边界、真实空映射、安全 Markdown 正文、本地历史和数据治理。 |
 | `src/components/CompanyResearch*.vue` | 公司研究输入、结论边界、盘后研究底座、官方公告/互动证据、安全 Markdown 正文与追加式本地历史。 |
 | `src/components/ReportCenter*.vue` | 报告中心的历史日期、服务端定稿摘要、安全正文、章节目录、版本治理与真实交付回执。 |
+| `src/components/Knowledge*.vue` | 知识库的治理摘要、检索筛选、条目明细、安全正文、原生治理对话框与独立状态。 |
 | `src/composables/useDecisionOverview.ts` | 并行请求、超时、刷新、可见性恢复和卸载清理。 |
 | `src/composables/useMarketEvidence.ts` | 盘面证据与深度结构的延迟请求、独立降级、刷新和卸载清理。 |
 | `src/composables/usePremarketReport.ts` | 盘前报告读取、资金验证、SSE 生成、推送和独立请求/定时器清理。 |
@@ -436,6 +438,7 @@ Vite。首屏继续复用 `/api/shell-status`、`/api/pulse`、`/api/market/over
 | `src/composables/useIndustryChain.ts` | 产业链 SSE、知识库写入、本地 append-only 历史、防重复动作、独立请求控制和卸载清理。 |
 | `src/composables/useCompanyResearch.ts` | 公司研究状态预检、三路结构化证据、SSE 正文、知识库写入、追加式历史与独立请求/定时器清理。 |
 | `src/composables/useReportCenter.ts` | 六类报告读取、历史日期、交付回执、SSE 生成、推送提交及各请求独立取消和生命周期清理。 |
+| `src/composables/useKnowledge.ts` | 知识列表及新增、批准、拒绝、替代、删除请求的独立控制、局部失败保留和卸载清理。 |
 | `src/utils/reportMarkdown.ts` | 把受治理报告 Markdown 解析为安全的 Vue 渲染块和章节目录，不使用原始 HTML 注入。 |
 | `src/styles.css` | 深浅主题、响应式断点、焦点和 reduced-motion 规则。 |
 | `scripts/audit-ui.mjs` | 使用本机 Chrome + axe-core 检查已迁移页面的 375/768/1024/1440 布局、深浅主题、关键状态和 WCAG。 |
