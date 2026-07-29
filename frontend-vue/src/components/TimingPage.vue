@@ -67,16 +67,10 @@ defineExpose({ refresh })
 <template>
   <section class="timing-page" aria-labelledby="timing-page-title" :aria-busy="loading || refreshing">
     <header class="timing-intro">
-      <div>
-        <p class="eyebrow">市场结构 · 确定性规则</p>
+      <div class="page-heading">
         <h1 id="timing-page-title">资金择时</h1>
-        <p>先看服务端今日动作与风险边界，再用贪恐五因子、指数四区域和个股查询核验证据。</p>
+        <p class="page-subtitle">先看服务端今日动作与风险边界，再用贪恐五因子、指数四区域和个股查询核验证据。</p>
       </div>
-      <dl class="timing-stamp" :class="{ 'is-stale': data?.stale || data?.fear_greed?.stale }" aria-label="资金择时数据日期、取数时点与质量状态">
-        <div><dt>数据日期</dt><dd class="mono">{{ data?.data_date || data?.fear_greed?.data_date || '—' }}</dd></div>
-        <div><dt>取数时点</dt><dd class="mono">{{ data?.ts || '—' }}</dd></div>
-        <div><dt>数据状态</dt><dd><DataStatus :state="quality" :label="statusLabel" /></dd></div>
-      </dl>
     </header>
 
     <section class="panel timing-decision" aria-labelledby="timing-decision-title" aria-live="polite">
@@ -182,6 +176,12 @@ defineExpose({ refresh })
         <span>本页不消费 Markdown，也不注入原始 HTML；缺失、空结果、陈旧和请求失败分别展示。</span>
       </footer>
     </template>
+
+    <dl class="timing-stamp" :class="{ 'is-stale': data?.stale || data?.fear_greed?.stale }" aria-label="资金择时数据日期、取数时点与质量状态">
+      <div><dt>数据日期</dt><dd class="mono">{{ data?.data_date || data?.fear_greed?.data_date || '—' }}</dd></div>
+      <div><dt>取数时点</dt><dd class="mono">{{ data?.ts || '—' }}</dd></div>
+      <div><dt>数据状态</dt><dd><DataStatus :state="quality" :label="statusLabel" /></dd></div>
+    </dl>
   </section>
 </template>
 

@@ -66,14 +66,9 @@ defineExpose({ refresh })
 <template>
   <section class="premarket-page" aria-labelledby="premarket-page-title">
     <header class="premarket-page__intro">
-      <div>
-        <p class="eyebrow">交易日 08:50 定格计划</p>
+      <div class="page-heading">
         <h1 id="premarket-page-title">盘前报告</h1>
-        <p>先确认能否参与与风险边界，再按章节核对依据。盘中验证只提示偏差，不改写盘前事实。</p>
-      </div>
-      <div class="premarket-page__stamp" aria-label="报告时点">
-        <span>{{ reportTime.date }}</span>
-        <strong class="mono">{{ reportTime.time }}</strong>
+        <p class="page-subtitle">先确认能否参与与风险边界，再按章节核对依据。盘中验证只提示偏差，不改写盘前事实。</p>
       </div>
     </header>
 
@@ -166,5 +161,10 @@ defineExpose({ refresh })
         <a class="secondary-button" href="#/history?tab=reports">查看历史报告</a>
       </div>
     </section>
+
+    <div class="premarket-page__stamp" aria-label="报告时点">
+      <span>{{ reportTime.date }}</span>
+      <strong class="mono">{{ reportTime.time }}</strong>
+    </div>
   </section>
 </template>

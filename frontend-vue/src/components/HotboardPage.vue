@@ -33,21 +33,10 @@ defineExpose({ refresh })
 <template>
   <section class="hotboard-page" aria-labelledby="hotboard-page-title" :aria-busy="loading || refreshing">
     <header class="hotboard-intro">
-      <div>
-        <p class="eyebrow">市场结构 · 独立公开池口径</p>
+      <div class="page-heading">
         <h1 id="hotboard-page-title">涨停题材</h1>
-        <p>先看涨停集中方向，再复核几天几板、板型、封板率与封单证据。页面只呈现事实，不生成买入评分。</p>
+        <p class="page-subtitle">先看涨停集中方向，再复核几天几板、板型、封板率与封单证据。页面只呈现事实，不生成买入评分。</p>
       </div>
-      <dl class="hotboard-stamp" :class="{ 'is-stale': data?.stale, 'is-degraded': isDegraded }" aria-label="涨停题材数据日期、取数时点、状态与覆盖说明">
-        <div><dt>数据日期</dt><dd class="mono">{{ data?.data_date || '—' }}<span v-if="!data?.data_date" class="sr-only">数据缺失</span></dd></div>
-        <div><dt>取数时点</dt><dd class="mono">{{ data?.ts || '—' }}<span v-if="!data?.ts" class="sr-only">数据缺失</span></dd></div>
-        <div><dt>数据状态</dt><dd>{{ statusLabel }}</dd></div>
-        <div class="hotboard-stamp__coverage">
-          <dt>数据覆盖说明</dt>
-          <dd v-if="noteList.length"><span v-for="note in noteList" :key="note">{{ note }}</span></dd>
-          <dd v-else>{{ data ? '接口未声明覆盖缺口' : '—' }}</dd>
-        </div>
-      </dl>
     </header>
 
     <div v-if="loading" class="hotboard-loading" role="status" aria-live="polite">
@@ -79,6 +68,17 @@ defineExpose({ refresh })
         <span>缺失保持缺失；本页不与主涨停池混算，不在浏览器生成交易建议。</span>
       </footer>
     </template>
+
+    <dl class="hotboard-stamp" :class="{ 'is-stale': data?.stale, 'is-degraded': isDegraded }" aria-label="涨停题材数据日期、取数时点、状态与覆盖说明">
+      <div><dt>数据日期</dt><dd class="mono">{{ data?.data_date || '—' }}<span v-if="!data?.data_date" class="sr-only">数据缺失</span></dd></div>
+      <div><dt>取数时点</dt><dd class="mono">{{ data?.ts || '—' }}<span v-if="!data?.ts" class="sr-only">数据缺失</span></dd></div>
+      <div><dt>数据状态</dt><dd>{{ statusLabel }}</dd></div>
+      <div class="hotboard-stamp__coverage">
+        <dt>数据覆盖说明</dt>
+        <dd v-if="noteList.length"><span v-for="note in noteList" :key="note">{{ note }}</span></dd>
+        <dd v-else>{{ data ? '接口未声明覆盖缺口' : '—' }}</dd>
+      </div>
+    </dl>
   </section>
 </template>
 

@@ -114,10 +114,9 @@ defineExpose({ refresh: loadKnowledge })
 <template>
   <div class="knowledge-page">
     <header class="knowledge-page__header">
-      <div>
-        <p class="eyebrow">PERSONAL DECISION MEMORY</p>
+      <div class="page-heading">
         <h1 id="knowledge-page-title">知识库</h1>
-        <p>沉淀个人交易规则，核对来源，并明确哪些内容会进入后续 AI 上下文。</p>
+        <p class="page-subtitle">沉淀个人交易规则，核对来源，并明确哪些内容会进入后续 AI 上下文。</p>
       </div>
       <button class="knowledge-primary-button" type="button" :disabled="Boolean(activeAction)" @click="openAction('create')">
         新增知识
@@ -220,7 +219,7 @@ defineExpose({ refresh: loadKnowledge })
 
 <style scoped>
 .knowledge-page { display: grid; min-width: 0; gap: 12px; }
-.knowledge-page__header { display: flex; min-height: 76px; align-items: center; justify-content: space-between; gap: 16px; }
+.knowledge-page__header { display: flex; min-height: 0; align-items: center; justify-content: space-between; gap: 16px; padding-block: 2px; }
 .knowledge-page__header h1 { margin: 0; font-size: 24px; }
 .knowledge-page__header p:last-child { margin: 3px 0 0; color: var(--text-2); }
 .knowledge-primary-button, .knowledge-failure button, .knowledge-empty button, .knowledge-list__heading button { min-height: 44px; padding: 8px 14px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); color: var(--text); cursor: pointer; }

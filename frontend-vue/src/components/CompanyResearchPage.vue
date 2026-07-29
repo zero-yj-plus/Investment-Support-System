@@ -46,16 +46,10 @@ defineExpose({ refresh })
 <template>
   <section class="company-research-page" aria-labelledby="company-page-title" :aria-busy="refreshing">
     <header class="company-page-header">
-      <div>
-        <p class="eyebrow">研究中心 · 官方证据优先</p>
+      <div class="page-heading">
         <h1 id="company-page-title">公司研究</h1>
-        <p>公告、管理层互动与低频研究底座独立核验；模型只生成受治理的解释正文。</p>
+        <p class="page-subtitle">公告、管理层互动与低频研究底座独立核验；模型只生成受治理的解释正文。</p>
       </div>
-      <dl aria-label="公司研究数据与生成时点">
-        <div><dt>当前公司</dt><dd class="mono">{{ currentCode || '尚未选择' }}</dd></div>
-        <div><dt>数据日期 / 时点</dt><dd class="mono">{{ dataAsOf }}</dd></div>
-        <div><dt>生成时点</dt><dd class="mono">{{ generatedAt }}</dd></div>
-      </dl>
     </header>
 
     <CompanyResearchForm
@@ -140,6 +134,12 @@ defineExpose({ refresh })
       <span>Markdown 经安全 Vue 节点解析，不使用 v-html 或运行时 HTML 注入。</span>
       <span>写入知识库只表示已接受保存，不等于已审批或已送达。</span>
     </footer>
+
+    <dl class="company-data-stamp" aria-label="公司研究数据与生成时点">
+      <div><dt>当前公司</dt><dd class="mono">{{ currentCode || '尚未选择' }}</dd></div>
+      <div><dt>数据日期 / 时点</dt><dd class="mono">{{ dataAsOf }}</dd></div>
+      <div><dt>生成时点</dt><dd class="mono">{{ generatedAt }}</dd></div>
+    </dl>
   </section>
 </template>
 
@@ -149,4 +149,8 @@ defineExpose({ refresh })
 @media (max-width: 1039px) { .company-workbench { grid-template-columns: minmax(0, 1fr); }.company-sidebar { order: -1; grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 720px) { .company-research-page { gap: 8px; }.company-page-header dl { grid-template-columns: minmax(0, 1fr); }.company-sidebar { grid-template-columns: minmax(0, 1fr); }.company-report > header { align-items: flex-start; flex-direction: column; }.company-report__actions { width: 100%; }.company-report__actions button { flex: 1 1 0; }.company-report__body { padding-inline: 10px; } }
 @media (max-width: 420px) { .company-report__actions { flex-direction: column; }.company-report__actions button { width: 100%; } }
+.company-data-stamp { display: grid; min-width: 540px; grid-template-columns: .8fr 1.35fr 1fr; gap: 10px; margin: 0; padding: 9px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.company-data-stamp div { min-width: 0; }.company-data-stamp dt { color: var(--text-3); font-size: 12px; }.company-data-stamp dd { margin: 3px 0 0; color: var(--text-2); font-size: 13px; font-weight: 720; overflow-wrap: anywhere; }
+@media (max-width: 1180px) { .company-data-stamp { min-width: 0; } }
+@media (max-width: 720px) { .company-data-stamp { grid-template-columns: minmax(0, 1fr); } }
 </style>

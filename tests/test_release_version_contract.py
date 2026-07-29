@@ -6,21 +6,23 @@ from hermes_trader.main import _VERSIONED_CACHE_CONTROL, frontend_cache_control
 
 
 ROOT = Path(__file__).resolve().parents[1]
-INDEX = ROOT / "frontend" / "index.html"
+INDEX = ROOT / "frontend-vue" / "dist" / "index.html"
+LEGACY_INDEX = ROOT / "frontend" / "index.html"
 NAVIGATION = ROOT / "frontend" / "js" / "navigation.js"
 APP = ROOT / "frontend" / "js" / "app.js"
 
 
-def test_frontend_entry_uses_running_release_version() -> None:
+def test_vue_build_is_the_cache_safe_production_entry() -> None:
     source = INDEX.read_text(encoding="utf-8")
+    assets = re.findall(r'(?:src|href)="(/assets/[^"]+)"', source)
 
-    assert f'<meta name="wudi-asset-version" content="{__version__}">' in source
-    assert f'src="js/app.js?v={__version__}"' in source
-    assert frontend_cache_control("/js/app.js", __version__) == _VERSIONED_CACHE_CONTROL
+    assert '<div id="app"></div>' in source
+    assert assets
+    assert all(frontend_cache_control(asset) == _VERSIONED_CACHE_CONTROL for asset in assets)
 
 
 def test_all_exact_frontend_asset_versions_match_release() -> None:
-    source = INDEX.read_text(encoding="utf-8")
+    source = LEGACY_INDEX.read_text(encoding="utf-8")
     versions = re.findall(r"[?&]v=([0-9]+\.[0-9]+\.[0-9]+)(?:[^\"&]*)", source)
 
     assert versions

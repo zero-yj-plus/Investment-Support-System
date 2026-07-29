@@ -40,16 +40,10 @@ defineExpose({ refresh })
 <template>
   <section class="industry-chain-page" aria-labelledby="industry-chain-page-title" :aria-busy="refreshing">
     <header class="chain-page-header">
-      <div>
-        <p class="eyebrow">研究中心 · 冻结证据优先</p>
+      <div class="page-heading">
         <h1 id="industry-chain-page-title">产业链研究</h1>
-        <p>从需求、产业地图和利润池开始，收敛到可核验公司与失效条件；产业结论和交易时点分开。</p>
+        <p class="page-subtitle">从需求、产业地图和利润池开始，收敛到可核验公司与失效条件；产业结论和交易时点分开。</p>
       </div>
-      <dl aria-label="产业链研究数据与契约状态">
-        <div><dt>数据日期 / 时点</dt><dd class="mono">{{ runState === 'complete' || runState === 'partial' ? summary.dataAsOf : '尚未研究' }}</dd></div>
-        <div><dt>输出契约</dt><dd class="mono">chain-research-v2</dd></div>
-        <div><dt>陈旧判定</dt><dd>接口未独立暴露</dd></div>
-      </dl>
     </header>
 
     <IndustryChainResearchForm
@@ -122,6 +116,12 @@ defineExpose({ refresh })
       <span>Markdown 经安全 Vue 节点解析；不使用 v-html 或运行时 HTML 注入。</span>
       <span>写入知识库不等于已审批，也不等于已进入模型知识。</span>
     </footer>
+
+    <dl class="chain-data-stamp" aria-label="产业链研究数据与契约状态">
+      <div><dt>数据日期 / 时点</dt><dd class="mono">{{ runState === 'complete' || runState === 'partial' ? summary.dataAsOf : '尚未研究' }}</dd></div>
+      <div><dt>输出契约</dt><dd class="mono">chain-research-v2</dd></div>
+      <div><dt>陈旧判定</dt><dd>接口未独立暴露</dd></div>
+    </dl>
   </section>
 </template>
 
@@ -134,4 +134,8 @@ defineExpose({ refresh })
 @media (max-width: 1039px) { .chain-workbench { grid-template-columns: minmax(0, 1fr); }.chain-sidebar { order: -1; }.chain-governance dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }.chain-governance dl div { border-right: 1px solid var(--border); }.chain-governance dl div:nth-child(even) { border-right: 0; } }
 @media (max-width: 720px) { .industry-chain-page { gap: 8px; }.chain-page-header dl { grid-template-columns: minmax(0, 1fr); }.chain-document > header { align-items: flex-start; flex-direction: column; }.chain-document__actions { width: 100%; }.chain-document__actions button { flex: 1 1 0; }.chain-document__body { padding-inline: 10px; }.chain-governance dl { grid-template-columns: minmax(0, 1fr); }.chain-governance dl div { border-right: 0; }.chain-company-links { margin-inline: 0; } }
 @media (max-width: 420px) { .chain-document__actions { flex-direction: column; }.chain-document__actions button { width: 100%; } }
+.chain-data-stamp { display: grid; min-width: 520px; grid-template-columns: 1.5fr .9fr .8fr; gap: 10px; margin: 0; padding: 9px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.chain-data-stamp div { min-width: 0; }.chain-data-stamp dt { color: var(--text-3); font-size: 12px; }.chain-data-stamp dd { margin: 3px 0 0; color: var(--text-2); font-size: 13px; font-weight: 720; overflow-wrap: anywhere; }
+@media (max-width: 1180px) { .chain-data-stamp { min-width: 0; } }
+@media (max-width: 720px) { .chain-data-stamp { grid-template-columns: minmax(0, 1fr); } }
 </style>

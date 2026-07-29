@@ -29,6 +29,8 @@ _DEPLOYMENT_PROFILES = frozenset({
     "auto", "cn_home", "cn_server", "overseas_server",
 })
 
+_FRONTENDS = frozenset({"vue"})
+
 
 def _resolve_deployment_profile(configured: str, *, eastmoney_direct: bool) -> str:
     """Resolve data routing without geolocating or guessing from a public IP.
@@ -131,6 +133,20 @@ class Config:
         # 数据适配层不反向 import Config，通过环境变量获取客户隔离的持久缓存目录。
         # 只放代码表/点时快照等非密钥数据，不影响现有 config 安全模型。
         os.environ["HERMES_DATA_DIR"] = str(self.data_dir)
+
+        # 正式界面固定为 Vue。旧版只允许作为显式开启的对照入口挂在 /legacy/，
+        # 不能通过配置重新接管根路径，避免生产实例无意回退到两套默认界面。
+        ui = self._raw.get("ui", {})
+        ui = ui if isinstance(ui, dict) else {}
+        self.ui_frontend: str = str(ui.get("frontend", "vue")).strip().lower() or "vue"
+        if self.ui_frontend not in _FRONTENDS:
+            raise ValueError(
+                f"不支持的正式前端: {self.ui_frontend}；当前版本仅支持 vue"
+            )
+        legacy_enabled = ui.get("legacy_enabled", False)
+        if not isinstance(legacy_enabled, bool):
+            raise ValueError("ui.legacy_enabled 必须是 true 或 false")
+        self.legacy_enabled: bool = legacy_enabled
 
         hermes = self._raw.get("hermes", {})
         self._hermes_base_url: str = hermes.get("base_url", "http://127.0.0.1:8742/v1")
@@ -643,7 +659,11 @@ class Config:
         """返回 config.yaml 的某个顶层子配置（供 clients/<id>/ext 读取自有配置，
         无需触碰 _raw 私有属性，也不为某客户在共享 config 上加字段——隔离铁律）。"""
         v = self._raw.get(name)
-        return dict(v) if isinstance(v, dict) else {}
+        section = dict(v) if isinstance(v, dict) else {}
+        if name == "ui":
+            section["frontend"] = self.ui_frontend
+            section["legacy_enabled"] = self.legacy_enabled
+        return section
 
     def settings_view(self) -> dict:
         """GET /api/settings 返回的视图。

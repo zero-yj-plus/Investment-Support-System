@@ -58,16 +58,10 @@ defineExpose({ refresh })
 <template>
   <section class="screener-page" aria-labelledby="screener-page-title" :aria-busy="busy">
     <header class="screener-intro">
-      <div>
-        <p class="eyebrow">研究中心 · 全市场确定性筛选</p>
+      <div class="page-heading">
         <h1 id="screener-page-title">条件选股</h1>
-        <p>用价格、量能、估值、规模和行业条件缩小研究范围；覆盖不足时不产生候选。</p>
+        <p class="page-subtitle">用价格、量能、估值、规模和行业条件缩小研究范围；覆盖不足时不产生候选。</p>
       </div>
-      <dl class="screener-stamp" aria-label="条件选股数据日期、生成时点与依据状态">
-        <div><dt>数据日期</dt><dd class="mono">{{ response?.trade_date || '—' }}</dd></div>
-        <div><dt>生成时点</dt><dd class="mono">{{ response?.ts ? formatDateTime(response.ts) : '—' }}</dd></div>
-        <div><dt>依据状态</dt><dd><DataStatus :state="quality" :label="qualityLabel" /></dd></div>
-      </dl>
     </header>
 
     <section class="panel screener-decision" aria-labelledby="screener-decision-title">
@@ -113,6 +107,12 @@ defineExpose({ refresh })
       <span>价格、流通市值与成交额响应单位为元；表单市值与成交额输入单位为亿元；涨跌幅与换手率为百分数。</span>
       <span>缺失、降级、陈旧、真实空数组和接口失败分别展示；任何缺失值都不补 0。</span>
     </footer>
+
+    <dl class="screener-stamp" aria-label="条件选股数据日期、生成时点与依据状态">
+      <div><dt>数据日期</dt><dd class="mono">{{ response?.trade_date || '—' }}</dd></div>
+      <div><dt>生成时点</dt><dd class="mono">{{ response?.ts ? formatDateTime(response.ts) : '—' }}</dd></div>
+      <div><dt>依据状态</dt><dd><DataStatus :state="quality" :label="qualityLabel" /></dd></div>
+    </dl>
   </section>
 </template>
 

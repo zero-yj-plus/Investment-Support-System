@@ -54,14 +54,9 @@ defineExpose({ refresh })
 <template>
   <section class="tail-page" aria-labelledby="tail-page-title">
     <header class="premarket-page__intro tail-page__intro">
-      <div>
-        <p class="eyebrow">交易日 14:52 正式定稿</p>
+      <div class="page-heading">
         <h1 id="tail-page-title">尾盘决策</h1>
-        <p>先判断今天能不能做，再核对观察池与历史回验，最后阅读正式结论。定格事实不随盘后波动回写。</p>
-      </div>
-      <div class="premarket-page__stamp" aria-label="报告时点">
-        <span>{{ reportTime.date }}</span>
-        <strong class="mono">{{ reportTime.time }}</strong>
+        <p class="page-subtitle">先判断今天能不能做，再核对观察池与历史回验，最后阅读正式结论。定格事实不随盘后波动回写。</p>
       </div>
     </header>
 
@@ -150,6 +145,10 @@ defineExpose({ refresh })
         <p v-if="actionNotice" class="report-action-notice" role="status">{{ actionNotice }}</p>
       </section>
     </template>
+    <div class="premarket-page__stamp" aria-label="报告时点">
+      <span>{{ reportTime.date }}</span>
+      <strong class="mono">{{ reportTime.time }}</strong>
+    </div>
   </section>
 </template>
 

@@ -59,17 +59,10 @@ defineExpose({ refresh })
 <template>
   <section class="forecast-page" aria-labelledby="forecast-page-title" :aria-busy="loading || refreshing">
     <header class="forecast-intro">
-      <div>
-        <p class="eyebrow">研究中心 · 公开业绩预告 · 服务端确定性规则</p>
+      <div class="page-heading">
         <h1 id="forecast-page-title">业绩预告掘金</h1>
-        <p>回答“哪些预告达到既定正向规则、哪些被基数陷阱沉底”。AI 不参与筛选，页面不生成推荐、价格区间或仓位结论。</p>
+        <p class="page-subtitle">回答“哪些预告达到既定正向规则、哪些被基数陷阱沉底”。AI 不参与筛选，页面不生成推荐、价格区间或仓位结论。</p>
       </div>
-      <dl class="forecast-stamp" :class="{ 'is-degraded': partialNotes.length, 'is-unavailable': unavailable }" aria-label="业绩预告报告期、服务端时点、数据状态与新鲜度说明">
-        <div><dt>报告期</dt><dd class="mono">{{ formatCompactDate(data?.period) }}<span v-if="!data?.period" class="sr-only">报告期缺失</span></dd></div>
-        <div><dt>服务端计算时点</dt><dd class="mono">{{ data?.ts || '—' }}<span v-if="!data?.ts" class="sr-only">时点缺失</span></dd></div>
-        <div><dt>数据状态</dt><dd>{{ statusLabel }}</dd></div>
-        <div class="forecast-stamp__freshness"><dt>新鲜度</dt><dd>{{ freshnessLabel }}</dd></div>
-      </dl>
     </header>
 
     <div v-if="loading" class="forecast-loading" role="status" aria-live="polite">
@@ -145,6 +138,13 @@ defineExpose({ refresh })
         <span>缺失保持缺失；服务端排序与陷阱分池不在浏览器重算。历史预告事实不被覆盖。</span>
       </footer>
     </template>
+
+    <dl class="forecast-stamp" :class="{ 'is-degraded': partialNotes.length, 'is-unavailable': unavailable }" aria-label="业绩预告报告期、服务端时点、数据状态与新鲜度说明">
+      <div><dt>报告期</dt><dd class="mono">{{ formatCompactDate(data?.period) }}<span v-if="!data?.period" class="sr-only">报告期缺失</span></dd></div>
+      <div><dt>服务端计算时点</dt><dd class="mono">{{ data?.ts || '—' }}<span v-if="!data?.ts" class="sr-only">时点缺失</span></dd></div>
+      <div><dt>数据状态</dt><dd>{{ statusLabel }}</dd></div>
+      <div class="forecast-stamp__freshness"><dt>新鲜度</dt><dd>{{ freshnessLabel }}</dd></div>
+    </dl>
   </section>
 </template>
 

@@ -33,9 +33,14 @@ from .simulation import SimulationStore
 
 log = logging.getLogger("hermes")
 
-FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+VUE_FRONTEND_DIR = PROJECT_ROOT / "frontend-vue" / "dist"
+LEGACY_FRONTEND_DIR = PROJECT_ROOT / "frontend"
 _FINGERPRINTED_ASSET = re.compile(r"(?:^|[._-])[0-9a-f]{8,}(?:[._-]|$)", re.IGNORECASE)
-_STATIC_PREFIXES = ("/css/", "/js/", "/vendor/", "/ext/")
+_STATIC_PREFIXES = (
+    "/assets/", "/ext/", "/css/", "/js/", "/vendor/",
+    "/legacy/css/", "/legacy/js/", "/legacy/vendor/",
+)
 _STATIC_SUFFIXES = (
     ".css", ".js", ".mjs", ".woff", ".woff2", ".svg", ".png", ".jpg", ".jpeg", ".webp", ".ico",
 )
@@ -53,14 +58,55 @@ def frontend_cache_control(path: str, asset_version: str = "") -> str | None:
     release cannot leave clients on an old module graph for long.
     """
     normalized = str(path or "")
-    if normalized == "/" or normalized.endswith(".html"):
+    if normalized in {"/", "/legacy", "/legacy/"} or normalized.endswith(".html"):
         return _HTML_CACHE_CONTROL
     if not normalized.startswith(_STATIC_PREFIXES) or not normalized.lower().endswith(_STATIC_SUFFIXES):
         return None
+    # Vite 的 /assets/ 文件名均带内容哈希，但哈希字符集不保证只是十六进制。
+    if normalized.startswith("/assets/"):
+        return _VERSIONED_CACHE_CONTROL
     filename = normalized.rsplit("/", 1)[-1]
     if asset_version == __version__ or _FINGERPRINTED_ASSET.search(filename):
         return _VERSIONED_CACHE_CONTROL
     return _SHORT_STATIC_CACHE_CONTROL
+
+
+def mount_frontends(app: FastAPI, config, *, project_root: Path = PROJECT_ROOT) -> None:
+    """挂载 Vue 正式入口，以及按配置开启的旧版对照入口。"""
+    vue_dir = project_root / "frontend-vue" / "dist"
+    legacy_dir = project_root / "frontend"
+    vue_index = vue_dir / "index.html"
+    if not vue_index.is_file():
+        raise RuntimeError(
+            f"未找到 Vue 构建产物 {vue_index}；请先在 frontend-vue 运行 npm run build"
+        )
+
+    # 更具体的 /legacy/ 必须先于根静态 catch-all 注册。
+    if bool(getattr(config, "legacy_enabled", False)):
+        if not (legacy_dir / "index.html").is_file():
+            raise RuntimeError(f"已启用旧版界面，但未找到 {legacy_dir / 'index.html'}")
+        app.mount(
+            "/legacy",
+            StaticFiles(directory=str(legacy_dir), html=True),
+            name="legacy_frontend",
+        )
+        # 客户扩展模块的既有契约允许绝对 import('/js/api.js')。这些兼容资源
+        # 仅随 legacy 一起开放，默认生产实例不会暴露旧版模块图。
+        for prefix in ("js", "css", "vendor"):
+            asset_dir = legacy_dir / prefix
+            if asset_dir.is_dir():
+                app.mount(
+                    f"/{prefix}",
+                    StaticFiles(directory=str(asset_dir)),
+                    name=f"legacy_{prefix}",
+                )
+        log.warning("旧版对照入口已启用：/legacy/（修改配置后需重启才能生效）")
+
+    app.mount(
+        "/",
+        StaticFiles(directory=str(vue_dir), html=True),
+        name="vue_frontend",
+    )
 
 
 def create_app(config_path: str) -> FastAPI:
@@ -196,7 +242,7 @@ def create_app(config_path: str) -> FastAPI:
     # 开发态(仓库无 core.sha256 清单)不校验、不误报。
     try:
         from .integrity import verify_core  # noqa: PLC0415
-        ci = verify_core(Path(__file__).resolve().parent.parent)
+        ci = verify_core(PROJECT_ROOT)
         app.state.core_integrity = ci
         if ci.get("manifest_present") and not ci.get("ok"):
             log.warning(
@@ -246,10 +292,7 @@ def create_app(config_path: str) -> FastAPI:
                 resp.headers["Cache-Control"] = policy
         return resp
 
-    if FRONTEND_DIR.exists():
-        app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")
-    else:
-        log.warning("未找到前端目录 %s，仅提供 API", FRONTEND_DIR)
+    mount_frontends(app, config)
     return app
 
 

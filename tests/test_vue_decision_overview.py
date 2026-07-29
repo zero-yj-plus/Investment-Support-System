@@ -174,6 +174,9 @@ def test_vue_decision_overview_has_responsive_and_accessible_shell() -> None:
     assert ':aria-controls="`nav-children-${group.id}`"' in sidebar
     assert ':aria-current="childIsActive(child.path, child.tab) ? \'page\' : undefined"' in sidebar
     assert 'class="topbar__center"' in app
+    assert 'class="topbar__leading"' in app
+    assert 'class="topbar__title"' not in app
+    assert '{{ moduleTitle }}' not in app
     assert "label: '交易中'" in app
     assert "market_session" in app
     assert ':aria-expanded="expanded"' in risk
@@ -189,6 +192,8 @@ def test_vue_decision_overview_has_responsive_and_accessible_shell() -> None:
     assert "min-height: 44px" in styles
     assert "--bg: #111a27" in styles
     assert ".topbar__center" in styles
+    assert "min-height: 56px" in styles
+    assert ".clock { display: flex; flex-direction: row" in styles
 
 
 def test_vue_sidebar_rebuilds_the_grouped_desktop_workspace_contract() -> None:

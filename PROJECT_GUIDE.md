@@ -25,8 +25,8 @@
 | 数据存储 | JSON/JSONL、SQLite/WAL、按客户 `data_dir` 隔离 |
 | AI 接入 | OpenAI 兼容 `/v1/chat/completions`；Hermes 网关为可选集成 |
 | Agent 工具 | FastMCP，只读工具为默认，维护型写入默认关闭 |
-| 前端 | 原生 ES Modules、Hash Router、ECharts、Marked、html2canvas、jsPDF |
-| Vue 重构试验 | `frontend-vue/`：Vue 3、TypeScript、Vite；已迁移决策总览、盘前、尾盘、复盘、次日策略、涨停题材、资金追踪、持仓、观察池与问股，尚未接管生产入口 |
+| 正式前端 | `frontend-vue/`：Vue 3、TypeScript、Vite、Hash Router；构建产物挂载到 `/` |
+| 旧版对照 | `frontend/`：原生 ES Modules；默认关闭，仅 `ui.legacy_enabled: true` 时挂载到 `/legacy/` |
 | 测试 | pytest、pytest-asyncio；大量契约测试直接检查 Python、API 和前端源码语义 |
 | 部署脚本 | 主要是 Bash/Linux 形态；另有跨平台 Python 运维脚本 |
 
@@ -37,7 +37,7 @@
 ```mermaid
 flowchart LR
     U["浏览器 / 飞书 / MCP Agent"] --> API["FastAPI: api/routes.py"]
-    U --> SPA["原生 JS SPA"]
+    U --> SPA["Vue 正式 SPA"]
     SPA --> API
 
     API --> ENG["Engine / 确定性分析"]
@@ -67,11 +67,13 @@ flowchart LR
 2. `main.create_app()` 加载 `Config`、客户 `Store`、模拟账本、行情证据网关和通知器。
 3. 组装 `Engine` 与 APScheduler，注册主线采样、新闻观察、龙虎榜采集和预热任务。
 4. 挂载 `/api` 路由，再发现可选 `clients/<id>/ext/` 扩展。
-5. 最后把 `frontend/` 挂载为静态 SPA；API 路由必须先于静态 catch-all 注册。
+5. 最后把 `frontend-vue/dist/` 挂载到 `/`；开启对照配置时先把 `frontend/`
+   挂载到 `/legacy/`。API、扩展和兼容资源必须先于根静态 catch-all 注册。
 
 ### 3.2 典型业务调用链
 
-- 行情页：`frontend/js/views/*.js` → `api.js` → `api/routes.py` → `data/runtime_gateway.py` 或具体数据模块 → 证据/质量字段 → 前端角标。
+- 行情页：`frontend-vue/src/composables/*.ts` → `services/api.ts` → `api/routes.py` →
+  `data/runtime_gateway.py` 或具体数据模块 → 证据/质量字段 → 前端角标。
 - 报告：API/调度器 → `analysis/engine.py` 聚合真实上下文 → `agent/prompts.py` → `HermesClient` → 数字/建议治理闸 → `knowledge/store.py` 定稿 → 交付回执。
 - 个股诊断：`/api/diagnose` → `analysis/diagnosis.py` → `data/stock.py` 与证据网关 → 结构化决策卡；深度解释可调用模型，快速路径不依赖模型。
 - 推荐闭环：建议草案 → 风险闸/人工批准 → append-only 推荐事件 → 到期真实价格回验 → T0/T1/T2/T5 统计。
@@ -87,7 +89,7 @@ flowchart LR
 4. `hermes_trader/api/routes.py`：按端点分组查入口，不建议顺序通读 4675 行。
 5. `hermes_trader/data/runtime_gateway.py`、`gateway.py`、`evidence_store.py`：理解数据真实性主干。
 6. `hermes_trader/analysis/engine.py`、`decision/risk_gate.py`：理解报告与风控主干。
-7. `frontend/js/navigation.js`、`app.js`、目标 `views/*.js`：理解前端工作台。
+7. `frontend-vue/src/navigation.ts`、`App.vue`、目标组件与 composable：理解正式前端工作台。
 8. 修改功能前，先按同名 `tests/test_*.py` 反查不可破坏的契约。
 
 ### 4.1 体量热点
@@ -110,8 +112,8 @@ flowchart LR
 | 目录 | 作用 | 是否应直接修改 |
 | --- | --- | --- |
 | `hermes_trader/` | 后端、分析、数据、Agent、任务、MCP、持久化 | 是，核心源码 |
-| `frontend/` | 原生 JS SPA、CSS、内置第三方前端库 | 自有源码可改；`vendor/` 谨慎 |
-| `frontend-vue/` | Vue 决策总览并行重构、类型定义和 UI 自动审计 | 可改；迁移完成前不得直接替换 `frontend/` |
+| `frontend-vue/` | Vue 正式工作台、类型定义、构建产物和 UI 自动审计 | 是；改源码后必须重新构建并验收 |
+| `frontend/` | 默认关闭的原生 JS 旧版对照页面 | 仅修兼容缺陷；`vendor/` 谨慎 |
 | `design-system/` | Vue 重构的设计令牌、组件规则和页面覆盖 | 视觉或交互规则变化时同步更新 |
 | `tests/` | 81 个契约/回归测试文件 | 改功能时同步补测 |
 | `scripts/` | 验收、备份、TDX 探测、受限 Hermes 启动脚本 | 运维逻辑，可改但需独立验证 |
@@ -376,10 +378,11 @@ flowchart LR
 
 不要手工格式化或局部修改压缩库；升级应替换完整上游文件并核对许可证、版本和 `index.html` 缓存参数。
 
-### 8.5 Vue 决策工作台试验 `frontend-vue/`
+### 8.5 Vue 正式决策工作台 `frontend-vue/`
 
-该目录与生产 `frontend/` 并存，目前不由 FastAPI 静态挂载。技术栈为 Vue 3、TypeScript、
-Vite。首屏继续复用 `/api/shell-status`、`/api/pulse`、`/api/market/overview_cached`、`/api/sysrisk` 和
+该目录是生产正式前端。FastAPI 将 `dist/` 挂载到 `/`；开发服务器通过 Vite 代理直接访问
+FastAPI `/api`，不依赖旧前端。旧版默认不可访问，仅配置开启并重启后挂载到 `/legacy/`。
+技术栈为 Vue 3、TypeScript、Vite。首屏继续复用 `/api/shell-status`、`/api/pulse`、`/api/market/overview_cached`、`/api/sysrisk` 和
 `/api/market/mainlines`；视口附近按需加载 `/api/sentiment/today`、`/api/market/flow`、
 `/api/market/stockflow`、`/api/market/sectors` 和 `/api/market/multiperiod`。盘前页读取定稿
 `/api/reports/morning` 与独立的 `/api/market/flow` 盘中验证，并保留生成/推送能力。接口失败必须局部降级且不得生成示例数字。
@@ -603,6 +606,8 @@ data/
 | 配置 | 含义 |
 | --- | --- |
 | `server.data_dir` | 客户运行数据隔离根。 |
+| `ui.frontend` | 正式入口；当前只允许 `vue`。 |
+| `ui.legacy_enabled` | 重启后是否提供 `/legacy/` 旧版对照入口；默认 `false`。 |
 | `data_source.policy` | 当前只允许 `free_only`。 |
 | `data_source.deployment_profile` | 必须按真实部署选 `cn_home/cn_server/overseas_server`；不要自动猜 IP。 |
 | `data_source.eastmoney_direct` | 是否允许东财直连作为公开备用。 |

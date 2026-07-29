@@ -65,6 +65,7 @@ def test_vue_report_center_preserves_missing_degraded_and_delivery_semantics() -
         "不能据此视为“无禁止条件”",
         "平台已接受请求，但这不等于最终送达或已读",
         "旧记录仅标记 pushed，未提供平台接受或送达层级",
+        "以上仅保留报告自身已有的推送标记，不能补充平台回执结论",
         "不完整输出 · 已隔离",
         "没有使用示例正文或数字补位",
         "陈旧数据：是",
@@ -143,6 +144,8 @@ def test_vue_report_center_has_page_rules_and_real_semantic_audit_fixture() -> N
     assert "不采用巨型 Hero" in rules
     assert "name: 'reports', hash: '#/history?tab=reports'" in audit
     assert "审计早盘内参" in audit
+    assert "const reportCenterFixture =" in audit
+    assert "path === '/api/reports/morning' ? reportCenterFixture : fixtures[path]" in audit
     for scenario in (
         "reports-loading-375",
         "reports-empty-1440",

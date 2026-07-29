@@ -1,6 +1,6 @@
 """核心完整性校验 —— 母项目隔离铁律的「技术闸」。
 
-定位：部署到客户机上的 `hermes_trader/` + `frontend/` 是**共享产品真源**，客户的一切定制只许落在
+定位：部署到客户机上的 `hermes_trader/` + `frontend-vue/` + `frontend/` 是**共享产品真源**，客户的一切定制只许落在
 `clients/<id>/`(config / ext / data)。本模块给"客户不许改核心"加一道技术校验：
   · 打升级包时(`clients/package_core.sh`)用 `write_manifest()` 把全核心文件的 sha256 写进 `core.sha256`；
   · 客户机启动时(`main.py`)与升级时(`upgrade_core.sh`)用 `verify_core()` 重算并比对 →
@@ -19,13 +19,23 @@ from pathlib import Path
 from . import __version__
 
 # 纳入完整性校验的核心源文件后缀（产品逻辑/界面）。data/缓存/字节码/配置不算核心。
-_EXTS = {".py", ".js", ".css", ".html", ".mjs"}
-_CORE_DIRS = ("hermes_trader", "frontend")
+_EXTS = {".py", ".js", ".css", ".html", ".mjs", ".ts", ".vue", ".json"}
+_CORE_DIRS = ("hermes_trader", "frontend", "frontend-vue/src", "frontend-vue/dist")
+_CORE_FILES = (
+    "frontend-vue/index.html",
+    "frontend-vue/package.json",
+    "frontend-vue/package-lock.json",
+    "frontend-vue/tsconfig.json",
+    "frontend-vue/vite.config.ts",
+)
 MANIFEST_NAME = "core.sha256"
 
 
 def _iter_core_files(root: Path):
-    """部署根下 hermes_trader/ + frontend/ 里的核心源文件相对路径（POSIX、排序、去 __pycache__）。"""
+    """部署根下后端、Vue 正式界面与旧版对照界面的核心文件。"""
+    for rel in _CORE_FILES:
+        if (root / rel).is_file():
+            yield rel
     for d in _CORE_DIRS:
         base = root / d
         if not base.exists():
@@ -47,7 +57,7 @@ def _hash_file(p: Path) -> str:
 
 
 def compute_manifest(root) -> dict:
-    """{相对路径: sha256} —— 当前 hermes_trader/+frontend/ 的全核心文件指纹。"""
+    """{相对路径: sha256} —— 当前后端与两套前端的全核心文件指纹。"""
     root = Path(root)
     return {rel: _hash_file(root / rel) for rel in _iter_core_files(root)}
 

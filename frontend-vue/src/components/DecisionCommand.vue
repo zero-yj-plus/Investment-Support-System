@@ -39,7 +39,6 @@ const cells = computed(() => {
   <section class="decision-command panel" aria-labelledby="decision-title" aria-live="polite">
     <div class="decision-command__heading">
       <div>
-        <p class="eyebrow">ACTION BRIEF</p>
         <h2 id="decision-title">今日决策</h2>
       </div>
       <div class="decision-command__meta">

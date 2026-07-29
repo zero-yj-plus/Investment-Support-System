@@ -42,17 +42,10 @@ defineExpose({ refresh })
 <template>
   <section class="capital-page" aria-labelledby="capital-page-title" :aria-busy="loading || refreshing || snapshotting">
     <header class="capital-intro">
-      <div>
-        <p class="eyebrow">市场结构 · 资金时序证据</p>
+      <div class="page-heading">
         <h1 id="capital-page-title">资金追踪</h1>
-        <p>追踪行业与热门股的主力资金日内流向；先辨认数据日期、单位与连续性，再复核资金聚焦和分歧。</p>
+        <p class="page-subtitle">追踪行业与热门股的主力资金日内流向；先辨认数据日期、单位与连续性，再复核资金聚焦和分歧。</p>
       </div>
-      <dl class="capital-stamp" :class="{ 'is-stale': isStale, 'is-degraded': isRaw || data?.ok === false }" aria-label="资金追踪数据日期、采样时点与状态">
-        <div><dt>行业日期</dt><dd class="mono">{{ data?.sector_date || '—' }}<span v-if="!data?.sector_date" class="sr-only">数据缺失</span></dd></div>
-        <div><dt>热门股日期</dt><dd class="mono">{{ data?.hot_date || '—' }}<span v-if="!data?.hot_date" class="sr-only">数据缺失</span></dd></div>
-        <div><dt>最近采样</dt><dd class="mono">{{ data?.snap_ts || '—' }}<span v-if="!data?.snap_ts" class="sr-only">数据缺失</span></dd></div>
-        <div><dt>数据状态</dt><dd>{{ statusLabel }}</dd></div>
-      </dl>
     </header>
 
     <div class="sr-only" aria-live="polite">{{ refreshing ? '资金追踪正在刷新' : actionFeedback?.message || (error ? `资金追踪读取异常：${error}` : `资金追踪状态：${statusLabel}`) }}</div>
@@ -100,6 +93,13 @@ defineExpose({ refresh })
         <span>本页只展示服务端资金快照，不生成买卖、仓位或价格区间结论。</span>
       </footer>
     </template>
+
+    <dl class="capital-stamp" :class="{ 'is-stale': isStale, 'is-degraded': isRaw || data?.ok === false }" aria-label="资金追踪数据日期、采样时点与状态">
+      <div><dt>行业日期</dt><dd class="mono">{{ data?.sector_date || '—' }}<span v-if="!data?.sector_date" class="sr-only">数据缺失</span></dd></div>
+      <div><dt>热门股日期</dt><dd class="mono">{{ data?.hot_date || '—' }}<span v-if="!data?.hot_date" class="sr-only">数据缺失</span></dd></div>
+      <div><dt>最近采样</dt><dd class="mono">{{ data?.snap_ts || '—' }}<span v-if="!data?.snap_ts" class="sr-only">数据缺失</span></dd></div>
+      <div><dt>数据状态</dt><dd>{{ statusLabel }}</dd></div>
+    </dl>
   </section>
 </template>
 

@@ -70,17 +70,10 @@ defineExpose({ refresh })
 <template>
   <section class="holdings-page" aria-labelledby="holdings-page-title" :aria-busy="pageRefreshing">
     <header class="holdings-intro">
-      <div>
-        <p class="eyebrow">持仓风控 · 个人账本</p>
+      <div class="page-heading">
         <h1 id="holdings-page-title">我的持仓</h1>
-        <p>核对真实持仓、当前报价、持仓市值与盈亏边界；页面只做展示算术和账本编辑，不在浏览器中生成交易结论。</p>
+        <p class="page-subtitle">核对真实持仓、当前报价、持仓市值与盈亏边界；页面只做展示算术和账本编辑，不在浏览器中生成交易结论。</p>
       </div>
-      <dl class="holdings-stamp" :class="{ 'is-degraded': quotesError || hasStaleQuotes || holdingsError }" aria-label="持仓数据日期、关键时点与状态">
-        <div><dt>账本状态</dt><dd>{{ loaded ? '已加载' : loading ? '加载中' : '未加载' }}</dd></div>
-        <div><dt>报价时点</dt><dd class="mono">{{ quoteStamp }}<span v-if="!quoteAsOf" class="sr-only">时点缺失</span></dd></div>
-        <div><dt>报价来源</dt><dd>{{ sourceLabel }}<span v-if="!quoteSources.length" class="sr-only">来源缺失</span></dd></div>
-        <div><dt>数据状态</dt><dd>{{ dataStatus }}</dd></div>
-      </dl>
     </header>
 
     <div class="sr-only" aria-live="polite">
@@ -167,6 +160,13 @@ defineExpose({ refresh })
         </footer>
       </template>
     </template>
+
+    <dl class="holdings-stamp" :class="{ 'is-degraded': quotesError || hasStaleQuotes || holdingsError }" aria-label="持仓数据日期、关键时点与状态">
+      <div><dt>账本状态</dt><dd>{{ loaded ? '已加载' : loading ? '加载中' : '未加载' }}</dd></div>
+      <div><dt>报价时点</dt><dd class="mono">{{ quoteStamp }}<span v-if="!quoteAsOf" class="sr-only">时点缺失</span></dd></div>
+      <div><dt>报价来源</dt><dd>{{ sourceLabel }}<span v-if="!quoteSources.length" class="sr-only">来源缺失</span></dd></div>
+      <div><dt>数据状态</dt><dd>{{ dataStatus }}</dd></div>
+    </dl>
   </section>
 </template>
 

@@ -21,7 +21,7 @@ def production_sources() -> str:
     return "\n".join(read(path) for path in paths)
 
 
-def test_vue_forecast_mining_route_is_reachable_without_migrating_research_siblings() -> None:
+def test_vue_forecast_mining_route_remains_reachable_with_migrated_research_siblings() -> None:
     app = read("src/App.vue")
     navigation = read("src/navigation.ts")
 
@@ -30,8 +30,8 @@ def test_vue_forecast_mining_route_is_reachable_without_migrating_research_sibli
     assert 'v-else-if="isForecastMining"' in app
     assert "if (isForecastMining.value && forecastMiningPage.value)" in app
     assert "{ path: 'research', tab: 'events', label: '事件掘金' }" in navigation
-    assert "const isCompany" not in app
-    assert "const isChain" not in app
+    assert "const isCompanyResearch" in app
+    assert "const isIndustryChain" in app
 
 
 def test_vue_forecast_mining_uses_only_the_real_deterministic_endpoint() -> None:

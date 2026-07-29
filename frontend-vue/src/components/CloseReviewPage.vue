@@ -57,14 +57,9 @@ defineExpose({ refresh })
 <template>
   <section class="close-review-page" aria-labelledby="close-review-page-title">
     <header class="premarket-page__intro close-review-page__intro">
-      <div>
-        <p class="eyebrow">交易日 15:30 收盘复盘</p>
+      <div class="page-heading">
         <h1 id="close-review-page-title">今日复盘</h1>
-        <p>先确认收盘结论和风险边界，再核对昨日建议与推荐回验，最后阅读正式复盘。历史判断只追加、不回写。</p>
-      </div>
-      <div class="premarket-page__stamp" aria-label="复盘日期与生成时点">
-        <span>{{ reportTime.date }}</span>
-        <strong class="mono">{{ reportTime.time }}</strong>
+        <p class="page-subtitle">先确认收盘结论和风险边界，再核对昨日建议与推荐回验，最后阅读正式复盘。历史判断只追加、不回写。</p>
       </div>
     </header>
 
@@ -158,5 +153,10 @@ defineExpose({ refresh })
         <span>版本治理：正式报告、建议与回验采用 append-only 语义。</span>
       </footer>
     </template>
+
+    <div class="premarket-page__stamp" aria-label="复盘日期与生成时点">
+      <span>{{ reportTime.date }}</span>
+      <strong class="mono">{{ reportTime.time }}</strong>
+    </div>
   </section>
 </template>

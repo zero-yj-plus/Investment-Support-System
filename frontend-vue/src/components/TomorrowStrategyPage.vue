@@ -50,13 +50,9 @@ defineExpose({ refresh })
 <template>
   <section class="tomorrow-page" aria-labelledby="tomorrow-page-title">
     <header class="premarket-page__intro">
-      <div>
-        <p class="eyebrow">交易日 19:30 · 次日行动边界</p>
+      <div class="page-heading">
         <h1 id="tomorrow-page-title">次日策略</h1>
         <p class="tomorrow-page__description">今日尾盘与收盘定稿只作上游事实，不被晚间信息回写。先确认风险与禁止条件，再核对观察池和正式报告。</p>
-      </div>
-      <div class="premarket-page__stamp" aria-label="次日策略数据日期与生成时点">
-        <span>{{ reportTime.date }}</span><strong class="mono">{{ reportTime.time }}</strong>
       </div>
     </header>
 
@@ -137,6 +133,9 @@ defineExpose({ refresh })
         <span>历史报告采用追加式留痕；本页不连接券商真实下单。</span>
       </footer>
     </template>
+    <div class="premarket-page__stamp" aria-label="次日策略数据日期与生成时点">
+      <span>{{ reportTime.date }}</span><strong class="mono">{{ reportTime.time }}</strong>
+    </div>
   </section>
 </template>
 

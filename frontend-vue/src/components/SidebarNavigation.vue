@@ -119,7 +119,7 @@ defineExpose({ focusFirstItem })
       <a
         class="nav-utility"
         :class="{ active: currentPath === 'settings' }"
-        href="#/settings?tab=system"
+        href="#settings-tasks"
         :aria-current="currentPath === 'settings' ? 'page' : undefined"
         :title="collapsed ? '系统设置' : undefined"
         @click="emit('closeMenu')"

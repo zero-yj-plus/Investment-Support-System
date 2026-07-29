@@ -9,6 +9,10 @@ server:
   port: 18869
   data_dir: ./data
 
+ui:
+  frontend: vue
+  legacy_enabled: false
+
 hermes:
   base_url: "http://127.0.0.1:8874/v1"
   model: "hermes-agent"

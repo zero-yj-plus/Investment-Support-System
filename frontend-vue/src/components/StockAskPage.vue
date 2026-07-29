@@ -44,16 +44,10 @@ defineExpose({ refresh })
 <template>
   <section class="stock-ask-page" aria-labelledby="stock-ask-page-title" :aria-busy="refreshing || streaming">
     <header class="stock-ask-page__header">
-      <div>
-        <p class="eyebrow">研究中心 · 服务端治理问答</p>
+      <div class="page-heading">
         <h1 id="stock-ask-page-title">问股</h1>
-        <p>专属盘中问股：先锁定单只 A 股，再围绕当前动作、风险边界、失效条件和证据完整性提问。</p>
+        <p class="page-subtitle">专属盘中问股：先锁定单只 A 股，再围绕当前动作、风险边界、失效条件和证据完整性提问。</p>
       </div>
-      <dl>
-        <div><dt>当前标的</dt><dd class="mono">{{ selectedCode || '—' }}</dd></div>
-        <div><dt>数据时点</dt><dd class="mono">{{ dataStamp }}</dd></div>
-        <div><dt>证据状态</dt><dd>{{ healthLabel }}</dd></div>
-      </dl>
     </header>
 
     <form class="stock-ask-selector panel" novalidate @submit.prevent="submitCode">
@@ -131,6 +125,11 @@ defineExpose({ refresh })
       <span>本页不提供自由问答、持仓判断或产业链挖掘。</span>
       <span>未完整回答不保存；历史消息只追加，不覆盖既有事实。</span>
     </footer>
+    <dl class="stock-ask-page__stamp" aria-label="问股标的、数据时点与证据状态">
+      <div><dt>当前标的</dt><dd class="mono">{{ selectedCode || '—' }}</dd></div>
+      <div><dt>数据时点</dt><dd class="mono">{{ dataStamp }}</dd></div>
+      <div><dt>证据状态</dt><dd>{{ healthLabel }}</dd></div>
+    </dl>
   </section>
 </template>
 
@@ -144,6 +143,9 @@ defineExpose({ refresh })
 .stock-ask-page__header dl div:last-child { border-right: 0; }
 .stock-ask-page__header dt { color: var(--text-3); font-size: 12px; }
 .stock-ask-page__header dd { margin: 2px 0 0; overflow-wrap: anywhere; color: var(--text); font-size: 14px; font-weight: 720; }
+.stock-ask-page__stamp { display: grid; grid-template-columns: repeat(3, minmax(100px, 1fr)); min-width: min(100%, 440px); margin: 0; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+.stock-ask-page__stamp div { min-width: 0; padding: 9px 10px; border-right: 1px solid var(--border); }.stock-ask-page__stamp div:last-child { border-right: 0; }
+.stock-ask-page__stamp dt { color: var(--text-3); font-size: 12px; }.stock-ask-page__stamp dd { margin: 2px 0 0; overflow-wrap: anywhere; color: var(--text); font-size: 14px; font-weight: 720; }
 .stock-ask-selector { display: grid; grid-template-columns: minmax(230px, 1fr) auto; align-items: center; gap: 8px 18px; padding: 12px 14px; }
 .stock-ask-selector__copy { display: flex; min-width: 0; flex-direction: column; }
 .stock-ask-selector__copy label { color: var(--text); font-weight: 750; }
@@ -166,6 +168,7 @@ defineExpose({ refresh })
 @media (max-width: 1180px) {
   .stock-ask-page__header { flex-direction: column; gap: 10px; }
   .stock-ask-page__header dl { width: 100%; }
+  .stock-ask-page__stamp { width: 100%; }
   .stock-ask-workbench { grid-template-columns: minmax(190px, 220px) minmax(0, 1fr); grid-template-areas: "history conversation" "evidence evidence"; }
 }
 
@@ -180,6 +183,9 @@ defineExpose({ refresh })
   .stock-ask-page__header dl { grid-template-columns: minmax(0, 1fr); }
   .stock-ask-page__header dl div { border-right: 0; border-bottom: 1px solid var(--border); }
   .stock-ask-page__header dl div:last-child { border-bottom: 0; }
+  .stock-ask-page__stamp { grid-template-columns: minmax(0, 1fr); }
+  .stock-ask-page__stamp div { border-right: 0; border-bottom: 1px solid var(--border); }
+  .stock-ask-page__stamp div:last-child { border-bottom: 0; }
   .stock-ask-selector { padding: 10px; }
   .stock-ask-selector__controls { grid-template-columns: minmax(0, 1fr); }
   .stock-ask-selector input, .stock-ask-selector button { min-height: 52px; }

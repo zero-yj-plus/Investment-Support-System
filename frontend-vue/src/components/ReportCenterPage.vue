@@ -47,14 +47,9 @@ defineExpose({ refresh })
 <template>
   <section class="report-center-page" aria-labelledby="report-center-page-title">
     <header class="report-center-intro">
-      <div>
-        <p class="eyebrow">追加式报告与交付留痕</p>
+      <div class="page-heading">
         <h1 id="report-center-page-title">报告中心</h1>
-        <p>先核对服务端定稿结论与风险边界，再阅读正文和交付回执；前端不重算交易结论。</p>
-      </div>
-      <div class="report-center-intro__stamp" aria-label="当前报告日期与计划时点">
-        <span class="mono">{{ selectedDate }}</span>
-        <strong>{{ selectedOption.label }} · {{ selectedOption.scheduledAt }}</strong>
+        <p class="page-subtitle">先核对服务端定稿结论与风险边界，再阅读正文和交付回执；前端不重算交易结论。</p>
       </div>
     </header>
 
@@ -209,6 +204,10 @@ defineExpose({ refresh })
           <p v-if="actionError && !generationIncomplete" class="report-center-empty__error" role="alert">{{ actionError }}</p>
         </section>
       </div>
+    </div>
+    <div class="report-center-intro__stamp" aria-label="当前报告日期与计划时点">
+      <span class="mono">{{ selectedDate }}</span>
+      <strong>{{ selectedOption.label }} · {{ selectedOption.scheduledAt }}</strong>
     </div>
   </section>
 </template>

@@ -109,17 +109,10 @@ defineExpose({ refresh })
 <template>
   <section class="watchlist-page" aria-labelledby="watchlist-page-title" :aria-busy="pageRefreshing">
     <header class="watchlist-intro">
-      <div>
-        <p class="eyebrow">持仓风控 · 等待清单</p>
+      <div class="page-heading">
         <h1 id="watchlist-page-title">观察池</h1>
-        <p>管理“想买但尚未买”的标的。评级、状态、价格区间与位置只展示服务端确定性结果，页面不生成买卖结论。</p>
+        <p class="page-subtitle">管理“想买但尚未买”的标的。评级、状态、价格区间与位置只展示服务端确定性结果，页面不生成买卖结论。</p>
       </div>
-      <dl class="watchlist-stamp" :class="{ 'is-degraded': dataStatus !== '数据完整' }" aria-label="观察池数据日期、关键时点与状态">
-        <div><dt>列表时点</dt><dd class="mono">{{ compactTime(timestamp) }}</dd></div>
-        <div><dt>区间数据日期</dt><dd class="mono">{{ zoneDates.length ? zoneDates.join(' / ') : '—' }}</dd></div>
-        <div><dt>算法版本</dt><dd class="mono">{{ algorithmVersions.length ? algorithmVersions.join(' / ') : '—' }}</dd></div>
-        <div><dt>数据状态</dt><dd>{{ dataStatus }}</dd></div>
-      </dl>
     </header>
 
     <div class="sr-only" aria-live="polite">
@@ -217,6 +210,13 @@ defineExpose({ refresh })
         </footer>
       </template>
     </template>
+
+    <dl class="watchlist-stamp" :class="{ 'is-degraded': dataStatus !== '数据完整' }" aria-label="观察池数据日期、关键时点与状态">
+      <div><dt>列表时点</dt><dd class="mono">{{ compactTime(timestamp) }}</dd></div>
+      <div><dt>区间数据日期</dt><dd class="mono">{{ zoneDates.length ? zoneDates.join(' / ') : '—' }}</dd></div>
+      <div><dt>算法版本</dt><dd class="mono">{{ algorithmVersions.length ? algorithmVersions.join(' / ') : '—' }}</dd></div>
+      <div><dt>数据状态</dt><dd>{{ dataStatus }}</dd></div>
+    </dl>
   </section>
 </template>
 

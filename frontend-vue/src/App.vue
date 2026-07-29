@@ -21,6 +21,7 @@ import ReportCenterPage from './components/ReportCenterPage.vue'
 import RiskOverview from './components/RiskOverview.vue'
 import ScreenerPage from './components/ScreenerPage.vue'
 import SentimentEventsPage from './components/SentimentEventsPage.vue'
+import SettingsPage from './components/SettingsPage.vue'
 import SidebarNavigation from './components/SidebarNavigation.vue'
 import StockAskPage from './components/StockAskPage.vue'
 import TailReportPage from './components/TailReportPage.vue'
@@ -32,6 +33,17 @@ import { useDecisionOverview } from './composables/useDecisionOverview'
 import { findActiveNavigation } from './navigation'
 
 type Theme = 'dark' | 'light'
+type SettingsSection = 'tasks' | 'delivery' | 'models' | 'data' | 'governance'
+const settingsHashSections: Record<string, SettingsSection> = {
+  'settings-tasks': 'tasks',
+  'settings-delivery': 'delivery',
+  'settings-models': 'models',
+  'settings-data': 'data',
+  'settings-governance': 'governance',
+}
+const settingsSectionTitles: Record<SettingsSection, string> = {
+  tasks: '任务计划', delivery: '交付推送', models: '模型连接', data: '数据健康', governance: '版本治理',
+}
 const { data, errors, loading, refreshing, lastSuccessAt, quality, connectionLabel, refresh } = useDecisionOverview()
 const menuOpen = ref(false)
 const menuButton = ref<HTMLButtonElement | null>(null)
@@ -47,6 +59,7 @@ const holdingsPage = ref<InstanceType<typeof HoldingsPage> | null>(null)
 const timingPage = ref<InstanceType<typeof TimingPage> | null>(null)
 const mainlineResearchPage = ref<InstanceType<typeof MainlineResearchPage> | null>(null)
 const sentimentEventsPage = ref<InstanceType<typeof SentimentEventsPage> | null>(null)
+const settingsPage = ref<InstanceType<typeof SettingsPage> | null>(null)
 const stockAskPage = ref<InstanceType<typeof StockAskPage> | null>(null)
 const diagnosisPage = ref<InstanceType<typeof DiagnosisPage> | null>(null)
 const forecastMiningPage = ref<InstanceType<typeof ForecastMiningPage> | null>(null)
@@ -85,13 +98,18 @@ const isScreener = computed(() => routePath.value === 'research' && routeTab.val
 const isTechnicalScreener = computed(() => routePath.value === 'research' && routeTab.value === 'technical-screener')
 const isReportCenter = computed(() => routePath.value === 'history' && routeTab.value === 'reports')
 const isKnowledge = computed(() => routePath.value === 'history' && routeTab.value === 'knowledge')
+const isSettings = computed(() => routePath.value === 'settings')
+const settingsSection = computed<SettingsSection>(() => (
+  ['tasks', 'delivery', 'models', 'data', 'governance'].includes(routeTab.value)
+    ? routeTab.value as SettingsSection
+    : 'tasks'
+))
 const activeNavigation = computed(() => findActiveNavigation(routePath.value, routeTab.value))
-const moduleTitle = computed(() => activeNavigation.value?.group.label || (routePath.value === 'settings' ? '系统设置' : '交易工作台'))
-const pageTitle = computed(() => activeNavigation.value?.child.label || (routePath.value === 'settings' ? '系统设置' : '页面迁移中'))
-const pageRefreshing = computed(() => isHotboard.value || isHoldings.value || isWatchlist.value || isTiming.value || isMainlineResearch.value || isSentimentEvents.value || isTomorrowStrategy.value || isCapitalTracking.value || isStockAsk.value || isDiagnosis.value || isForecastMining.value || isIndustryChain.value || isCompanyResearch.value || isScreener.value || isTechnicalScreener.value || isReportCenter.value || isKnowledge.value
+const pageTitle = computed(() => activeNavigation.value?.child.label || (routePath.value === 'settings' ? settingsSectionTitles[settingsSection.value] : '页面迁移中'))
+const pageRefreshing = computed(() => isHotboard.value || isHoldings.value || isWatchlist.value || isTiming.value || isMainlineResearch.value || isSentimentEvents.value || isTomorrowStrategy.value || isCapitalTracking.value || isStockAsk.value || isDiagnosis.value || isForecastMining.value || isIndustryChain.value || isCompanyResearch.value || isScreener.value || isTechnicalScreener.value || isReportCenter.value || isKnowledge.value || isSettings.value
   ? reportRefreshing.value
   : refreshing.value || reportRefreshing.value)
-const pageBusy = computed(() => isHotboard.value || isHoldings.value || isWatchlist.value || isTiming.value || isMainlineResearch.value || isSentimentEvents.value || isTomorrowStrategy.value || isCapitalTracking.value || isStockAsk.value || isDiagnosis.value || isForecastMining.value || isIndustryChain.value || isCompanyResearch.value || isScreener.value || isTechnicalScreener.value || isReportCenter.value || isKnowledge.value
+const pageBusy = computed(() => isHotboard.value || isHoldings.value || isWatchlist.value || isTiming.value || isMainlineResearch.value || isSentimentEvents.value || isTomorrowStrategy.value || isCapitalTracking.value || isStockAsk.value || isDiagnosis.value || isForecastMining.value || isIndustryChain.value || isCompanyResearch.value || isScreener.value || isTechnicalScreener.value || isReportCenter.value || isKnowledge.value || isSettings.value
   ? reportRefreshing.value
   : loading.value || pageRefreshing.value)
 
@@ -169,6 +187,12 @@ function updateRoute() {
     risk: 'holdings', research: 'ask', history: 'reports', settings: 'system',
   }
   const requestedTab = new URLSearchParams(query).get('tab') || defaults[path] || ''
+  const directSettingsSection = settingsHashSections[path]
+  if (directSettingsSection) {
+    routePath.value = 'settings'
+    routeTab.value = directSettingsSection
+    return
+  }
   if (path === 'risk' && requestedTab === 'simulation') {
     window.history.replaceState(null, '', '#/risk?tab=holdings')
     routePath.value = 'risk'
@@ -190,6 +214,10 @@ function expandSidebar() {
 }
 
 async function refreshCurrentPage() {
+  if (isSettings.value && settingsPage.value) {
+    await Promise.resolve(settingsPage.value.refresh())
+    return
+  }
   if (isKnowledge.value && knowledgePage.value) {
     await Promise.resolve(knowledgePage.value.refresh())
     return
@@ -318,7 +346,7 @@ watch(pageTitle, (value) => { document.title = `${value} · W.U.D.I.` }, { immed
 
     <div class="workspace">
       <header class="topbar">
-        <div class="topbar__title">
+        <div class="topbar__leading">
           <button
             ref="menuButton"
             class="icon-button menu-button"
@@ -328,7 +356,6 @@ watch(pageTitle, (value) => { document.title = `${value} · W.U.D.I.` }, { immed
             :aria-label="menuOpen ? '关闭主导航' : '打开主导航'"
             @click="toggleMenu"
           ><AppIcon name="menu" :size="21" /></button>
-          <div><span>{{ moduleTitle }}</span><strong>{{ pageTitle }}</strong></div>
         </div>
         <div class="topbar__center">
           <time class="clock" :datetime="data.shell?.market_context?.now" aria-label="北京时间">
@@ -476,6 +503,13 @@ watch(pageTitle, (value) => { document.title = `${value} · W.U.D.I.` }, { immed
         <KnowledgePage
           v-else-if="isKnowledge"
           ref="knowledgePage"
+          @refresh-state="reportRefreshing = $event"
+        />
+
+        <SettingsPage
+          v-else-if="isSettings"
+          ref="settingsPage"
+          :section="settingsSection"
           @refresh-state="reportRefreshing = $event"
         />
 

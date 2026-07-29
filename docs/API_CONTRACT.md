@@ -30,10 +30,14 @@ Agent 权限、证据库健康或任务中心，因此不得因运维上游超�
   "recommended_route": "today",
   "market_context": {"recommended_hash": "#/today"},
   "route_redirects": [],
-  "ui": {},
+  "ui": {"frontend": "vue", "legacy_enabled": false},
   "data_source": "多源行情"
 }
 ```
+
+`ui.frontend` 当前只允许 `vue`。`ui.legacy_enabled` 是启动期静态挂载开关：默认
+`false` 时 `/legacy/` 与旧版兼容模块均为 404；改为 `true` 并重启后端后才提供旧版对照页面。
+该配置不改变 `/api/*` 契约，Vue 开发服务器和正式构建都直接请求同一组 API。
 
 ### GET /api/status
 ```json

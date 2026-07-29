@@ -129,16 +129,10 @@ defineExpose({ refresh })
 <template>
   <section class="technical-screener-page" aria-labelledby="technical-screener-page-title" :aria-busy="busy">
     <header class="technical-screener-intro">
-      <div>
-        <p class="eyebrow">研究中心 · 本地确定性信号</p>
+      <div class="page-heading">
         <h1 id="technical-screener-page-title">技术面选股</h1>
-        <p>全市场前复权技术信号缓存；事件与状态分离，普通筛选不触发逐股网络采集。</p>
+        <p class="page-subtitle">全市场前复权技术信号缓存；事件与状态分离，普通筛选不触发逐股网络采集。</p>
       </div>
-      <dl class="technical-screener-stamp" aria-label="技术面选股数据日期与缓存状态">
-        <div><dt>数据日期</dt><dd class="mono">{{ status?.data_date || '—' }}</dd></div>
-        <div><dt>缓存状态</dt><dd><DataStatus :state="quality" :label="cacheLabel" /></dd></div>
-        <div><dt>算法版本</dt><dd class="mono">{{ status?.algorithm_ver || catalog?.algorithm_ver || '—' }}</dd></div>
-      </dl>
     </header>
 
     <section class="panel technical-decision" aria-labelledby="technical-decision-title">
@@ -248,6 +242,11 @@ defineExpose({ refresh })
       @close="closeLibrary"
       @commit="commitSignals"
     />
+    <dl class="technical-screener-stamp" aria-label="技术面选股数据日期与缓存状态">
+      <div><dt>数据日期</dt><dd class="mono">{{ status?.data_date || '—' }}</dd></div>
+      <div><dt>缓存状态</dt><dd><DataStatus :state="quality" :label="cacheLabel" /></dd></div>
+      <div><dt>算法版本</dt><dd class="mono">{{ status?.algorithm_ver || catalog?.algorithm_ver || '—' }}</dd></div>
+    </dl>
   </section>
 </template>
 

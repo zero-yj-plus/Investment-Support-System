@@ -150,12 +150,7 @@ const reportCenterMarkdown = `# 审计早盘内参
 
 > 本报告正文只作受约束解释，确定性风险与仓位边界来自服务端定格快照。`
 
-const fixtures = {
-  '/api/archive/dates': {
-    ok: true,
-    dates: ['2026-07-28', '2026-07-27', '2026-07-24'],
-  },
-  '/api/reports/morning': {
+const reportCenterFixture = {
     ok: true,
     schema_version: 'daily-report-v2',
     rtype: 'morning',
@@ -181,7 +176,14 @@ const fixtures = {
     claim_validation: { ok: true, status: 'passed', errors: [] },
     advice_governance: { ok: true, status: 'passed', proposal_only: true, errors: [] },
     input_lineage: { evidence_as_of: '2026-07-28 08:50:00' },
+}
+
+const fixtures = {
+  '/api/archive/dates': {
+    ok: true,
+    dates: ['2026-07-28', '2026-07-27', '2026-07-24'],
   },
+  '/api/reports/morning': reportCenterFixture,
   '/api/delivery/receipts': {
     ok: true,
     schema_version: 'delivery-receipt.v1',
@@ -260,9 +262,57 @@ const fixtures = {
     ],
   },
   '/api/status': {
-    model_connection: { configured: true, connected: true, status: 'connected' },
-    hermes: { agent_capability: { ready: true, status: 'ready', reason: '' } },
+    ok: true,
+    client: { name: '审计个人投资者', id: 'audit' },
+    version: '1.3.1-audit',
+    date: '2026-07-28',
+    data_source: '客户授权 TDX API + 免费公开源',
+    model_connection: { configured: true, connected: true, status: 'connected', required_for_core: false },
+    hermes: { connected: true, optional: true, required_for_core: false, agent_capability: { ready: true, status: 'restricted', reason: '审计 fixture：服务端工具权限已收敛', runtime_mode: 'server_agent', profile_attestation: 'attested', process_attestation: 'bound', unexpected_toolsets: [] } },
   },
+  '/api/settings': {
+    ok: true,
+    settings: {
+      feishu_webhook: '', feishu_webhook_set: true, feishu_secret: '', feishu_secret_set: true,
+      push_enabled: true, push_via: 'feishu', active_model_connection_id: 'audit-model',
+      schedule: { morning: '08:50', midday: '14:45', tail: '14:52', close: '15:30', evening: '19:30', archive: '22:00' },
+      model_connections: [{ id: 'audit-model', name: '审计受限模型', provider: 'hermes', base_url: 'http://127.0.0.1:8874/v1', model: 'hermes-agent', api_key_set: true, active: true }],
+      hermes_integration: { optional: true, advanced_diagnostics: true, active_as_model_gateway: true },
+      agent_require_restricted_toolsets: true, agent_allowed_toolsets: [], agent_require_profile_attestation: true,
+    },
+  },
+  '/api/jobs': {
+    ok: true, schema_version: 'task-center-v1', generated_at: '2026-07-28T10:31:00+08:00',
+    jobs: [
+      { id: 'morning', name: '早盘内参 08:50', kind: 'core', enabled: true, next_run: '2026-07-29 08:50:00', last_ok: '2026-07-28 08:51:12', last_result: { status: 'ok', started_at: '2026-07-28 08:50:00', duration_ms: 71200, output_objects: [{ kind: '正式报告', content_id: 'report:morning:2026-07-28', trade_day: '2026-07-28', version: 1, content_hash: 'a82be94d0a93' }] }, manual_run: { enabled: true }, retry: { eligible: false } },
+      { id: 'data_sentinel_am', name: '开盘前数据体检', kind: 'system', enabled: true, next_run_at: '2026-07-29 08:20:00', last_ok: '2026-07-28 08:21:03', last_result: { status: 'ok', duration_ms: 1840, output_objects: [] }, manual_run: { enabled: true }, retry: { eligible: false } },
+      { id: 'capital_snapshot', name: '资金快照', kind: 'system', enabled: true, next_run_at: '2026-07-28 10:40:00', last_run: '2026-07-28 10:30:00', last_result: { status: 'warn', duration_ms: 4630, error_code: 'industry_flow_partial', output_objects: [] }, manual_run: { enabled: true }, retry: { eligible: true } },
+    ],
+  },
+  '/api/datasources': {
+    ok: true, source_contract: 'field-route-v2', active_policy: 'free_only', ts: '2026-07-28 10:31:00',
+    deployment: { configured: 'cn_home', profile: 'cn_home', china_public_route: 'direct_low_concurrency', public_note: '审计 fixture：境内低并发直连，失败时显式降级。' },
+    universe: { count: 5412, source: 'TDX API', as_of: '2026-07-28', stale: false, refresh_required: false, missing_exchanges: [] },
+    sources: [
+      { key: 'tdx_api', name: 'TDX API', provider: '客户授权数据 API', feeds: 'A 股实时价量、股票池与板块关系', role: '基础行情主链路', status: 'ok', latency_ms: 38, last_ts: '2026-07-28 10:30:58', note: '最近调用成功' },
+      { key: 'tencent', name: '腾讯行情', provider: 'qt.gtimg.cn', feeds: '行情备用与估值补全', role: '免费实时备用', status: 'ok', latency_ms: 26, last_ts: '2026-07-28 10:30:59', note: '腾讯直连' },
+      { key: 'public_structure', name: '公开市场结构', provider: '同花顺公开接口', feeds: '涨跌停与板块结构', role: '增强数据', status: 'degraded', latency_ms: 6120, last_ts: '2026-07-28 10:30:40', note: '部分字段缺失，不影响基础行情' },
+      { key: 'public_fundamentals', name: '公开基本面', provider: '公开低频源', feeds: '财务指标与业绩预告', role: '低频研究增强', status: 'idle', latency_ms: null, last_ts: null, note: '本进程尚未采集' },
+    ],
+    field_contract: { schema_version: 'field-contract-v2', fields: { last_price: { meaning: '最近可观察成交价', unit: 'CNY', value_semantics: 'point_in_time_snapshot', route: ['tdx_api', 'tencent_quote'], live_max_age_seconds: 15, delayed_max_age_seconds: 120, batch_scope: 'quote' }, amount: { meaning: '成交额', unit: 'CNY', value_semantics: 'accumulated_intraday', route: ['tdx_api', 'tencent_quote'], live_max_age_seconds: 30, delayed_max_age_seconds: 180, batch_scope: 'quote' } } },
+  },
+  '/api/delivery/readiness': {
+    ok: true, launch_ready: true, configured: true, channel: 'feishu', targets: ['home'], blockers: [], manual_review_count: 0,
+    channels: [
+      { key: 'web', label: 'Web 页面', role: 'internal_view', state: 'ready', configured: true, enabled: true, last_success_at: '2026-07-28 08:51:12' },
+      { key: 'pdf', label: 'PDF 文件', role: 'generated_file', state: 'ready', configured: true, enabled: true, last_success_at: '2026-07-28 08:52:03' },
+      { key: 'feishu', label: '飞书', role: 'external_message', state: 'ready', configured: true, enabled: true, last_success_at: '2026-07-28 08:52:05' },
+      { key: 'wechat', label: '微信', role: 'external_message', state: 'unconfigured', configured: false, enabled: false, last_success_at: null },
+    ],
+  },
+  '/api/delivery/outbox': { ok: true, schema_version: 'delivery-outbox.v2', items: [{ delivery_id: 'delivery-audit-accepted', content_id: 'report:morning:2026-07-28', channel: 'feishu', status: 'accepted', attempts: 1, updated_at: '2026-07-28T00:52:01Z' }], count: 1 },
+  '/api/agent/runs': { ok: true, items: [{ run_id: 'ar_audit_restricted_001', purpose: 'report.morning', model: 'hermes-agent', capability_status: 'restricted', status: 'completed', attempts: 1, tool_events: 0, finish_reason: 'stop', partial_output: false, safe_to_use: true, started_at: '2026-07-28T00:50:01Z', completed_at: '2026-07-28T00:51:12Z' }] },
+  '/api/settings/model-connections': { ok: true, active_connection_id: 'audit-model', connections: [{ id: 'audit-model', name: '审计受限模型', provider: 'hermes', base_url: 'http://127.0.0.1:8874/v1', model: 'hermes-agent', api_key_set: true, active: true }] },
   '/api/shell-status': {
     ok: true,
     is_trade_day: true,
@@ -1293,6 +1343,11 @@ const auditedPages = [
   { name: 'company-research', hash: '#/research?tab=company', titleSelector: '#company-page-title' },
   { name: 'reports', hash: '#/history?tab=reports', titleSelector: '#report-center-page-title' },
   { name: 'knowledge', hash: '#/history?tab=knowledge', titleSelector: '#knowledge-page-title' },
+  { name: 'settings-tasks', hash: '#settings-tasks', titleSelector: '#settings-page-title' },
+  { name: 'settings-delivery', hash: '#settings-delivery', titleSelector: '#settings-page-title' },
+  { name: 'settings-models', hash: '#settings-models', titleSelector: '#settings-page-title' },
+  { name: 'settings-data', hash: '#settings-data', titleSelector: '#settings-page-title' },
+  { name: 'settings-governance', hash: '#settings-governance', titleSelector: '#settings-page-title' },
 ]
 
 await mkdir(outputDir, { recursive: true })
@@ -3357,7 +3412,7 @@ try {
     if (['/api/archive/dates', '/api/reports/morning', '/api/delivery/receipts'].includes(path)) {
       await new Promise((resolveDelay) => setTimeout(resolveDelay, 1800))
     }
-    const body = fixtures[path]
+    const body = path === '/api/reports/morning' ? reportCenterFixture : fixtures[path]
     return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
   })
   await reportsLoadingPage.goto('http://127.0.0.1:4175/#/history?tab=reports', { waitUntil: 'domcontentloaded' })
@@ -3420,7 +3475,7 @@ try {
     if (path === '/api/archive/dates' || path === '/api/delivery/receipts') {
       return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: '审计场景：局部链路暂不可用' }) })
     }
-    const body = fixtures[path]
+    const body = path === '/api/reports/morning' ? reportCenterFixture : fixtures[path]
     return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
   })
   await reportsFailurePage.goto('http://127.0.0.1:4175/#/history?tab=reports', { waitUntil: 'networkidle' })
@@ -3541,6 +3596,123 @@ try {
   })
   await knowledgeFailurePage.close()
 
+  const settingsLoadingPage = await browser.newPage({ viewport: { width: 375, height: 812 }, deviceScaleFactor: 1 })
+  const settingsLoadingErrors = []
+  settingsLoadingPage.on('pageerror', (error) => settingsLoadingErrors.push(error.message))
+  await settingsLoadingPage.addInitScript(() => localStorage.setItem('wudi-vue-theme', 'dark'))
+  await settingsLoadingPage.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    if (['/api/settings', '/api/status', '/api/jobs', '/api/datasources', '/api/delivery/readiness', '/api/delivery/receipts', '/api/delivery/outbox', '/api/agent/runs', '/api/settings/model-connections'].includes(path)) {
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 1800))
+    }
+    const body = fixtures[path]
+    return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
+  })
+  await settingsLoadingPage.goto('http://127.0.0.1:4175/#settings-tasks', { waitUntil: 'domcontentloaded' })
+  await settingsLoadingPage.waitForSelector('.settings-loading')
+  await settingsLoadingPage.addScriptTag({ content: axeSource })
+  const settingsLoadingState = await settingsLoadingPage.evaluate(() => ({
+    delayedSkeletonVisible: document.querySelectorAll('.settings-loading > .panel').length === 4,
+    shellSurvives: Boolean(document.querySelector('.topbar')),
+    noPageOverflow: document.documentElement.scrollWidth <= window.innerWidth,
+  }))
+  const settingsLoadingAxe = await settingsLoadingPage.evaluate(async () => window.axe.run(document, {
+    runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+  }))
+  await settingsLoadingPage.screenshot({ path: resolve(outputDir, 'settings-loading-375-dark.png'), fullPage: true })
+  report.push({
+    page: 'settings', scenario: 'settings-loading-375', settingsLoadingState,
+    settingsLoadingStateComplete: Object.values(settingsLoadingState).every(Boolean),
+    pageErrors: settingsLoadingErrors,
+    violations: settingsLoadingAxe.violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help, nodes: item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })),
+  })
+  await settingsLoadingPage.close()
+
+  const settingsEmptyPage = await browser.newPage({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 1 })
+  const settingsEmptyErrors = []
+  settingsEmptyPage.on('pageerror', (error) => settingsEmptyErrors.push(error.message))
+  await settingsEmptyPage.addInitScript(() => localStorage.setItem('wudi-vue-theme', 'dark'))
+  await settingsEmptyPage.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    let body = fixtures[path]
+    if (path === '/api/jobs') body = { ok: true, schema_version: 'task-center-v1', generated_at: '2026-07-28T10:31:00+08:00', jobs: [] }
+    if (path === '/api/datasources') body = { ok: true, source_contract: 'field-route-v2', active_policy: 'free_only', ts: '2026-07-28 10:31:00', sources: [] }
+    if (path === '/api/delivery/readiness') body = { ok: true, launch_ready: false, configured: false, channel: null, targets: [], blockers: ['push_channel_unconfigured'], manual_review_count: 0, channels: [] }
+    if (path === '/api/delivery/receipts') body = { ok: true, receipts: [], count: 0, total: 0 }
+    if (path === '/api/delivery/outbox') body = { ok: true, items: [], count: 0 }
+    if (path === '/api/agent/runs') body = { ok: true, items: [] }
+    if (path === '/api/settings/model-connections') body = { ok: true, active_connection_id: null, connections: [] }
+    return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
+  })
+  await settingsEmptyPage.goto('http://127.0.0.1:4175/#settings-tasks', { waitUntil: 'networkidle' })
+  await settingsEmptyPage.addScriptTag({ content: axeSource })
+  const taskEmptyExplained = await settingsEmptyPage.evaluate(() => document.body.innerText.includes('暂无已登记任务'))
+  await settingsEmptyPage.evaluate(() => { window.location.hash = '#settings-data' })
+  await settingsEmptyPage.waitForSelector('#settings-data')
+  const datasourceEmptyExplained = await settingsEmptyPage.evaluate(() => document.body.innerText.includes('真实空来源列表'))
+  await settingsEmptyPage.evaluate(() => { window.location.hash = '#settings-models' })
+  await settingsEmptyPage.waitForSelector('#settings-models')
+  const modelEmptyExplained = await settingsEmptyPage.evaluate(() => document.body.innerText.includes('真实空数组：尚未保存自定义模型连接'))
+  await settingsEmptyPage.evaluate(() => { window.location.hash = '#settings-delivery' })
+  await settingsEmptyPage.waitForSelector('#settings-delivery')
+  const receiptEmptyExplained = await settingsEmptyPage.evaluate(() => document.body.innerText.includes('真实空数组：暂无交付尝试记录'))
+  const settingsEmptyState = await settingsEmptyPage.evaluate(({ taskEmptyExplained, datasourceEmptyExplained, modelEmptyExplained, receiptEmptyExplained }) => ({
+    taskEmptyExplained, datasourceEmptyExplained, modelEmptyExplained, receiptEmptyExplained,
+    noProductionFixture: !document.body.innerText.includes('审计受限模型'),
+    noPageOverflow: document.documentElement.scrollWidth <= window.innerWidth,
+  }), { taskEmptyExplained, datasourceEmptyExplained, modelEmptyExplained, receiptEmptyExplained })
+  const settingsEmptyAxe = await settingsEmptyPage.evaluate(async () => window.axe.run(document, {
+    runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+  }))
+  await settingsEmptyPage.screenshot({ path: resolve(outputDir, 'settings-empty-1440-dark.png'), fullPage: true })
+  report.push({
+    page: 'settings', scenario: 'settings-empty-1440', settingsEmptyState,
+    settingsEmptyStateComplete: Object.values(settingsEmptyState).every(Boolean),
+    pageErrors: settingsEmptyErrors,
+    violations: settingsEmptyAxe.violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help, nodes: item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })),
+  })
+  await settingsEmptyPage.close()
+
+  const settingsFailurePage = await browser.newPage({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 1 })
+  const settingsFailureErrors = []
+  settingsFailurePage.on('pageerror', (error) => settingsFailureErrors.push(error.message))
+  await settingsFailurePage.addInitScript(() => localStorage.setItem('wudi-vue-theme', 'dark'))
+  await settingsFailurePage.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    if (path === '/api/datasources') return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: '审计场景：数据源健康接口暂不可用' }) })
+    const body = fixtures[path]
+    return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
+  })
+  await settingsFailurePage.goto('http://127.0.0.1:4175/#settings-data', { waitUntil: 'networkidle' })
+  await settingsFailurePage.addScriptTag({ content: axeSource })
+  const localFailureExplained = await settingsFailurePage.evaluate(() => document.body.innerText.includes('数据健康暂不可用') && document.body.innerText.includes('审计场景：数据源健康接口暂不可用'))
+  await settingsFailurePage.evaluate(() => { window.location.hash = '#settings-tasks' })
+  await settingsFailurePage.waitForSelector('#settings-tasks')
+  const taskSurvives = await settingsFailurePage.evaluate(() => document.body.innerText.includes('早盘内参') && document.body.innerText.includes('资金快照'))
+  await settingsFailurePage.evaluate(() => { window.location.hash = '#settings-delivery' })
+  await settingsFailurePage.waitForSelector('#settings-delivery')
+  const deliverySurvives = await settingsFailurePage.evaluate(() => document.body.innerText.includes('自动发送已就绪'))
+  await settingsFailurePage.evaluate(() => { window.location.hash = '#settings-models' })
+  await settingsFailurePage.waitForSelector('#settings-models')
+  const modelSurvives = await settingsFailurePage.evaluate(() => document.body.innerText.includes('审计受限模型'))
+  await settingsFailurePage.evaluate(() => { window.location.hash = '#settings-data' })
+  await settingsFailurePage.waitForSelector('#settings-data')
+  const settingsFailureState = await settingsFailurePage.evaluate(({ localFailureExplained, taskSurvives, deliverySurvives, modelSurvives }) => ({
+    localFailureExplained, taskSurvives, deliverySurvives, modelSurvives,
+    noPageOverflow: document.documentElement.scrollWidth <= window.innerWidth,
+  }), { localFailureExplained, taskSurvives, deliverySurvives, modelSurvives })
+  const settingsFailureAxe = await settingsFailurePage.evaluate(async () => window.axe.run(document, {
+    runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+  }))
+  await settingsFailurePage.screenshot({ path: resolve(outputDir, 'settings-partial-failure-1440-dark.png'), fullPage: true })
+  report.push({
+    page: 'settings', scenario: 'settings-partial-failure-1440', settingsFailureState,
+    settingsFailureStateComplete: Object.values(settingsFailureState).every(Boolean),
+    pageErrors: settingsFailureErrors,
+    violations: settingsFailureAxe.violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help, nodes: item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })),
+  })
+  await settingsFailurePage.close()
+
   const missingPage = await browser.newPage({ viewport: { width: 375, height: 812 } })
   const missingPageErrors = []
   missingPage.on('pageerror', (error) => missingPageErrors.push(error.message))
@@ -3656,6 +3828,9 @@ const failed = report.some((item) =>
   || item.knowledgeLoadingStateComplete === false
   || item.knowledgeEmptyStateComplete === false
   || item.knowledgeFailureStateComplete === false
+  || item.settingsLoadingStateComplete === false
+  || item.settingsEmptyStateComplete === false
+  || item.settingsFailureStateComplete === false
   || (item.pageErrors?.length || 0) > 0
   || item.violations.length > 0
 )

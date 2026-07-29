@@ -45,16 +45,10 @@ defineExpose({ refresh })
 <template>
   <section class="diagnosis-page" aria-labelledby="diagnosis-page-title" :aria-busy="busy">
     <header class="diagnosis-intro">
-      <div>
-        <p class="eyebrow">研究中心 · 确定性诊断</p>
+      <div class="page-heading">
         <h1 id="diagnosis-page-title">个股诊断</h1>
-        <p>先看服务端动作与风险边界，再核对行情、趋势、量价、资金、行业和财务证据。</p>
+        <p class="page-subtitle">先看服务端动作与风险边界，再核对行情、趋势、量价、资金、行业和财务证据。</p>
       </div>
-      <dl class="diagnosis-stamp" :class="{ 'is-stale': diagnosis?.analysis_pipeline?.quote_stale }" aria-label="诊断标的、数据时点与质量">
-        <div><dt>诊断标的</dt><dd class="mono">{{ requestedCode || '尚未选择' }}</dd></div>
-        <div><dt>关键时点</dt><dd class="mono">{{ dataDate ? formatBeijingTime(dataDate) : '—' }}</dd></div>
-        <div><dt>依据状态</dt><dd><DataStatus :state="diagnosis ? quality : 'partial'" :label="diagnosis ? statusLabel : '等待诊断'" /></dd></div>
-      </dl>
     </header>
 
     <DiagnosisSearch
@@ -110,6 +104,12 @@ defineExpose({ refresh })
       <span>价格单位为元；涨跌幅与换手率为百分数；成交额与资金净额为元。</span>
       <span>风险、动作、仓位上限与价格条件均由服务端返回，前端不重算。</span>
     </footer>
+
+    <dl class="diagnosis-stamp" :class="{ 'is-stale': diagnosis?.analysis_pipeline?.quote_stale }" aria-label="诊断标的、数据时点与质量">
+      <div><dt>诊断标的</dt><dd class="mono">{{ requestedCode || '尚未选择' }}</dd></div>
+      <div><dt>关键时点</dt><dd class="mono">{{ dataDate ? formatBeijingTime(dataDate) : '—' }}</dd></div>
+      <div><dt>依据状态</dt><dd><DataStatus :state="diagnosis ? quality : 'partial'" :label="diagnosis ? statusLabel : '等待诊断'" /></dd></div>
+    </dl>
   </section>
 </template>
 

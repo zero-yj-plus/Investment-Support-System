@@ -43,17 +43,10 @@ defineExpose({ refresh })
 <template>
   <section class="sentiment-page" aria-labelledby="sentiment-page-title" :aria-busy="loading || refreshing">
     <header class="sentiment-page__intro">
-      <div>
-        <p class="eyebrow">市场结构 · 新闻事实与盘面观察</p>
+      <div class="page-heading">
         <h1 id="sentiment-page-title">舆情事件</h1>
-        <p>展示真实采集事件、确定性 A 股实体映射与追加式盘面留痕；不判断利多利空，不生成交易结论。</p>
+        <p class="page-subtitle">展示真实采集事件、确定性 A 股实体映射与追加式盘面留痕；不判断利多利空，不生成交易结论。</p>
       </div>
-      <dl class="sentiment-page__stamp" :class="{ 'is-stale': stale, 'is-degraded': degraded }" aria-label="舆情事件数据日期、抓取时点、状态与覆盖说明">
-        <div><dt>最新事件</dt><dd class="mono">{{ data?.latest_event_time || '—' }}<span v-if="!data?.latest_event_time" class="sr-only">数据缺失</span></dd></div>
-        <div><dt>最近抓取</dt><dd class="mono">{{ data?.fetched_at || data?.cn_fetched_at || '—' }}<span v-if="!data?.fetched_at && !data?.cn_fetched_at" class="sr-only">数据缺失</span></dd></div>
-        <div><dt>数据状态</dt><dd>{{ statusLabel }}</dd></div>
-        <div class="sentiment-page__coverage"><dt>覆盖说明</dt><dd>{{ notes.length ? notes.join('；') : (data ? '接口未声明覆盖缺口' : '—') }}</dd></div>
-      </dl>
     </header>
 
     <div v-if="loading" class="sentiment-loading" role="status" aria-live="polite">
@@ -94,6 +87,13 @@ defineExpose({ refresh })
         <span>后续观察采用追加式留痕；“已留痕”不代表新闻造成涨跌。</span>
       </footer>
     </template>
+
+    <dl class="sentiment-page__stamp" :class="{ 'is-stale': stale, 'is-degraded': degraded }" aria-label="舆情事件数据日期、抓取时点、状态与覆盖说明">
+      <div><dt>最新事件</dt><dd class="mono">{{ data?.latest_event_time || '—' }}<span v-if="!data?.latest_event_time" class="sr-only">数据缺失</span></dd></div>
+      <div><dt>最近抓取</dt><dd class="mono">{{ data?.fetched_at || data?.cn_fetched_at || '—' }}<span v-if="!data?.fetched_at && !data?.cn_fetched_at" class="sr-only">数据缺失</span></dd></div>
+      <div><dt>数据状态</dt><dd>{{ statusLabel }}</dd></div>
+      <div class="sentiment-page__coverage"><dt>覆盖说明</dt><dd>{{ notes.length ? notes.join('；') : (data ? '接口未声明覆盖缺口' : '—') }}</dd></div>
+    </dl>
   </section>
 </template>
 

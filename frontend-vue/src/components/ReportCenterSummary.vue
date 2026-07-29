@@ -75,7 +75,10 @@ const advicePassed = computed(() => props.report.advice_governance?.status === '
       <div class="report-center-delivery" :class="`is-${delivery.tone}`">
         <span>交付状态</span>
         <strong>{{ delivery.label }}</strong>
-        <p>{{ receiptError ? `回执读取失败：${receiptError}` : delivery.detail }}</p>
+        <p>{{ delivery.detail }}</p>
+        <p v-if="receiptError" class="report-center-delivery__error" role="status">
+          回执读取失败：{{ receiptError }}；以上仅保留报告自身已有的推送标记，不能补充平台回执结论。
+        </p>
       </div>
     </div>
 
@@ -113,6 +116,7 @@ const advicePassed = computed(() => props.report.advice_governance?.status === '
 .report-center-delivery.is-positive { border-color: var(--risk-2); }
 .report-center-delivery.is-warning { border-color: var(--warning); }
 .report-center-delivery.is-negative { border-color: var(--danger); }
+.report-center-delivery__error { color: var(--warning) !important; }
 .report-center-summary__checks { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 18px 14px; border-top: 1px solid var(--border); }
 .report-center-summary__checks span { padding: 3px 7px; border: 1px solid var(--border); border-radius: 4px; color: var(--text-3); font-size: 12px; }
 .report-center-summary__checks .is-positive { color: var(--accent); font-weight: 700; }
