@@ -9,7 +9,7 @@ import ReportDocument from './ReportDocument.vue'
 const emit = defineEmits<{ refreshState: [refreshing: boolean] }>()
 const inputRef = ref<InstanceType<typeof IndustryChainResearchForm> | null>(null)
 const {
-  industryInput, currentIndustry, content, runState, stageText, stageSeconds,
+  industryInput, focusInput, currentIndustry, content, runState, stageText, stageSeconds,
   runError, fieldError, history, activeHistoryId, saving, saveError, saveMessage,
   running, summary, canSave, refreshing, startResearch, stopResearch,
   selectHistory, saveToKnowledge, refresh: rerun,
@@ -20,10 +20,9 @@ onBeforeUnmount(() => emit('refreshState', false))
 
 const resultTitle = computed(() => currentIndustry.value ? `${currentIndustry.value} · 产业链研究` : '产业链研究正文')
 const resultDescription = computed(() => {
-  if (runState.value === 'loading') return '正在接收服务端冻结证据与受约束解释。'
+  if (runState.value === 'loading') return '正在接收产业结论与上下游分析。'
   if (runState.value === 'partial') return '本次输出未完整结束，正文已隔离，仅供检查。'
-  if (summary.value.trueEmpty) return '接口成功返回真实空映射；没有用产业常识补公司。'
-  return '完整正文按服务端顺序呈现，表格只在自身容器内横向滚动。'
+  return '正文以产业思维和上下游传导为主，公司线索放在产业逻辑之后。'
 })
 
 async function refresh() {
@@ -42,23 +41,25 @@ defineExpose({ refresh })
     <header class="chain-page-header">
       <div class="page-heading">
         <h1 id="industry-chain-page-title">产业链研究</h1>
-        <p class="page-subtitle">从需求、产业地图和利润池开始，收敛到可核验公司与失效条件；产业结论和交易时点分开。</p>
+        <p class="page-subtitle">从需求出发，画清上中下游、利润池、核心卡点与国产替代路径，再进入公司研究。</p>
       </div>
     </header>
 
     <IndustryChainResearchForm
       ref="inputRef"
       v-model="industryInput"
+      :focus-value="focusInput"
       class="panel"
       :running="running"
       :disabled="saving"
       :error="fieldError"
+      @update:focus-value="focusInput = $event"
       @submit="startResearch()"
       @stop="stopResearch"
     />
 
     <div v-if="running" class="chain-progress panel" role="status" aria-live="polite">
-      <div><strong>{{ stageText || '正在核验产业链证据…' }}</strong><span>完成前不形成交易结论；可随时停止。</span></div>
+      <div><strong>{{ stageText || '正在梳理产业链上下游…' }}</strong><span>正在形成需求、价值与风险传导链；可随时停止。</span></div>
       <span class="mono">{{ stageSeconds }}s</span>
     </div>
     <p v-if="runError" class="chain-alert" role="alert">{{ runError }}</p>
@@ -77,12 +78,11 @@ defineExpose({ refresh })
 
         <div v-if="runState === 'idle' || (runState === 'error' && !content)" class="chain-document__empty">
           <strong>{{ runState === 'error' ? '本轮没有形成结果' : '等待产业链主题' }}</strong>
-          <span>不会显示示例公司、示例数字或用 0 填补缺失数据。</span>
+          <span>输入产业主题后，将生成完整的上下游思维报告。</span>
         </div>
         <div v-else class="chain-document__body" :class="{ 'is-partial': runState === 'partial' }">
           <p v-if="runState === 'partial'" class="chain-quarantine" role="alert">不完整输出 · 已隔离 · 不可存入知识库</p>
-          <p v-if="summary.trueEmpty" class="chain-true-empty" role="status">真实空结果：TDX 板块或成分关系未匹配；公司映射保持空，不使用推测值补齐。</p>
-          <p v-if="summary.deterministicFallback" class="chain-fallback" role="status">AI 解释未形成完整增强；当前展示确定性证据骨架，不影响已冻结的真实成员与缺口。</p>
+          <p v-if="summary.deterministicFallback" class="chain-fallback" role="status">AI 深度分析暂未形成；当前展示完整的产业研究框架。</p>
           <nav v-if="summary.companies.length" class="chain-company-links" aria-label="公司映射快速进入个股诊断">
             <span>核验候选</span>
             <a v-for="company in summary.companies" :key="company.code" :href="`#/research?tab=diagnosis&code=${encodeURIComponent(company.code)}`">
@@ -101,27 +101,22 @@ defineExpose({ refresh })
       <aside class="chain-sidebar" aria-label="产业链研究历史与数据治理">
         <IndustryChainHistory :entries="history" :active-id="activeHistoryId" :disabled="running || saving" @select="selectHistory" />
         <section class="chain-governance panel" aria-labelledby="chain-governance-title">
-          <header><p class="eyebrow">DATA GOVERNANCE</p><h2 id="chain-governance-title">口径与限制</h2></header>
+          <header><p class="eyebrow">READING GUIDE</p><h2 id="chain-governance-title">阅读方法</h2></header>
           <dl>
-            <div><dt>真实接口</dt><dd><code>POST /api/chat</code>，仅在主动研究时请求。</dd></div>
-            <div><dt>单位</dt><dd>现价为元；涨跌幅为 %；PE/PB 为倍数；数据可研分无量纲。</dd></div>
-            <div><dt>确定性边界</dt><dd>TDX 成员仅证明板块归属；产业角色、兑现、价格、仓位与风险均不得由浏览器推断。</dd></div>
-            <div><dt>缺失语义</dt><dd>传输失败、不完整流、后端缺失、真实空映射和模型降级分别展示；缺失值不补 0。</dd></div>
+            <div><dt>第一步</dt><dd>看需求由什么驱动，以及需求能否持续。</dd></div>
+            <div><dt>第二步</dt><dd>沿上游输入、中游制造、下游应用理解价值传导。</dd></div>
+            <div><dt>第三步</dt><dd>找利润池、供给瓶颈、客户切换成本与替代路径。</dd></div>
+            <div><dt>最后</dt><dd>用兑现指标和失效条件约束产业叙事，再进入公司研究。</dd></div>
           </dl>
         </section>
       </aside>
     </div>
 
     <footer class="page-footer">
-      <span>Markdown 经安全 Vue 节点解析；不使用 v-html 或运行时 HTML 注入。</span>
+      <span>报告以产业结构和商业逻辑为主，具体数据只在必要时进入单公司研究。</span>
       <span>写入知识库不等于已审批，也不等于已进入模型知识。</span>
     </footer>
 
-    <dl class="chain-data-stamp" aria-label="产业链研究数据与契约状态">
-      <div><dt>数据日期 / 时点</dt><dd class="mono">{{ runState === 'complete' || runState === 'partial' ? summary.dataAsOf : '尚未研究' }}</dd></div>
-      <div><dt>输出契约</dt><dd class="mono">chain-research-v2</dd></div>
-      <div><dt>陈旧判定</dt><dd>接口未独立暴露</dd></div>
-    </dl>
   </section>
 </template>
 

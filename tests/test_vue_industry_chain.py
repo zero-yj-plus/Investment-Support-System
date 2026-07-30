@@ -35,7 +35,7 @@ def test_vue_industry_chain_uses_the_real_sse_and_knowledge_contracts() -> None:
     composable = read(COMPOSABLE)
     formatter = read(FORMAT)
 
-    assert "postEventStream('/chat', buildIndustryChainRequest(industry)" in composable
+    assert "postEventStream('/chat', buildIndustryChainRequest(industry, focusInput.value)" in composable
     assert "postJson<IndustryChainKnowledgeResponse>('/knowledge'" in composable
     assert "mode: 'chain'" in formatter
     assert "research_contract: INDUSTRY_CHAIN_CONTRACT" in formatter
@@ -43,6 +43,9 @@ def test_vue_industry_chain_uses_the_real_sse_and_knowledge_contracts() -> None:
     for field in ("industry", "message", "history", "images", "code", "codes"):
         assert f"{field}:" in formatter
     assert "category: '复盘笔记'" in composable
+    assert "研究重点（可选）" in read(FORM)
+    assert "focusInput" in composable
+    assert "重点解释产业为什么成立、价值如何沿上下游传导" in formatter
 
 
 def test_vue_industry_chain_preserves_missing_empty_partial_and_governance_semantics() -> None:
@@ -51,16 +54,16 @@ def test_vue_industry_chain_preserves_missing_empty_partial_and_governance_seman
     formatter = read(FORMAT)
 
     for phrase in (
-        "真实空结果",
         "不完整输出 · 已隔离",
-        "缺失值不补 0",
-        "接口未独立暴露",
-        "数据可研分无量纲",
+        "产业逻辑速览",
+        "需求驱动 → 上游卡点 → 中游制造 → 下游兑现",
+        "报告以产业结构和商业逻辑为主",
         "写入知识库不等于已审批",
     ):
         assert phrase in page or phrase in summary
-    assert "TDX\\s*目录未匹配" in formatter
-    assert "未取得可验证的\\s*TDX\\s*成分关系" in formatter
+    assert "板块目录未匹配" in formatter
+    assert "未取得可验证的" in formatter
+    assert "成分关系" in formatter
     assert "runState.value = 'partial'" in read(COMPOSABLE)
     assert "runState.value = 'error'" in read(COMPOSABLE)
 

@@ -578,16 +578,18 @@ class BridgeApp:
         for sector in sectors:
             value = self.client.call(
                 "get_stock_list_in_sector",
-                {"block_code": sector.split(".", 1)[0], "block_type": 0, "list_type": 1},
+                # TQ 的系统板块查询必须保留市场后缀，例如 ``880656.SH``。
+                # 只传 ``880656`` 会返回成功但空列表，导致上层误判板块无成分。
+                {"block_code": sector, "block_type": 0, "list_type": 1},
             )
             for item in _list_items(value):
-                stock, _name = _code_name(item)
+                stock, name = _code_name(item)
                 if stock:
                     rows.append({
                         "entity_key": sector,
                         "series_key": stock,
                         "as_of": as_of,
-                        "payload": {"sector_code": sector, "Code": stock},
+                        "payload": {"sector_code": sector, "Code": stock, "Name": name},
                     })
         return rows
 

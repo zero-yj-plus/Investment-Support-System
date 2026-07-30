@@ -1991,12 +1991,7 @@ class Engine:
                 "name": row.get("name"),
                 "verification": row.get("verification"),
                 "matched_sectors": row.get("matched_sectors"),
-                "chain_role": row.get("chain_role"),
-                "quote": row.get("quote"),
-                "valuation": row.get("valuation"),
-                "realization": row.get("realization"),
-                "company_evidence": row.get("company_evidence"),
-                "missing": row.get("missing"),
+                "evidence_clue": (row.get("chain_role") or {}).get("status"),
             }
             for row in sorted(
                 (analysis.get("company_mapping") or []),
@@ -2005,51 +2000,45 @@ class Engine:
         ]
         evidence_base = {
             "industry": analysis.get("industry"),
-            "data_as_of": analysis.get("data_as_of"),
             "matched_sectors": analysis.get("matched_sectors"),
-            "sector_market": analysis.get("sector_market"),
-            # 故意按代码排序并移除数据可研分/核验序，避免模型把成交额
-            # 或字段覆盖顺序偷换成产业研究优先级。
             "company_candidate_pool": candidate_pool,
             "candidate_pool_order": "code_ascending_not_research_rank",
-            "coverage": analysis.get("coverage"),
-            "company_evidence_refresh": analysis.get("company_evidence_refresh"),
-            "evidence": analysis.get("evidence"),
-            "data_gaps": analysis.get("data_gaps"),
-            "research_trade_separation": analysis.get("research_trade_separation"),
         }
         required_headings = (
-            "### 1. 需求本质",
-            "### 2. 产业地图",
-            "### 3. 价值捕获",
-            "### 4. 卡点",
-            "### 5. 国产替代",
-            "### 6. 公司映射",
-            "### 7. 兑现与估值",
-            "### 8. 研究优先级与失效条件",
+            "### 1. 核心需求与驱动力",
+            "### 2. 上中下游全景",
+            "### 3. 利润池与价值分配",
+            "### 4. 核心卡点与竞争壁垒",
+            "### 5. 国产替代路径",
+            "### 6. A股映射思路",
+            "### 7. 兑现节奏与观察指标",
+            "### 8. 风险与失效条件",
         )
         system = (
             prompts.system_prompt(self.store.knowledge_digest())
-            + "\n\n【产业链研究·证据冻结与定性推演边界】"
-            "下方冻结公开板块候选池、行情、官方公司证据、来源、时点与缺口。你可以基于广泛公开的产业常识"
-            "完成有内容的定性推演，但每个产业常识判断都必须显式标注"
-            "『[public_knowledge / 待公告核验]』，不能伪装成数据源事实，也不得编造任何份额、国产化率、"
-            "订单、产能、价格、客户、收入、利润或估值数字。"
+            + "\n\n【产业链研究·思维与上下游优先】"
+            "这是一份产业思维报告，不是数据审计报告。先回答需求为何发生、上下游如何传导、利润留在哪、"
+            "谁掌握瓶颈、国产替代从哪里切入，以及逻辑如何兑现和失效。"
+            "不要因为行情、估值、份额或板块成员缺失而停止分析，也不要在正文反复出现"
+            "『数据不全』『待公告核验』『依据边界』『依据类型』『下一步核验』等治理话术。"
+            "公开产业常识可以直接用清楚、克制的定性语言表达；不写无来源的比例、金额、份额、"
+            "毛利率区间、订单、客户、产能或精确周期，也不写具体大会、展会或近期事件催化。"
+            "避免『确定性最高』『完全替代』『已经兑现』『必然受益』等绝对化措辞，"
+            "把产业判断写成传导逻辑、条件和可能性。"
             f"允许点名的 A 股代码仅限：{allowed_codes or ['无']}。"
-            "候选池外公司一律不得点名；候选池内公司的上中下游角色也只能作"
-            "『[public_knowledge / 待公告核验]』映射。板块成分只证明集合关系，不证明业务角色或投资价值。"
-            "company_evidence 中的公告标题、互动问答关键词只能称为业务线索；"
-            "没有公告/年报正文和分部收入时，不得升级为已验证产业角色或业绩兑现。"
+            "第1至5段、第7至8段不得点名任何A股公司或代码；第6段由服务端写入研究入口，"
+            "模型只保留标题，不自行填写公司。"
             "company_candidate_pool 已按代码排序，绝不是产业、投资或交易优先级。"
-            "第8段可以提出『研究建议优先级』，但必须逐项说明定性产业依据与待核证据，"
-            "不得按当日涨跌幅、成交额或数据可研分排序，不得写成确定性核心标的排名。"
             "产业研究与交易时点严格分离，不得生成目标价、仓位或即时买卖指令。"
-            "严格使用八个三级标题且顺序固定："
+            "正文开头先用二级标题『## 产业结论』给出3至5句核心判断，不要寒暄。"
+            "然后严格使用八个三级标题且顺序固定："
             + "；".join(required_headings)
-            + "。每段先给定性判断，再写依据类型和下一步核验；全文不超过1800个中文字。"
-            "结尾必须另列『数据截至/来源覆盖/证据缺口』，并再次单列"
-            "『产业结论』与『当前交易时点：未评估』。"
-            "\n\n【冻结产业链证据底座 JSON】\n"
+            + "。第2段必须用简洁 Markdown 表格展示『环节｜主要参与者类型｜核心任务｜价值来源｜向下游传导』，"
+            "且至少覆盖上游关键输入、中游制造/集成、下游系统/渠道和终端应用，不能把模块组装误写成终端需求；"
+            "第3段解释利润为什么向某些环节集中；第5段按替代难度和路径展开；"
+            "第7段给出少而关键的观察指标；第8段至少列三条失效条件。全文不超过2200个中文字。"
+            "结尾不要再写数据清单或验证标签。"
+            "\n\n【仅供服务端约束公司名称的候选池 JSON】\n"
             + json.dumps(evidence_base, ensure_ascii=False, default=str)
         )
         recent = [
@@ -2090,27 +2079,124 @@ class Engine:
         content = "".join(chunks).strip()
         if not content:
             return
+        # 兼容常见的中文编号/标题层级差异，避免仅因 Markdown 形式偏差整篇降级。
+        heading_titles = (
+            "核心需求与驱动力", "上中下游全景", "利润池与价值分配", "核心卡点与竞争壁垒",
+            "国产替代路径", "A股映射思路", "兑现节奏与观察指标", "风险与失效条件",
+        )
+        for index, (heading, title) in enumerate(zip(required_headings, heading_titles), start=1):
+            content = re.sub(
+                rf"(?m)^\s*#{{1,4}}\s*(?:{index}|[一二三四五六七八][、.．])?\s*[、.．]?\s*{re.escape(title)}[^\n]*$",
+                heading,
+                content,
+                count=1,
+            )
         missing_headings = [heading for heading in required_headings if heading not in content]
+        if missing_headings:
+            log.warning("产业链模型解释缺少章节 headings=%s", missing_headings)
+            return
+
+        # 公司映射必须由服务端冻结候选生成，不能让模型凭记忆补公司或业务角色。
+        company_start = content.index(required_headings[5])
+        company_end = content.index(required_headings[6], company_start)
+        content = (
+            content[:company_start]
+            + industry_chain_mod.render_governed_company_mapping(analysis)
+            + "\n\n"
+            + content[company_end:]
+        )
         unknown_codes = {
             code
             for code in re.findall(r"(?<!\d)\d{6}(?!\d)", content)
             if code not in allowed_codes
         }
-        forbidden_trade = re.search(
-            r"立即买入|直接买入|建议买入|买入区间|目标价|建议仓位|立即卖出|建议卖出",
-            content,
+        forbidden_trade_re = re.compile(
+            r"立即买入|直接买入|建议买入|买入区间|目标价|建议仓位|立即卖出|建议卖出"
         )
-        if missing_headings or unknown_codes or forbidden_trade:
+        if unknown_codes or forbidden_trade_re.search(content):
+            # 旧逻辑会把整篇产业分析判废。现在只删除越界行，保留其余有效章节；
+            # 公司映射已在上方由服务端确定性覆盖。
+            safe_lines: list[str] = []
+            removed_lines = 0
+            for line in content.splitlines():
+                line_codes = set(re.findall(r"(?<!\d)\d{6}(?!\d)", line))
+                if any(code not in allowed_codes for code in line_codes):
+                    removed_lines += 1
+                    continue
+                if forbidden_trade_re.search(line):
+                    removed_lines += 1
+                    continue
+                safe_lines.append(line)
+            content = "\n".join(safe_lines).strip()
             log.warning(
-                "产业链模型解释未通过冻结边界 headings=%s unknown_codes=%s forbidden_trade=%s",
-                missing_headings,
+                "产业链模型解释已逐行清理越界内容 unknown_codes=%s removed_lines=%s",
                 sorted(unknown_codes),
-                bool(forbidden_trade),
+                removed_lines,
             )
-            return
-        if "public_knowledge" not in content or "待公告核验" not in content:
-            log.warning("产业链模型解释缺少公开常识验证标签")
-            return
+        # 治理边界只在报告末尾统一说明。模型偶尔仍会带出旧标签或无来源精确数字，
+        # 直接删除对应行，不在正文制造新的“待核验占位”。产品代际（800G/1.6T）可保留。
+        legacy_tag_re = re.compile(
+            r"\[?public_knowledge(?:\s*/\s*待公告核验)?\]?|"
+            r"\[?产业公开知识(?:\s*/\s*待公告核验)?\]?|"
+            r"【具体(?:比例|周期|金额)[^】]*】",
+            re.IGNORECASE,
+        )
+        percentage_re = re.compile(
+            r"\d+(?:\.\d+)?\s*[%％]\s*(?:[-—~～至到]\s*\d+(?:\.\d+)?\s*[%％])?\s*\+?"
+        )
+        duration_re = re.compile(
+            r"\d+(?:\.\d+)?\s*[-—~～至到]\s*\d+(?:\.\d+)?\s*(?:个?月|年|天|周)"
+        )
+        amount_re = re.compile(r"\d+(?:\.\d+)?\s*(?:万|亿)?元(?:人民币|美元)?")
+        polished_lines: list[str] = []
+        for line in content.splitlines():
+            stripped = line.strip()
+            if re.match(r"^[-*]?\s*(?:依据边界|依据类型|下一步核验|数据截至|来源覆盖|证据缺口)[：:]", stripped):
+                continue
+            clean_line = legacy_tag_re.sub("", line).rstrip()
+            clean_line = re.sub(
+                r"毛利率(?:约为|可能达到|可达|达到|为|在)?\s*" + percentage_re.pattern,
+                "毛利率水平受技术壁垒与竞争格局影响",
+                clean_line,
+            )
+            clean_line = re.sub(
+                r"(?:认证|验证)(?:需要|周期(?:约为|为)?)?\s*" + duration_re.pattern,
+                "认证周期较长",
+                clean_line,
+            )
+            clean_line = re.sub(
+                r"(?:扩产|建设)(?:需要|周期(?:约为|为)?)?\s*" + duration_re.pattern,
+                "扩产周期较长",
+                clean_line,
+            )
+            clean_line = duration_re.sub("较长周期", clean_line)
+            clean_line = amount_re.sub("较大投入", clean_line)
+            clean_line = percentage_re.sub("", clean_line)
+            clean_line = re.sub(r"(?:约为|可达|达到|占比为|份额为)\s*(?=[，,。；;）)])", "", clean_line)
+            clean_line = clean_line.replace("（ ）", "").replace("()", "")
+            polished_lines.append(clean_line)
+        content = "\n".join(polished_lines).strip()
+        for source, target in {
+            "确定性最高": "传导逻辑较清晰",
+            "必然受益": "可能受益",
+            "直接受益": "可能受益",
+            "完全替代": "形成部分替代",
+            "已基本完成": "已取得一定进展",
+            "已经兑现": "已有一定进展",
+            "已基本兑现": "已有一定进展",
+            "需求爆发": "需求扩张",
+            "极度有限": "较为有限",
+            "垄断": "高度集中",
+            "最卡脖子": "瓶颈最明显",
+        }.items():
+            content = content.replace(source, target)
+        if not re.search(r"(?m)^##\s+产业结论\s*$", content):
+            content = (
+                "## 产业结论\n"
+                f"以下围绕“{analysis.get('industry') or '目标产业'}”的需求、利润池、卡点、"
+                "国产替代和兑现条件完成分析；行业常识与公司证据严格分开。\n\n"
+                + content
+            )
         yield content
 
     async def governed_stock_explanation_stream(

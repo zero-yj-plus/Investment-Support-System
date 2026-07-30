@@ -114,25 +114,24 @@ def test_chain_markdown_has_fixed_eight_sections_and_truthful_header_footer() ->
     rendered = industry_chain.render_markdown(_sample_analysis())
 
     expected = [
-        "### 1. 需求本质",
-        "### 2. 产业地图",
-        "### 3. 价值捕获",
-        "### 4. 卡点",
-        "### 5. 国产替代",
-        "### 6. 公司映射",
-        "### 7. 兑现与估值",
-        "### 8. 研究优先级与失效条件",
+        "### 1. 核心需求与驱动力",
+        "### 2. 上中下游全景",
+        "### 3. 利润池与价值分配",
+        "### 4. 核心卡点与竞争壁垒",
+        "### 5. 国产替代路径",
+        "### 6. A股映射思路",
+        "### 7. 兑现节奏与观察指标",
+        "### 8. 风险与失效条件",
     ]
     positions = [rendered.index(title) for title in expected]
     assert positions == sorted(positions)
-    assert "**产业结论：" in rendered
-    assert "**当前交易时点：未评估" in rendered
-    assert "> 数据时点：" in rendered
-    assert "> 来源覆盖：" in rendered
-    assert "> 页首缺口：" in rendered
-    assert "**页末证据与缺口复核**" in rendered
-    assert "不是产业研究优先级、投资排名或买入排名" in rendered
-    assert "数据可研分" in rendered
+    assert "## 产业结论" in rendered
+    assert "|上游|" in rendered
+    assert "|中游|" in rendered
+    assert "|下游|" in rendered
+    assert "公司业务、订单、财务和交易时点需另行研究" in rendered
+    assert "数据可研分" not in rendered
+    assert "页末证据与缺口复核" not in rendered
 
 
 def test_unmatched_chain_keeps_framework_and_refuses_company_ranking() -> None:
@@ -265,16 +264,6 @@ def test_collect_analysis_falls_back_when_tdx_members_are_empty(monkeypatch) -> 
         lambda _codes: {"by_sector": {"880001": ()}},
     )
     monkeypatch.setattr(
-        industry_chain.market,
-        "market_sectors",
-        lambda: {"sectors": []},
-    )
-    monkeypatch.setattr(
-        industry_chain.stock,
-        "quick_quotes",
-        lambda _codes: {},
-    )
-    monkeypatch.setattr(
         industry_chain,
         "_public_board_membership",
         lambda _industry: {
@@ -299,6 +288,8 @@ def test_collect_analysis_falls_back_when_tdx_members_are_empty(monkeypatch) -> 
     assert analysis["coverage"]["verified_member_count"] == 1
     assert analysis["coverage"]["membership_verification"] == "public_board_member"
     assert analysis["company_mapping"][0]["name"] == "甲光电"
+    assert analysis["company_mapping"][0]["quote"]["price"] is None
+    assert analysis["data_as_of"]["sector_market"] is None
     assert analysis["company_evidence_refresh"]["status"] == "disabled"
 
 
@@ -357,32 +348,79 @@ def test_governed_chain_stream_accepts_v2_and_model_only_adds_explanation() -> N
 
     chunks = asyncio.run(collect())
     assert analysis["request_contract"] == "chain-research-v2"
-    assert "### 冻结证据底座" in chunks[0]
-    assert "八段定性研究（公开产业常识推演）" in "".join(chunks)
-    assert "### 1. 需求本质" in "".join(chunks)
+    rendered = "".join(chunks)
+    assert chunks[0].startswith("# 产业链上下游研究")
+    assert "### 1. 需求本质" in rendered
+    assert "## 可核验证据附录" not in rendered
+    assert "研究说明：本报告以产业结构、上下游传导和商业逻辑为主" in rendered
     assert FakeState.engine.explanation_calls == 1
+
+
+def test_governed_chain_stream_still_analyzes_industry_with_an_empty_candidate_pool() -> None:
+    analysis = industry_chain.build_analysis(
+        "未匹配产业",
+        catalog={},
+        membership={},
+        quotes={},
+        generated_at="2026-07-30 10:00:00",
+    )
+
+    class FakeEngine:
+        explanation_calls = 0
+
+        async def industry_chain_analysis(self, _industry: str) -> dict:
+            return analysis
+
+        async def governed_chain_explanation_stream(self, *_args, **_kwargs):
+            self.explanation_calls += 1
+            yield "行业级分析正文；公司映射保持为空。"
+
+    class FakeState:
+        engine = FakeEngine()
+
+    async def collect():
+        return [
+            chunk
+            async for chunk in _governed_chain_chat_stream(
+                FakeState(),
+                "未匹配产业",
+                "生成完整研究",
+                model_available=True,
+                research_contract="chain-research-v2",
+            )
+        ]
+
+    rendered = "".join(asyncio.run(collect()))
+    assert FakeState.engine.explanation_calls == 1
+    assert "行业级分析正文" in rendered
+    assert "## 可核验证据附录" not in rendered
+    assert "产业结构、上下游传导和商业逻辑" in rendered
 
 
 def _valid_model_research() -> str:
     return "\n".join([
-        "### 1. 需求本质",
-        "[public_knowledge / 待公告核验] 需求来自自动化升级。",
-        "### 2. 产业地图",
-        "[public_knowledge / 待公告核验] 分为零部件、整机和应用。",
-        "### 3. 价值捕获",
-        "[public_knowledge / 待公告核验] 取决于议价与工艺。",
-        "### 4. 卡点",
-        "[public_knowledge / 待公告核验] 认证与良率需核验。",
-        "### 5. 国产替代",
-        "[public_knowledge / 待公告核验] 替代进度需公告核验。",
-        "### 6. 公司映射",
-        "000001 仅为冻结候选；业务角色待公告核验。",
-        "### 7. 兑现与估值",
-        "[public_knowledge / 待公告核验] 先核收入再谈估值。",
-        "### 8. 研究优先级与失效条件",
-        "[public_knowledge / 待公告核验] 按产业关键性建议核验，不按成交额排序。",
-        "数据截至/来源覆盖/证据缺口：见冻结底座。",
-        "产业结论：待核验；当前交易时点：未评估。",
+        "## 产业结论",
+        "产业需求、利润池与卡点应沿同一条传导链理解。",
+        "### 1. 核心需求与驱动力",
+        "需求来自自动化升级与效率改善。",
+        "### 2. 上中下游全景",
+        "|环节|主要参与者类型|核心任务|价值来源|向下游传导|",
+        "|---|---|---|---|---|",
+        "|上游|零部件|提供关键输入|稀缺性|决定整机性能|",
+        "|中游|整机厂|系统集成|工艺能力|形成产品|",
+        "|下游|应用方|场景落地|降本增效|形成订单|",
+        "### 3. 利润池与价值分配",
+        "利润倾向掌握核心工艺和议价权的环节。",
+        "### 4. 核心卡点与竞争壁垒",
+        "认证、良率与规模交付构成壁垒。",
+        "### 5. 国产替代路径",
+        "替代从非核心部件逐步走向核心环节。",
+        "### 6. A股映射思路",
+        "本段由服务端写入候选研究入口。",
+        "### 7. 兑现节奏与观察指标",
+        "依次观察产品、客户、交付和商业化。",
+        "### 8. 风险与失效条件",
+        "需求放缓、技术替代或竞争恶化会使逻辑失效。",
     ])
 
 
@@ -415,14 +453,18 @@ def test_model_receives_code_sorted_pool_without_data_researchability_rank() -> 
         ]
 
     chunks = asyncio.run(collect())
-    assert chunks == [_valid_model_research()]
+    assert len(chunks) == 1
+    assert "## 产业结论" in chunks[0]
+    assert "### 6. A股映射思路" in chunks[0]
+    assert "甲公司（000001）" in chunks[0]
+    assert "后续公司研究入口" in chunks[0]
     system = engine.hermes.messages[0]["content"]
     assert "candidate_pool_order" in system
     assert "data_researchability_score" not in system
     assert system.index("000001") < system.index("000002")
 
 
-def test_model_explanation_fails_closed_on_candidate_pool_escape() -> None:
+def test_model_company_section_is_replaced_by_frozen_candidate_pool() -> None:
     analysis = _sample_analysis()
 
     class FakeStore:
@@ -447,4 +489,83 @@ def test_model_explanation_fails_closed_on_candidate_pool_escape() -> None:
             )
         ]
 
-    assert asyncio.run(collect()) == []
+    rendered = "".join(asyncio.run(collect()))
+    assert "600999" not in rendered
+    assert "甲公司（000001）" in rendered
+
+
+def test_model_keeps_full_industry_research_when_candidate_pool_is_empty() -> None:
+    analysis = industry_chain.build_analysis(
+        "未匹配产业",
+        catalog={},
+        membership={},
+        quotes={},
+        generated_at="2026-07-30 10:00:00",
+    )
+
+    class FakeStore:
+        @staticmethod
+        def knowledge_digest():
+            return ""
+
+    class FakeHermes:
+        async def chat_stream(self, _messages, **_kwargs):
+            yield _valid_model_research()
+
+    engine = Engine.__new__(Engine)
+    engine.store = FakeStore()
+    engine.hermes = FakeHermes()
+
+    async def collect():
+        return [
+            chunk
+            async for chunk in engine.governed_chain_explanation_stream(
+                "完整研究",
+                analysis,
+            )
+        ]
+
+    rendered = "".join(asyncio.run(collect()))
+    assert "### 1. 核心需求与驱动力" in rendered
+    assert "本轮没有可靠的本地候选名称，因此不列公司名单" in rendered
+    assert "000001" not in rendered
+
+
+def test_model_unverified_business_numbers_are_qualitized_without_visible_placeholders() -> None:
+    analysis = _sample_analysis()
+    model_text = _valid_model_research().replace(
+        "利润倾向掌握核心工艺和议价权的环节。",
+        "800G 是产品代际名称。\n毛利率可能达到50%-70%，认证需要12-18个月。",
+    )
+
+    class FakeStore:
+        @staticmethod
+        def knowledge_digest():
+            return ""
+
+    class FakeHermes:
+        async def chat_stream(self, _messages, **_kwargs):
+            yield model_text
+
+    engine = Engine.__new__(Engine)
+    engine.store = FakeStore()
+    engine.hermes = FakeHermes()
+
+    async def collect():
+        return [
+            chunk
+            async for chunk in engine.governed_chain_explanation_stream(
+                "完整研究",
+                analysis,
+            )
+        ]
+
+    rendered = "".join(asyncio.run(collect()))
+    assert "800G" in rendered
+    assert "50%-70%" not in rendered
+    assert "12-18个月" not in rendered
+    assert "【具体比例待财报/公告核验】" not in rendered
+    assert "【具体周期待公告/客户验证材料核验】" not in rendered
+    assert "依据边界" not in rendered
+    assert "毛利率水平受技术壁垒与竞争格局影响" in rendered
+    assert "认证周期较长" in rendered

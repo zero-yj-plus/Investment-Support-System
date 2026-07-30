@@ -20,6 +20,7 @@ function errorMessage(error: unknown, fallback: string) {
 
 export function useIndustryChain() {
   const industryInput = ref('')
+  const focusInput = ref('')
   const currentIndustry = ref('')
   const content = ref('')
   const runState = ref<IndustryChainRunState>('idle')
@@ -84,6 +85,7 @@ export function useIndustryChain() {
     const entry: IndustryChainHistoryEntry = {
       id: `chain-${Date.now()}-${Math.random().toString(16).slice(2)}`,
       industry: currentIndustry.value,
+      focus: focusInput.value,
       content: content.value.slice(0, 60_000),
       ts: Date.now(),
       incomplete,
@@ -93,7 +95,7 @@ export function useIndustryChain() {
     persistHistory()
   }
 
-  async function startResearch(rawIndustry = industryInput.value) {
+  async function startResearch(rawIndustry = industryInput.value, rawFocus = focusInput.value) {
     if (running.value || saving.value) return
     const industry = String(rawIndustry || '').trim().slice(0, 120)
     fieldError.value = ''
@@ -106,10 +108,11 @@ export function useIndustryChain() {
     }
 
     industryInput.value = industry
+    focusInput.value = String(rawFocus || '').trim().slice(0, 1000)
     currentIndustry.value = industry
     content.value = ''
     runState.value = 'loading'
-    stageText.value = '正在匹配 TDX 板块目录、成员关系与当前行情…'
+    stageText.value = '正在拆解需求、上下游与价值传导…'
     stageSeconds.value = 0
     activeHistoryId.value = ''
     stopRequested = false
@@ -119,7 +122,7 @@ export function useIndustryChain() {
     let completed = false
 
     try {
-      await postEventStream('/chat', buildIndustryChainRequest(industry), {
+      await postEventStream('/chat', buildIndustryChainRequest(industry, focusInput.value), {
         signal: guard.controller.signal,
         onStage(stage) {
           if (guard.current()) stageText.value = stage
@@ -171,6 +174,7 @@ export function useIndustryChain() {
   function selectHistory(entry: IndustryChainHistoryEntry) {
     if (running.value || saving.value) return
     industryInput.value = entry.industry
+    focusInput.value = entry.focus || ''
     currentIndustry.value = entry.industry
     content.value = entry.content
     runState.value = entry.incomplete ? 'partial' : 'complete'
@@ -227,7 +231,7 @@ export function useIndustryChain() {
   })
 
   return {
-    industryInput, currentIndustry, content, runState, stageText, stageSeconds,
+    industryInput, focusInput, currentIndustry, content, runState, stageText, stageSeconds,
     runError, fieldError, history, activeHistoryId, saving, saveError, saveMessage,
     running, summary, canSave, refreshing, startResearch, stopResearch,
     selectHistory, saveToKnowledge, refresh,

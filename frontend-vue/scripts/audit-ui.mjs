@@ -2365,7 +2365,7 @@ try {
         const rect = dialog?.querySelector('button[type="submit"]')?.getBoundingClientRect()
         return Boolean(rect && rect.top >= 0 && rect.bottom <= window.innerHeight)
       })(),
-      backgroundStable: document.querySelectorAll('.watchlist-card').length === 0,
+      backgroundStable: document.querySelectorAll('.watchlist-row-item').length === 0,
     }
   })
   const watchlistModalAxe = await watchlistEmptyPage.evaluate(async () => window.axe.run(document, {
@@ -2402,15 +2402,19 @@ try {
   await watchlistFailurePage.addScriptTag({ content: axeSource })
   const watchlistFailureState = await watchlistFailurePage.evaluate(() => {
     const text = document.body.innerText
-    const cardTops = [...document.querySelectorAll('.watchlist-card')]
+    const compactRows = [...document.querySelectorAll('.watchlist-row')]
       .slice(0, 4)
-      .map((card) => card.getBoundingClientRect().top)
+      .map((row) => row.getBoundingClientRect())
+    const header = document.querySelector('.watchlist-list__head')
+    const headerColor = header ? getComputedStyle(header).color : ''
     return {
       localFailure: text.includes('自动刷新失败，保留最近已加载内容') && text.includes('观察池刷新链暂不可用'),
       itemsSurvive: text.includes('紫金矿业') && text.includes('宁德时代') && text.includes('中际旭创') && text.includes('浦发银行'),
       degradedSurvives: text.includes('降级快照') && text.includes('陈旧'),
       retryAvailable: text.includes('重试刷新'),
-      fourCardsOneRow: cardTops.length === 4 && cardTops.every((top) => Math.abs(top - cardTops[0]) < 2),
+      compactRowsAligned: compactRows.length === 4
+        && compactRows.every((rect) => rect.height <= 90 && Math.abs(rect.left - compactRows[0].left) < 2),
+      blackHeaderText: headerColor === 'rgb(17, 24, 39)',
     }
   })
   const watchlistFailureAxe = await watchlistFailurePage.evaluate(async () => window.axe.run(document, {
@@ -2661,7 +2665,7 @@ try {
   })
   await stockAskFailurePage.goto('http://127.0.0.1:4175/#/research?tab=ask', { waitUntil: 'networkidle' })
   await stockAskFailurePage.locator('#stock-ask-code').fill('600519')
-  await stockAskFailurePage.locator('.stock-ask-selector button[type="submit"]').click()
+  await stockAskFailurePage.locator('.stock-ask-conversation__selector button[type="submit"]').click()
   await stockAskFailurePage.waitForSelector('.stock-evidence__quote')
   await stockAskFailurePage.addScriptTag({ content: axeSource })
   const stockAskFailureState = await stockAskFailurePage.evaluate(() => {

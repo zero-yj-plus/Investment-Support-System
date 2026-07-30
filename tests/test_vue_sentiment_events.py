@@ -31,7 +31,6 @@ def test_vue_sentiment_events_uses_only_the_real_a_share_news_endpoint() -> None
 
 def test_vue_sentiment_events_preserves_missing_empty_degraded_and_units() -> None:
     page = _read("src/components/SentimentEventsPage.vue")
-    summary = _read("src/components/SentimentEventSummary.vue")
     card = _read("src/components/SentimentEventCard.vue")
     formatting = _read("src/utils/sentimentFormat.ts")
 
@@ -42,9 +41,9 @@ def test_vue_sentiment_events_preserves_missing_empty_degraded_and_units() -> No
     assert "return '—'" in formatting
     assert "`${number > 0 ? '+' : ''}${number.toFixed(digits)}%`" in formatting
     assert "暂无盘面观察" in formatting
-    assert "不判断利多利空" in page + summary + card
-    assert "?? 0" not in page + summary + card + formatting
-    assert "|| 0" not in page + summary + card + formatting
+    assert "不判断利多利空" in page + card
+    assert "?? 0" not in page + card + formatting
+    assert "|| 0" not in page + card + formatting
 
 
 def test_vue_sentiment_events_cleans_request_timer_and_visibility_listener() -> None:
@@ -65,7 +64,6 @@ def test_vue_sentiment_events_uses_safe_nodes_links_and_native_interactions() ->
         _read(path)
         for path in (
             "src/components/SentimentEventsPage.vue",
-            "src/components/SentimentEventSummary.vue",
             "src/components/SentimentEventFeed.vue",
             "src/components/SentimentEventCard.vue",
         )
@@ -89,6 +87,8 @@ def test_vue_sentiment_events_responsive_contract_and_audit_scenarios() -> None:
     audit = _read("scripts/audit-ui.mjs")
 
     assert ".sentiment-page { display: grid; min-width: 0;" in page
+    assert "SentimentEventSummary" not in page
+    assert "sentiment-skeleton--summary" not in page
     assert ".sentiment-event-card { display: grid; min-width: 0;" in card
     assert "@media (max-width: 900px)" in feed + card
     assert "grid-template-columns: minmax(0, 1fr)" in page + feed + card
@@ -106,7 +106,6 @@ def test_sentiment_audit_fixture_is_semantic_and_stays_out_of_production() -> No
         _read(path)
         for path in (
             "src/components/SentimentEventsPage.vue",
-            "src/components/SentimentEventSummary.vue",
             "src/components/SentimentEventFeed.vue",
             "src/components/SentimentEventCard.vue",
             "src/composables/useSentimentEvents.ts",

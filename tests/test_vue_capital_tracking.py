@@ -71,7 +71,6 @@ def test_vue_capital_tracking_uses_safe_nodes_and_native_interactions() -> None:
         _read(path)
         for path in (
             "src/components/CapitalTrackingPage.vue",
-            "src/components/CapitalDecisionSummary.vue",
             "src/components/CapitalRankingPanel.vue",
             "src/components/CapitalTrendPanel.vue",
         )
@@ -79,6 +78,8 @@ def test_vue_capital_tracking_uses_safe_nodes_and_native_interactions() -> None:
 
     assert "v-html" not in sources
     assert 'type="button"' in sources
+    assert "class=\"primary-button capital-snapshot-button\"" in sources
+    assert "@click=\"takeSnapshot\"" in sources
     assert '<a v-if="kind === \'stock\' && row.code"' in sources
     assert 'role="button"' not in sources
     assert 'aria-live="polite"' in sources
@@ -92,6 +93,9 @@ def test_vue_capital_tracking_responsive_contract_and_audit_scenarios() -> None:
     audit = _read("scripts/audit-ui.mjs")
 
     assert ".capital-page { display: grid; min-width: 0;" in page
+    assert '<header class="capital-intro">' in page
+    assert "{{ snapshotting ? '采集中…' : '采集真实快照' }}" in page
+    assert "CapitalDecisionSummary" not in page
     assert "grid-template-columns: repeat(2, minmax(0, 1fr))" in page
     assert "@media (max-width: 720px)" in page + ranking + trend
     assert ".capital-table-wrap { max-width: 100%; overflow-x: auto; }" in ranking
@@ -110,7 +114,6 @@ def test_capital_audit_fixture_stays_out_of_production_components() -> None:
         _read(path)
         for path in (
             "src/components/CapitalTrackingPage.vue",
-            "src/components/CapitalDecisionSummary.vue",
             "src/components/CapitalRankingPanel.vue",
             "src/components/CapitalTrendPanel.vue",
             "src/composables/useCapitalTracking.ts",

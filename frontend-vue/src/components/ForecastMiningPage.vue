@@ -67,7 +67,7 @@ defineExpose({ refresh })
 
     <div v-if="loading" class="forecast-loading" role="status" aria-live="polite">
       <span class="sr-only">业绩预告榜单正在加载</span>
-      <section class="panel forecast-skeleton forecast-skeleton--summary"></section>
+      <section class="panel forecast-skeleton forecast-skeleton--stats"></section>
       <section class="panel forecast-skeleton forecast-skeleton--table"></section>
     </div>
 
@@ -87,10 +87,6 @@ defineExpose({ refresh })
 
       <ForecastMiningSummary
         :data="data"
-        :item-count="items.length"
-        :trap-count="traps.length"
-        :loading="false"
-        :unavailable="unavailable"
       />
 
       <details class="panel forecast-terms" open>
@@ -161,7 +157,7 @@ defineExpose({ refresh })
 .forecast-loading { display: grid; gap: 12px; }
 .forecast-skeleton { position: relative; overflow: hidden; }
 .forecast-skeleton::after { position: absolute; inset: 0; background: color-mix(in srgb, var(--surface-3) 68%, transparent); content: ""; animation: forecast-pulse 1.2s ease-in-out infinite alternate; }
-.forecast-skeleton--summary { min-height: 292px; }.forecast-skeleton--table { min-height: 420px; }
+.forecast-skeleton--stats { min-height: 104px; }.forecast-skeleton--table { min-height: 420px; }
 .forecast-alert { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 12px 14px; border: 1px solid var(--danger); border-radius: var(--radius); background: color-mix(in srgb, var(--danger) 7%, var(--surface)); }
 .forecast-alert > div { display: grid; gap: 2px; }.forecast-alert span { color: var(--text-2); }
 .forecast-partial { display: flex; flex-wrap: wrap; gap: 4px 12px; padding: 10px 14px; border: 1px solid var(--warning); border-radius: var(--radius); background: color-mix(in srgb, var(--warning) 7%, var(--surface)); color: var(--text-2); }
@@ -186,6 +182,7 @@ defineExpose({ refresh })
   .forecast-intro { align-items: stretch; flex-direction: column; gap: 12px; }
   .forecast-stamp { min-width: 0; }
   .forecast-terms dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .forecast-skeleton--stats { min-height: 216px; }
   .forecast-terms dl div:nth-child(2) { border-right: 0; }.forecast-terms dl div:nth-child(-n + 2) { border-bottom: 1px solid var(--border); }
 }
 @media (max-width: 720px) {
@@ -197,6 +194,7 @@ defineExpose({ refresh })
   .forecast-terms dl div:nth-child(-n + 2) { border-bottom: 1px solid var(--border); }
   .forecast-types { align-items: stretch; flex-direction: column; }.forecast-type-filters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); justify-content: stretch; }
   .forecast-type-filter { width: 100%; }
+  .forecast-skeleton--stats { min-height: 352px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .forecast-skeleton::after { animation: none; }

@@ -35,11 +35,11 @@ def test_vue_watchlist_route_is_reachable_and_uses_only_real_contracts() -> None
 
 def test_vue_watchlist_preserves_units_and_all_missing_semantics() -> None:
     page = _read("src/components/WatchlistPage.vue")
-    card = _read("src/components/WatchlistItemCard.vue")
+    row = _read("src/components/WatchlistItemRow.vue")
     editor = _read("src/components/WatchlistEditor.vue")
     composable = _read("src/composables/useWatchlist.ts")
     formatter = _read("src/utils/watchlistFormat.ts")
-    combined = page + card + editor + composable + formatter
+    combined = page + row + editor + composable + formatter
 
     for label in (
         "真实空数组",
@@ -54,7 +54,6 @@ def test_vue_watchlist_preserves_units_and_all_missing_semantics() -> None:
         "任何缺失值都不补 0",
         "单位：元",
         "%",
-        "本接口不提供仓位上限，页面不推断仓位",
     ):
         assert label in combined
     assert "if (!Array.isArray(payload.items))" in composable
@@ -64,7 +63,7 @@ def test_vue_watchlist_preserves_units_and_all_missing_semantics() -> None:
     assert "result.zone_status === 'queued'" in composable
     assert "尚未完成" in composable
     assert "parsed == null ? '—'" in formatter
-    for source in (page, card, editor, composable, formatter):
+    for source in (page, row, editor, composable, formatter):
         assert "|| 0" not in source
         assert "?? 0" not in source
     assert "riskLevel" not in editor
@@ -74,7 +73,7 @@ def test_vue_watchlist_preserves_units_and_all_missing_semantics() -> None:
 
 def test_vue_watchlist_cleans_lifecycle_and_prevents_duplicate_actions() -> None:
     page = _read("src/components/WatchlistPage.vue")
-    card = _read("src/components/WatchlistItemCard.vue")
+    row = _read("src/components/WatchlistItemRow.vue")
     editor = _read("src/components/WatchlistEditor.vue")
     composable = _read("src/composables/useWatchlist.ts")
 
@@ -95,23 +94,23 @@ def test_vue_watchlist_cleans_lifecycle_and_prevents_duplicate_actions() -> None
     assert "if (!id || deletingId.value) return false" in composable
     assert "if (recalculating.value) return" in composable
     assert "onBeforeUnmount(() => emit('refreshState', false))" in page
-    for source in (page, card, editor):
+    for source in (page, row, editor):
         assert '<button' in source
         assert 'role="button"' not in source
-    assert ':href="diagnosisHash"' in card
+    assert ':href="diagnosisHash"' in row
 
 
 def test_vue_watchlist_uses_safe_text_and_responsive_accessible_semantics() -> None:
     page = _read("src/components/WatchlistPage.vue")
-    card = _read("src/components/WatchlistItemCard.vue")
+    row = _read("src/components/WatchlistItemRow.vue")
     editor = _read("src/components/WatchlistEditor.vue")
-    combined = page + card + editor
+    combined = page + row + editor
 
-    for source in (page, card, editor):
+    for source in (page, row, editor):
         assert "v-html" not in source
         assert "box-shadow" not in source
         assert "linear-gradient" not in source
-    assert "white-space: pre-wrap" in card
+    assert "white-space: pre-wrap" in row
     assert 'aria-live="polite"' in page
     assert 'role="alert"' in page and 'role="status"' in page
     assert '<form @submit.prevent="submit">' in editor
@@ -122,16 +121,32 @@ def test_vue_watchlist_uses_safe_text_and_responsive_accessible_semantics() -> N
     assert "repeat(6, minmax(0, 1fr))" in editor
     assert '<Teleport to="body">' in page
     assert "opener?.focus()" in page
-    assert "repeat(4, minmax(0, 1fr))" in page
-    assert '<details class="watchlist-card__details">' in card
-    assert "服务端评级" not in card
-    assert 'place-items: center' in card and 'font: 800 27px/1' in card
-    assert "min-height: 44px" in card + editor
-    assert "@media (max-width: 720px)" in page + card + editor
-    assert "@media (max-width: 520px)" in card + editor
+    assert 'class="watchlist-list__head"' in page
+    assert "--watchlist-head-text: #111827" in page
+    assert "grid-template-columns: var(--watchlist-columns)" in page + row
+    assert ':hidden="!expanded"' in row and ':aria-expanded="expanded"' in row
+    assert "服务端评级" not in row
+    assert 'place-items: center' in row and 'font: 800 24px/1' in row
+    assert "min-height: 44px" in row + editor
+    assert "@media (max-width: 900px)" in page + row
+    assert "@media (max-width: 680px)" in row
     assert "@media (prefers-reduced-motion: reduce)" in page
     for fixture_value in ("紫金矿业", "宁德时代", "18.68", "282.10"):
         assert fixture_value not in combined
+
+
+def test_vue_watchlist_places_actions_in_title_bar_without_summary_panel() -> None:
+    page = _read("src/components/WatchlistPage.vue")
+    header = page.split('<header class="watchlist-intro">', 1)[1].split("</header>", 1)[0]
+
+    assert '<div class="watchlist-intro__actions">' in header
+    assert "添加观察" in header
+    assert "重算双周期区间" in header
+    assert header.index("重算双周期区间") < header.index("添加观察")
+    assert "grid-template-columns: repeat(2, max-content)" in page
+    assert "watchlist-summary" not in page
+    assert "当前确定性结论" not in page
+    assert "服务端 A 级" not in page
 
 
 def test_vue_watchlist_ui_audit_has_real_fixture_and_required_states() -> None:
@@ -159,6 +174,6 @@ def test_vue_watchlist_ui_audit_has_real_fixture_and_required_states() -> None:
     assert "watchlistModalStateComplete" in audit
     assert "saveVisible" in audit
     assert "watchlistFailureStateComplete" in audit
-    assert "fourCardsOneRow" in audit
+    assert "compactRowsAligned" in audit
     assert "`${auditedPage.name}-${viewport.name}.png`" in audit
     assert "`${auditedPage.name}-wide-1440-light.png`" in audit

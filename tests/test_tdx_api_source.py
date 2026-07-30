@@ -446,13 +446,14 @@ def test_basic_financial_uses_named_stock_info_fields_without_inventing_growth(m
 
 def test_sector_members_for_codes_supports_concept_blocks(monkeypatch) -> None:
     monkeypatch.setattr(tdx, "_dataset_rows", lambda *_args, **_kwargs: [
-        {"entity_key": "880753.SH", "series_key": "605028.SH", "as_of": "20260713", "payload": {"sector_code": "880753.SH", "Code": "605028.SH"}},
-        {"entity_key": "880753.SH", "series_key": "600900.SH", "as_of": "20260713", "payload": {"sector_code": "880753.SH", "Code": "600900.SH"}},
+        {"entity_key": "880753.SH", "series_key": "605028.SH", "as_of": "20260713", "payload": {"sector_code": "880753.SH", "Code": "605028.SH", "Name": "世茂能源"}},
+        {"entity_key": "880753.SH", "series_key": "600900.SH", "as_of": "20260713", "payload": {"sector_code": "880753.SH", "Code": "600900.SH", "Name": "长江电力"}},
     ])
 
     result = tdx._sector_members_for_codes_cached.__wrapped__(("880753.SH",))
 
     assert result["by_sector"]["880753.SH"] == ("605028", "600900")
+    assert result["names"] == {"605028": "世茂能源", "600900": "长江电力"}
     assert result["member_count"] == 2
     assert result["data_date"] == "2026-07-13"
 

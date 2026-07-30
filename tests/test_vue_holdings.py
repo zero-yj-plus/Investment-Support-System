@@ -30,12 +30,11 @@ def test_vue_holdings_route_is_reachable_and_uses_real_contracts() -> None:
 
 def test_vue_holdings_preserves_missing_empty_stale_and_overwrite_safety() -> None:
     page = _read("src/components/HoldingsPage.vue")
-    summary = _read("src/components/HoldingsSummary.vue")
     table = _read("src/components/HoldingsTable.vue")
     composable = _read("src/composables/useHoldings.ts")
     formatter = _read("src/utils/holdingsFormat.ts")
 
-    combined = page + summary + table + composable + formatter
+    combined = page + table + composable + formatter
     for label in (
         "真实空数组",
         "持仓账本暂不可用",
@@ -56,7 +55,7 @@ def test_vue_holdings_preserves_missing_empty_stale_and_overwrite_safety() -> No
     assert "quoteCoverageComplete.value" in composable
     assert "missingQuoteCodes.value = codes" in composable
     assert "value == null ? '—'" in formatter
-    for source in (page, summary, table, composable, formatter):
+    for source in (page, table, composable, formatter):
         assert "v-html" not in source
         assert "|| 0" not in source
         assert "?? 0" not in source
@@ -87,24 +86,26 @@ def test_vue_holdings_cleans_lifecycle_and_prevents_duplicate_actions() -> None:
     for source in (page, editor):
         assert '<button' in source
         assert 'role="button"' not in source
-    summary = _read("src/components/HoldingsSummary.vue")
-    assert '>添加持仓</button>' in summary
-    assert ":class=\"dirty ? 'secondary-button' : 'primary-button'\"" in summary
+    assert '>添加持仓</button>' in page
+    assert '@click="openEditor"' in page
+    assert ':disabled="loading || !!holdingsError || saving || adding"' in page
+    assert "'保存持仓变更'" in page
+    assert "HoldingsSummary" not in page
+    assert '<dt>缺失报价</dt>' not in page
 
 
 def test_vue_holdings_responsive_accessible_semantics_and_ui_audit() -> None:
     page = _read("src/components/HoldingsPage.vue")
-    summary = _read("src/components/HoldingsSummary.vue")
     table = _read("src/components/HoldingsTable.vue")
     editor = _read("src/components/HoldingEditor.vue")
     audit = _read("scripts/audit-ui.mjs")
 
     assert 'tabindex="0" role="region" aria-label="持仓明细宽表，可横向滚动"' in table
     assert "@media (max-width: 720px)" in page + table
-    assert "@media (max-width: 520px)" in summary + editor
+    assert "@media (max-width: 520px)" in editor
     assert "@media (prefers-reduced-motion: reduce)" in page
     assert "min-height: 44px" in page + table + editor
-    for source in (page, summary, table, editor):
+    for source in (page, table, editor):
         assert "box-shadow" not in source
         assert "linear-gradient" not in source
     assert "hash: '#/risk?tab=holdings'" in audit

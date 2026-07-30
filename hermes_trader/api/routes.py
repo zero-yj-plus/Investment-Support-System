@@ -2613,14 +2613,13 @@ async def _governed_chain_chat_stream(
         analysis["data_gaps"].insert(0, {
             "dimension": "本轮结构化采集",
             "status": "failed",
-            "needed": ["稍后重试 TDX/公开板块目录、成分关系与可选行情"],
+            "needed": ["稍后重试本地 TQ/公开板块目录与成分关系"],
         })
     analysis["request_contract"] = (
         research_contract if research_contract == "chain-research-v2" else "legacy-compatible"
     )
     explain = getattr(st.engine, "governed_chain_explanation_stream", None)
     if model_available and callable(explain) and message:
-        yield industry_chain_mod.render_evidence_baseline(analysis)
         emitted = False
         try:
             explanation_gen = _invoke_governed_chat_stream(
@@ -2636,14 +2635,20 @@ async def _governed_chain_chat_stream(
                     continue
                 if not emitted:
                     emitted = True
-                    yield "\n\n## 八段定性研究（公开产业常识推演）\n"
+                    yield "# 产业链上下游研究\n\n"
                 yield text
         except Exception:  # noqa: BLE001 — 结构化首答已完整，不因解释层失败降级
             log.warning("产业链模型解释未返回，保留结构化首答 industry=%s", industry)
         if not emitted:
             yield (
-                "\n\n> 模型深度研究未通过证据边界，本轮退回诚实骨架。\n\n"
+                "> 模型深度研究未通过证据边界，本轮展示可复核研究框架。\n\n"
                 + industry_chain_mod.render_markdown(analysis)
+            )
+        else:
+            yield (
+                "\n\n---\n\n"
+                "> 研究说明：本报告以产业结构、上下游传导和商业逻辑为主。"
+                "公司业务归属、订单、份额、财务表现及当前交易时点需在具体研究中另行确认。"
             )
         return
     yield industry_chain_mod.render_markdown(analysis)
@@ -2757,7 +2762,7 @@ async def chat(request: Request):
                 model_available=model_status == "available",
                 research_contract=research_contract,
             ),
-            stage="正在匹配公开板块目录、成员关系与可选行情…",
+            stage="正在拆解需求、上下游与价值传导…",
         ))
     return _sse(st.engine.chat_stream(mode, message, code=code, industry=industry,
                                       history=history, images=images, codes=codes))

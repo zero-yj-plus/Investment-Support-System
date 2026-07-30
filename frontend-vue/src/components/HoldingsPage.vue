@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import HoldingEditor from './HoldingEditor.vue'
-import HoldingsSummary from './HoldingsSummary.vue'
 import HoldingsTable from './HoldingsTable.vue'
 import { useHoldings } from '../composables/useHoldings'
 import type { NewHoldingInput } from '../types/holdings'
@@ -12,7 +11,6 @@ const showEditor = ref(false)
 const {
   holdings,
   views,
-  missingQuoteCodes,
   loading,
   refreshing,
   quotesLoading,
@@ -74,6 +72,10 @@ defineExpose({ refresh })
         <h1 id="holdings-page-title">我的持仓</h1>
         <p class="page-subtitle">核对真实持仓、当前报价、持仓市值与盈亏边界；页面只做展示算术和账本编辑，不在浏览器中生成交易结论。</p>
       </div>
+      <div class="holdings-intro__actions">
+        <button type="button" :class="dirty ? 'secondary-button' : 'primary-button'" :disabled="loading || !!holdingsError || saving || adding" @click="openEditor">添加持仓</button>
+        <button v-if="dirty" type="button" class="primary-button" :disabled="saving" @click="save">{{ saving ? '保存中' : '保存持仓变更' }}</button>
+      </div>
     </header>
 
     <div class="sr-only" aria-live="polite">
@@ -82,7 +84,7 @@ defineExpose({ refresh })
 
     <div v-if="loading" class="holdings-loading" role="status" aria-live="polite">
       <span class="sr-only">持仓账本正在加载</span>
-      <section class="panel holdings-skeleton holdings-skeleton--summary"></section>
+      <section class="panel holdings-skeleton holdings-skeleton--boundary"></section>
       <section class="panel holdings-skeleton holdings-skeleton--detail"></section>
     </div>
 
@@ -112,18 +114,6 @@ defineExpose({ refresh })
           <strong>{{ saveError ? '操作未完成' : '账本状态' }}</strong><span>{{ saveError || feedback }}</span>
         </div>
 
-        <HoldingsSummary
-          :rows="views"
-          :quoted-count="quotedCount"
-          :aggregate="aggregate"
-          :dirty="dirty"
-          :saving="saving"
-          :quotes-loading="quotesLoading"
-          :has-stale-quotes="hasStaleQuotes"
-          @save="save"
-          @add="openEditor"
-        />
-
         <HoldingEditor v-if="showEditor" :adding="adding" :server-error="addError" @submit="handleAdd" @cancel="showEditor = false" />
 
         <section class="panel holdings-boundary" aria-labelledby="holdings-boundary-title">
@@ -136,7 +126,6 @@ defineExpose({ refresh })
             <div><dt>投入成本</dt><dd class="mono">{{ formatMoney(aggregate.costAmount) }}</dd></div>
             <div><dt>持仓总市值</dt><dd class="mono">{{ formatMoney(aggregate.marketValue) }}</dd></div>
             <div><dt>浮动盈亏</dt><dd class="mono" :class="`is-${pnlTone(aggregate.pnl)}`">{{ formatMoney(aggregate.pnl) }}</dd></div>
-            <div><dt>缺失报价</dt><dd class="mono">{{ missingQuoteCodes.length ? missingQuoteCodes.join('、') : '无' }}</dd></div>
           </dl>
         </section>
 
@@ -175,6 +164,7 @@ defineExpose({ refresh })
 .holdings-intro { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; padding: 4px 2px 2px; }
 .holdings-intro h1 { margin: 0; font-size: clamp(24px, 2.2vw, 30px); line-height: 1.25; }
 .holdings-intro > div > p:last-child { max-width: 800px; margin: 7px 0 0; color: var(--text-2); }
+.holdings-intro__actions { display: flex; flex: 0 0 auto; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .holdings-stamp { display: grid; min-width: 520px; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px 14px; margin: 0; padding: 9px 11px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
 .holdings-stamp.is-degraded { border-color: var(--warning); }
 .holdings-stamp div { min-width: 0; }
@@ -183,7 +173,7 @@ defineExpose({ refresh })
 .holdings-loading { display: grid; gap: 12px; }
 .holdings-skeleton { position: relative; overflow: hidden; background: var(--surface); }
 .holdings-skeleton::after { position: absolute; inset: 0; background: var(--surface-2); content: ""; animation: holdings-pulse 1.1s ease-in-out infinite alternate; }
-.holdings-skeleton--summary { min-height: 250px; }
+.holdings-skeleton--boundary { min-height: 108px; }
 .holdings-skeleton--detail { min-height: 460px; }
 .holdings-alert, .holdings-feedback { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 11px 14px; border: 1px solid var(--danger); border-radius: var(--radius); background: var(--surface); }
 .holdings-alert.is-warning { border-color: var(--warning); }
@@ -198,7 +188,7 @@ defineExpose({ refresh })
 .holdings-boundary { display: grid; grid-template-columns: minmax(260px, 1fr) minmax(0, 1.6fr); align-items: center; gap: 16px; padding: 14px; }
 .holdings-boundary h2 { margin: 0; font-size: 18px; }
 .holdings-boundary > div > p:last-child { margin: 5px 0 0; color: var(--text-2); font-size: 13px; }
-.holdings-boundary dl { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px; margin: 0; }
+.holdings-boundary dl { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; margin: 0; }
 .holdings-boundary dl div { min-width: 0; padding: 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); }
 .holdings-boundary dt { color: var(--text-3); font-size: 12px; }
 .holdings-boundary dd { margin: 3px 0 0; font-size: 15px; font-weight: 720; overflow-wrap: anywhere; }
@@ -210,12 +200,14 @@ defineExpose({ refresh })
 @keyframes holdings-pulse { from { opacity: .45; } to { opacity: .8; } }
 @media (max-width: 1100px) {
   .holdings-intro { align-items: stretch; flex-direction: column; gap: 12px; }
+  .holdings-intro__actions { justify-content: flex-start; }
   .holdings-stamp { min-width: 0; }
   .holdings-boundary { grid-template-columns: minmax(0, 1fr); }
   .holdings-boundary dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 720px) {
   .holdings-page { gap: 8px; font-size: 18px; }
+  .holdings-intro__actions, .holdings-intro__actions button { width: 100%; }
   .holdings-stamp, .holdings-boundary { grid-template-columns: minmax(0, 1fr); }
   .holdings-boundary dl { grid-template-columns: minmax(0, 1fr); }
   .holdings-alert { align-items: stretch; flex-direction: column; }

@@ -411,14 +411,14 @@ FastAPI `/api`，不依赖旧前端。旧版默认不可访问，仅配置开启
 | `src/components/Hotboard*.vue` | 涨停题材结论、题材筛选和响应式涨停股明细。 |
 | `src/components/Capital*.vue` | 资金追踪的数据边界、行业/热门股榜单、日内连续采样趋势和局部动作反馈。 |
 | `src/components/MainlineResearchPage.vue`、`MainlineMoneyEffect.vue`、`MainlineCrowdedness.vue`、`MainlineContinuity.vue`、`MainlineLeaders.vue` | 主线深研结论边界、四类结构化证据和各模块独立状态。 |
-| `src/components/HoldingsPage.vue`、`HoldingsSummary.vue`、`HoldingEditor.vue`、`HoldingsTable.vue` | 我的持仓结论、自动成本/市值汇总边界、账本编辑和桌面宽表/移动卡片明细。 |
-| `src/components/WatchlistPage.vue`、`WatchlistItemCard.vue`、`WatchlistEditor.vue` | 观察池结论摘要、服务端双周期价格边界、逐项数据健康与显式核验编辑。 |
+| `src/components/HoldingsPage.vue`、`HoldingEditor.vue`、`HoldingsTable.vue` | 我的持仓标题操作、自动成本/市值汇总边界、账本编辑和桌面宽表/移动卡片明细。 |
+| `src/components/WatchlistPage.vue`、`WatchlistItemRow.vue`、`WatchlistEditor.vue` | 观察池紧凑单行列表、服务端双周期价格边界、逐项数据健康与显式核验编辑。 |
 | `src/components/TomorrowStrategyPage.vue`、`TomorrowDecisionSummary.vue`、`TomorrowWatchlist.vue`、`TomorrowDataHealth.vue` | 次日策略的风险底座、观察池触发条件、依据健康和安全报告工作区。 |
 | `src/components/StockAsk*.vue` | 专属盘中问股的历史栏、对话、安全消息节点、标的证据与等高输入区。 |
 | `src/components/Diagnosis*.vue` | 个股诊断的代码查询、确定性结论、风险/价格边界、结构化证据与数据治理。 |
 | `src/components/Screener*.vue` | 条件选股的结论边界、原生筛选表单、响应式候选明细和覆盖率治理。 |
 | `src/components/TechnicalScreener*.vue`、`TechnicalSignalDialog.vue` | 技术面选股的缓存结论、自然语言规则编辑、信号库、响应式候选明细、事件历史与数据治理。 |
-| `src/components/ForecastMining*.vue` | 业绩预告掘金的确定性结论、风险/仓位边界、规则解释与响应式候选/陷阱明细。 |
+| `src/components/ForecastMining*.vue` | 业绩预告掘金的榜单统计、规则解释与响应式候选/陷阱明细。 |
 | `src/components/IndustryChain*.vue` | 产业链研究输入、产业/交易边界、真实空映射、安全 Markdown 正文、本地历史和数据治理。 |
 | `src/components/CompanyResearch*.vue` | 公司研究输入、结论边界、盘后研究底座、官方公告/互动证据、安全 Markdown 正文与追加式本地历史。 |
 | `src/components/ReportCenter*.vue` | 报告中心的历史日期、服务端定稿摘要、安全正文、章节目录、版本治理与真实交付回执。 |

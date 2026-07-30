@@ -112,10 +112,19 @@ def test_vue_stock_ask_is_dedicated_and_keeps_two_row_equal_height_composer() ->
 
 def test_vue_stock_ask_responsive_contract_and_audit_scenarios() -> None:
     page = _read("src/components/StockAskPage.vue")
+    conversation = _read("src/components/StockAskConversation.vue")
+    history = _read("src/components/StockAskHistory.vue")
     audit = _read("scripts/audit-ui.mjs")
 
     assert ".stock-ask-page { display: grid; min-width: 0;" in page
-    assert "grid-template-columns: minmax(190px, 220px) minmax(460px, 1fr) minmax(260px, 320px)" in page
+    assert "grid-template-columns: 56px minmax(460px, 1fr) minmax(260px, 320px)" in page
+    assert ".stock-ask-workbench.is-history-expanded" in page
+    assert "const historyExpanded = ref(false)" in page
+    assert "stock-ask-selector panel" not in page
+    assert 'class="stock-ask-conversation__selector"' in conversation
+    assert '.stock-ask-conversation__selector button[type="submit"]' in audit
+    assert 'aria-expanded="expanded"' in history
+    assert 'v-if="expanded" id="stock-ask-history-content"' in history
     assert "@media (max-width: 1180px)" in page
     assert "@media (max-width: 800px)" in page
     assert "@media (max-width: 720px)" in page

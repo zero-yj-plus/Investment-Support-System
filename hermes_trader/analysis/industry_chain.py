@@ -19,10 +19,8 @@ from typing import Any
 
 from ..data import (
     free_source,
-    market,
     official_disclosure,
     official_interaction,
-    stock,
     tdx_api_source as tdx_api,
 )
 from ..data.base import get_ak, now_cn, safe, ttl_cache
@@ -967,7 +965,10 @@ def build_analysis(
             "membership_verification": membership_verification,
             # 兼容既有前端；新代码应读取 verified_member_count。
             "tdx_member_count": len(all_member_codes),
-            "quote_requested_count": min(len(all_member_codes), 300),
+            "quote_requested_count": sum(
+                1 for code in all_member_codes
+                if isinstance(quote_data.get(code), dict)
+            ),
             "quoted_count": sum(
                 1
                 for code in all_member_codes
@@ -1029,11 +1030,8 @@ async def collect_analysis(
     company_limit: int = 20,
     data_dir: str | Path | None = None,
 ) -> dict:
-    """按交互预算采集一次产业链证据并构造共享契约。"""
-    catalog, sector_market = await asyncio.gather(
-        _bounded_call(tdx_api.sector_catalog, timeout=7.0, default={}),
-        _bounded_call(market.market_sectors, timeout=5.0, default={}),
-    )
+    """采集低频板块关系并构造共享契约；实时行情不参与首屏。"""
+    catalog = await _bounded_call(tdx_api.sector_catalog, timeout=7.0, default={})
     matched = match_sector_catalog(industry, catalog)
     sector_codes = [str(item.get("code") or "") for item in matched if item.get("code")]
     membership = await _bounded_call(
@@ -1068,20 +1066,11 @@ async def collect_analysis(
             effective_catalog = public_catalog
             matched = public_matched
             member_codes = public_codes
-    quote_codes = member_codes[:300]
-    quotes = await _bounded_call(
-        stock.quick_quotes,
-        quote_codes,
-        timeout=5.0,
-        default={},
-    ) if quote_codes else {}
-    evidence_codes = sorted(
-        member_codes,
-        key=lambda code: (
-            -(_number(((quotes or {}).get(code) or {}).get("amount")) or 0.0),
-            code,
-        ),
-    )
+    # 产业链结构是低频研究，不应等待实时报价或板块盘面。成员名称由 TQ
+    # sector_members / 公开板块成员契约直接提供；行情与估值留空并明确标缺。
+    quotes: dict[str, dict] = {}
+    sector_market: dict = {}
+    evidence_codes = sorted(member_codes)
     company_evidence, evidence_refresh = _company_evidence_snapshot(
         evidence_codes,
         industry,
@@ -1215,53 +1204,116 @@ def render_evidence_baseline(analysis: dict) -> str:
     return "\n".join(lines)
 
 
-def render_markdown(analysis: dict) -> str:
-    """模型不可用时输出诚实的八段骨架，不用空缺数据伪造深度研究。"""
+def render_evidence_appendix(analysis: dict) -> str:
+    """把冻结证据放在研究正文之后，避免证据表淹没产业结论。"""
+    matched = analysis.get("matched_sectors") or []
     lines = [
-        *_header_lines(analysis),
+        "## 可核验证据附录",
         "",
-        "### 1. 需求本质",
-        f"- {((analysis.get('demand_essence') or {}).get('current_conclusion') or '数据缺失')}",
-        f"- 核验问题：{((analysis.get('demand_essence') or {}).get('question') or '—')}",
+        "本附录只说明板块集合、候选公司、数据时点和待核事项，不代替前文产业判断。",
         "",
-        "### 2. 产业地图",
-    ]
-    for stage in analysis.get("chain_structure") or []:
-        lines.append(
-            f"- **{stage.get('label') or stage.get('stage')}**："
-            f"{stage.get('research_question') or '待核验'}（{stage.get('status') or 'unknown'}）"
-        )
-    lines.extend([
+        "### 板块与成员口径",
+        "- 公开来源匹配板块："
+        + (
+            "；".join(
+                f"{item.get('name')}（{item.get('code')}，{item.get('member_count')}只）"
+                for item in matched
+            )
+            if matched
+            else "未匹配；公司映射保持为空，但不影响行业级产业结构分析"
+        ),
+        "- 下表只冻结真实成分候选与证据核验顺序，不证明产业角色或投资价值。",
         "",
-        "### 3. 价值捕获",
-        f"- 价值捕获：{((analysis.get('value_capture') or {}).get('current_conclusion') or '待核验')}",
-        f"- 排序维度：{'、'.join((analysis.get('value_capture') or {}).get('ranking_dimensions') or []) or '待核验'}。",
-        "",
-        "### 4. 卡点",
-        f"- 卡点：{((analysis.get('bottlenecks') or {}).get('current_conclusion') or '待核验')}",
-        f"- 核验顺序：{'、'.join((analysis.get('bottlenecks') or {}).get('verification_order') or []) or '待核验'}。",
-        "",
-        "### 5. 国产替代",
-        f"- 国产替代：{((analysis.get('domestic_substitution') or {}).get('current_conclusion') or '待核验')}",
-        "",
-        "### 6. 公司映射（公开板块真实成分约束）",
         *_company_table_lines(analysis),
         "",
-        "### 7. 兑现与估值",
-        f"- {((analysis.get('realization_and_valuation') or {}).get('note') or '数据缺失')}",
+        *_footer_lines(analysis),
+    ]
+    return "\n".join(lines)
+
+
+def render_governed_company_mapping(analysis: dict, *, limit: int = 6) -> str:
+    """由服务端提供简洁研究入口，避免板块数据表淹没产业思维。"""
+    rows = sorted(
+        analysis.get("company_mapping") or [],
+        key=lambda row: (
+            -int(bool(((row.get("company_evidence") or {}).get("matched_terms")))),
+            -len(row.get("matched_sectors") or []),
+            str(row.get("code") or ""),
+        ),
+    )
+    lines = ["### 6. A股映射思路"]
+    if not rows:
+        lines.extend([
+            "公司映射应从前述关键环节反推：先找掌握瓶颈资源和核心工艺的公司，"
+            "再看规模制造与下游应用。本轮没有可靠的本地候选名称，因此不列公司名单。",
+        ])
+        return "\n".join(lines)
+
+    lines.append("映射顺序应沿着“瓶颈环节 → 利润池 → 兑现能力”展开，而不是按板块涨跌或成交额选股。")
+    lines.append("")
+    lines.append("**本地板块候选线索**（仅作为后续公司研究入口）：")
+    for row in rows[:max(1, int(limit))]:
+        code = str(row.get("code") or "—")
+        name = str(row.get("name") or code)
+        sectors = " / ".join(
+            str(item.get("name") or item.get("code") or "")
+            if isinstance(item, dict)
+            else str(item)
+            for item in (row.get("matched_sectors") or [])
+            if item
+        ) or "匹配板块"
+        lines.append(f"- **{name}（{code}）** · {sectors}")
+    if len(rows) > limit:
+        lines.append(f"- 另有 {len(rows) - limit} 只板块候选未展开。")
+    lines.append("")
+    lines.append("这些名称只代表板块关联；是否处在关键环节，应在单公司研究中判断。")
+    return "\n".join(lines)
+
+
+def render_markdown(analysis: dict) -> str:
+    """模型不可用时保留内容优先的产业思维框架，不展示证据大表。"""
+    subject = str(analysis.get("industry") or "目标产业")
+    lines = [
+        "# 产业链上下游研究",
         "",
-        "### 8. 研究优先级与失效条件",
-        "- 当前模型不可用，无法基于公开产业常识形成有内容的定性优先级；"
-        "下列仅是**证据核验队列**，不得当产业或投资排名。",
+        "## 产业结论",
+        f"本轮暂未形成“{subject}”的模型增强分析，以下保留完整研究框架，"
+        "便于继续梳理需求、上下游、利润池、卡点和国产替代。",
+        "",
+        "### 1. 核心需求与驱动力",
+        f"先回答：{subject}解决了谁的什么问题，需求由新增、升级、替换还是降本驱动？",
+        "",
+        "### 2. 上中下游全景",
+        "|环节|核心任务|价值来源|向下游传导|",
+        "|---|---|---|---|",
+        "|上游|提供关键材料、设备、芯片或核心输入|稀缺性、技术壁垒与供给约束|决定成本、性能和扩产速度|",
+        "|中游|制造、加工、集成与交付|工艺、良率、规模与客户认证|把关键输入转化为可销售产品|",
+        "|下游|应用、渠道与终端采购|场景渗透、运营效率与需求强度|决定订单节奏和产业天花板|",
+        "",
+        "### 3. 利润池与价值分配",
+        "沿稀缺性、议价权、扩产难度、客户切换成本和规模效应判断利润更可能停留在哪一环。",
+        "",
+        "### 4. 核心卡点与竞争壁垒",
+        "依次检查关键材料与设备、核心工艺、良率、认证、专利标准和交付能力。",
+        "",
+        "### 5. 国产替代路径",
+        "从“能做”到“能稳定量产”，再到“能进入核心客户并形成规模收入”分阶段判断。",
+        "",
+    ]
+    lines.extend([
+        "",
+        render_governed_company_mapping(analysis),
+        "",
+        "### 7. 兑现节奏与观察指标",
+        "观察终端需求、关键产品迭代、客户认证、产能爬坡和商业化收入是否按顺序出现。",
+        "",
+        "### 8. 风险与失效条件",
     ])
-    for row in analysis.get("evidence_verification_queue") or []:
-        lines.append(
-            f"- P{row.get('priority')}：{row.get('name') or row.get('code')}（{row.get('code')}）"
-            "—先核业务角色/收入占比，再核订单与毛利，最后做同环节估值。"
-        )
-    if not analysis.get("evidence_verification_queue"):
-        lines.append("- 暂无证据核验队列；先解决板块匹配或成分数据缺口。")
-    lines.extend(["", "**失效条件**"])
     lines.extend(f"- {item}" for item in (analysis.get("invalidation_conditions") or []))
-    lines.extend(["", *_footer_lines(analysis)])
+    lines.extend([
+        "",
+        "---",
+        "",
+        "> 研究说明：本报告以产业结构和商业逻辑为主；公司业务、订单、财务和交易时点需另行研究。",
+    ])
     return "\n".join(lines)

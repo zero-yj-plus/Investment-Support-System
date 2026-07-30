@@ -3,12 +3,15 @@ import StockAskComposer from './StockAskComposer.vue'
 import StockAskMessage from './StockAskMessage.vue'
 import type { PendingStockImage, StockAskMessage as Message } from '../types/stockAsk'
 
-defineProps<{
+const props = defineProps<{
   messages: Message[]
   prompt: string
   pendingImages: PendingStockImage[]
+  codeInput: string
   selectedCode: string
   stockName: string
+  stockLoading: boolean
+  codeError: string
   streaming: boolean
   stageText: string
   stageSeconds: number
@@ -19,26 +22,50 @@ defineProps<{
 }>()
 
 const emit = defineEmits<{
+  codeInput: [value: string]
+  submitCode: []
   'update:prompt': [value: string]
   addImages: [images: PendingStockImage[]]
   removeImage: [id: string]
   send: []
   stop: []
 }>()
+
+function updateCodeInput(event: Event) {
+  emit('codeInput', (event.target as HTMLInputElement).value)
+}
 </script>
 
 <template>
   <section class="stock-ask-conversation panel" aria-labelledby="stock-ask-conversation-title">
     <header>
-      <div>
+      <div class="stock-ask-conversation__heading">
         <p class="eyebrow">GOVERNED STOCK Q&amp;A</p>
         <h2 id="stock-ask-conversation-title">盘中问股</h2>
       </div>
-      <div class="stock-ask-conversation__target">
-        <span>当前标的</span>
-        <strong v-if="selectedCode">{{ stockName || '名称待返回' }} <b class="mono">{{ selectedCode }}</b></strong>
-        <strong v-else>未选择</strong>
-      </div>
+      <form class="stock-ask-conversation__selector" novalidate @submit.prevent="emit('submitCode')">
+        <label for="stock-ask-code">六位 A 股代码</label>
+        <div class="stock-ask-conversation__selector-controls">
+          <input
+            id="stock-ask-code"
+            :value="props.codeInput"
+            type="text"
+            inputmode="numeric"
+            autocomplete="off"
+            maxlength="6"
+            pattern="[0-9]{6}"
+            placeholder="例如 600519"
+            :aria-invalid="Boolean(codeError)"
+            :aria-describedby="codeError || selectedCode ? 'stock-ask-code-help' : undefined"
+            :disabled="streaming"
+            @input="updateCodeInput"
+          >
+          <button type="submit" :disabled="stockLoading || streaming">{{ stockLoading ? '查询中' : '查询标的' }}</button>
+        </div>
+        <p v-if="codeError || selectedCode" id="stock-ask-code-help" :class="{ 'is-error': codeError }" :role="codeError ? 'alert' : undefined">
+          {{ codeError || `当前锁定 ${stockName || '名称待返回'} ${selectedCode}` }}
+        </p>
+      </form>
     </header>
 
     <div class="stock-ask-conversation__messages" role="log" aria-live="polite" aria-label="盘中问股对话记录">
@@ -77,12 +104,19 @@ const emit = defineEmits<{
 
 <style scoped>
 .stock-ask-conversation { min-width: 0; overflow: visible; }
-.stock-ask-conversation > header { display: flex; min-height: 72px; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+.stock-ask-conversation > header { display: flex; min-height: 72px; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+.stock-ask-conversation__heading { flex: 0 0 auto; }
 .stock-ask-conversation h2 { margin: 0; font-size: 18px; }
-.stock-ask-conversation__target { display: flex; min-width: 0; flex-direction: column; align-items: flex-end; text-align: right; }
-.stock-ask-conversation__target span { color: var(--text-3); font-size: 12px; }
-.stock-ask-conversation__target strong { overflow-wrap: anywhere; font-size: 14px; }
-.stock-ask-conversation__target b { color: var(--accent); }
+.stock-ask-conversation__selector { display: grid; min-width: min(100%, 350px); grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 3px 8px; }
+.stock-ask-conversation__selector label { color: var(--text-2); font-size: 12px; font-weight: 700; }
+.stock-ask-conversation__selector-controls { display: grid; grid-template-columns: minmax(130px, 180px) auto; gap: 8px; }
+.stock-ask-conversation__selector input, .stock-ask-conversation__selector button { min-height: 44px; border: 1px solid var(--border-strong); border-radius: 8px; }
+.stock-ask-conversation__selector input { min-width: 0; padding: 0 10px; background: var(--surface-2); color: var(--text); font: 700 15px/1 "SFMono-Regular", Consolas, monospace; font-variant-numeric: tabular-nums; letter-spacing: .06em; }
+.stock-ask-conversation__selector button { padding: 0 14px; border-color: var(--accent); background: var(--accent); color: #111a27; font-weight: 760; cursor: pointer; white-space: nowrap; }
+:global(:root[data-theme="light"] .stock-ask-conversation__selector button) { color: #fff; }
+.stock-ask-conversation__selector button:disabled, .stock-ask-conversation__selector input:disabled { cursor: wait; opacity: .55; }
+.stock-ask-conversation__selector > p { grid-column: 2; margin: 0; color: var(--text-3); font-size: 11px; text-align: right; }
+.stock-ask-conversation__selector > p.is-error { color: var(--danger); }
 .stock-ask-conversation__messages { min-height: 380px; }
 .stock-ask-conversation__empty { display: grid; min-height: 380px; place-content: center; justify-items: center; padding: 24px; text-align: center; }
 .stock-ask-conversation__mark { display: grid; width: 52px; height: 52px; place-items: center; margin-bottom: 10px; border: 1px solid var(--accent); border-radius: 8px; background: var(--accent-dim); color: var(--accent); font: 760 20px/1 "SFMono-Regular", Consolas, monospace; }
@@ -92,8 +126,15 @@ const emit = defineEmits<{
 .stock-ask-conversation__feedback.is-warning { border-color: var(--warning); color: var(--warning); }
 
 @media (max-width: 720px) {
-  .stock-ask-conversation > header { align-items: flex-start; }
-  .stock-ask-conversation__target { max-width: 54%; }
+  .stock-ask-conversation > header { align-items: stretch; flex-direction: column; gap: 8px; }
+  .stock-ask-conversation__selector { width: 100%; grid-template-columns: minmax(0, 1fr); }
+  .stock-ask-conversation__selector-controls { grid-template-columns: minmax(0, 1fr) auto; }
+  .stock-ask-conversation__selector input, .stock-ask-conversation__selector button { min-height: 52px; }
+  .stock-ask-conversation__selector > p { grid-column: 1; text-align: left; }
   .stock-ask-conversation__messages, .stock-ask-conversation__empty { min-height: 300px; }
+}
+
+@media (max-width: 430px) {
+  .stock-ask-conversation__selector-controls { grid-template-columns: minmax(0, 1fr); }
 }
 </style>

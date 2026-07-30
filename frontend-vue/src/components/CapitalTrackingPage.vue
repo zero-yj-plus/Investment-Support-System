@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, watch } from 'vue'
-import CapitalDecisionSummary from './CapitalDecisionSummary.vue'
 import CapitalRankingPanel from './CapitalRankingPanel.vue'
 import CapitalTrendPanel from './CapitalTrendPanel.vue'
 import { useCapitalTracking } from '../composables/useCapitalTracking'
@@ -46,13 +45,18 @@ defineExpose({ refresh })
         <h1 id="capital-page-title">资金追踪</h1>
         <p class="page-subtitle">追踪行业与热门股的主力资金日内流向；先辨认数据日期、单位与连续性，再复核资金聚焦和分歧。</p>
       </div>
+      <button
+        type="button"
+        class="primary-button capital-snapshot-button"
+        :disabled="snapshotting"
+        @click="takeSnapshot"
+      >{{ snapshotting ? '采集中…' : '采集真实快照' }}</button>
     </header>
 
     <div class="sr-only" aria-live="polite">{{ refreshing ? '资金追踪正在刷新' : actionFeedback?.message || (error ? `资金追踪读取异常：${error}` : `资金追踪状态：${statusLabel}`) }}</div>
 
     <div v-if="loading" class="capital-loading" role="status" aria-live="polite">
       <span class="sr-only">资金追踪正在加载</span>
-      <section class="panel capital-skeleton capital-skeleton--decision"></section>
       <section class="panel capital-skeleton capital-skeleton--ranking"></section>
       <section class="panel capital-skeleton capital-skeleton--trend"></section>
     </div>
@@ -67,8 +71,6 @@ defineExpose({ refresh })
         <strong>{{ actionFeedback.tone === 'success' ? '采集完成' : actionFeedback.tone === 'warning' ? '采集部分完成' : '采集失败' }}</strong>
         <span>{{ actionFeedback.message }}</span>
       </div>
-
-      <CapitalDecisionSummary :data="data" :sectors="sectors" :hot-stocks="hotStocks" :error="error" :snapshotting="snapshotting" @snapshot="takeSnapshot" />
 
       <section v-if="data?.ok === false" class="panel capital-disabled" aria-labelledby="capital-disabled-title">
         <p class="eyebrow">功能状态</p><h2 id="capital-disabled-title">资金追踪未启用</h2>
@@ -106,8 +108,10 @@ defineExpose({ refresh })
 <style scoped>
 .capital-page { display: grid; min-width: 0; gap: 12px; }
 .capital-intro { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; padding: 4px 2px 2px; }
+.page-heading { min-width: 0; flex: 1; }
 .capital-intro h1 { margin: 0; font-size: clamp(24px, 2.2vw, 30px); line-height: 1.25; }
 .capital-intro > div > p:last-child { max-width: 780px; margin: 7px 0 0; color: var(--text-2); }
+.capital-snapshot-button { min-width: 156px; flex: 0 0 auto; }
 .capital-stamp { display: grid; min-width: 520px; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px 14px; margin: 0; padding: 9px 11px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
 .capital-stamp.is-degraded { border-color: var(--warning); }
 .capital-stamp.is-stale { border-color: var(--danger); }
@@ -117,7 +121,6 @@ defineExpose({ refresh })
 .capital-loading { display: grid; gap: 12px; }
 .capital-skeleton { position: relative; overflow: hidden; }
 .capital-skeleton::after { position: absolute; inset: 0; background: color-mix(in srgb, var(--surface-3) 68%, transparent); content: ""; animation: capital-pulse 1.2s ease-in-out infinite alternate; }
-.capital-skeleton--decision { min-height: 230px; }
 .capital-skeleton--ranking { min-height: 420px; }
 .capital-skeleton--trend { min-height: 310px; }
 .capital-alert { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 12px 14px; border: 1px solid var(--danger); border-radius: var(--radius); background: color-mix(in srgb, var(--danger) 7%, var(--surface)); }
@@ -134,12 +137,13 @@ defineExpose({ refresh })
 .capital-footer { padding-top: 3px; }
 @keyframes capital-pulse { from { opacity: .42; } to { opacity: .78; } }
 @media (max-width: 1024px) {
-  .capital-intro { align-items: stretch; flex-direction: column; gap: 12px; }
   .capital-stamp { min-width: 0; }
   .capital-ranking-grid { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 720px) {
   .capital-page { gap: 8px; }
+  .capital-intro { align-items: stretch; flex-direction: column; gap: 12px; }
+  .capital-snapshot-button { width: 100%; }
   .capital-stamp { grid-template-columns: minmax(0, 1fr); }
   .capital-alert { align-items: stretch; flex-direction: column; }
   .capital-alert .secondary-button { width: 100%; }

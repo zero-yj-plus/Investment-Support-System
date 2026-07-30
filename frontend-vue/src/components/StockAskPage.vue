@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import StockAskConversation from './StockAskConversation.vue'
 import StockAskEvidence from './StockAskEvidence.vue'
 import StockAskHistory from './StockAskHistory.vue'
@@ -7,6 +7,7 @@ import { useStockAsk } from '../composables/useStockAsk'
 import { formatTime } from '../utils/stockAskFormat'
 
 const emit = defineEmits<{ 'refresh-state': [value: boolean] }>()
+const historyExpanded = ref(false)
 
 const {
   codeInput, selectedCode, prompt, core, enrichment, stockName,
@@ -50,33 +51,7 @@ defineExpose({ refresh })
       </div>
     </header>
 
-    <form class="stock-ask-selector panel" novalidate @submit.prevent="submitCode">
-      <div class="stock-ask-selector__copy">
-        <label for="stock-ask-code">六位 A 股代码</label>
-        <span>查询只会读取当前标的首屏行情与必要增强证据；问股动作和价位继续由服务端决定。</span>
-      </div>
-      <div class="stock-ask-selector__controls">
-        <input
-          id="stock-ask-code"
-          v-model="codeInput"
-          type="text"
-          inputmode="numeric"
-          autocomplete="off"
-          maxlength="6"
-          pattern="[0-9]{6}"
-          placeholder="例如 600519"
-          :aria-invalid="Boolean(codeError)"
-          aria-describedby="stock-ask-code-help"
-          :disabled="streaming"
-        >
-        <button type="submit" :disabled="stockLoading || streaming">{{ stockLoading ? '查询中' : '查询标的' }}</button>
-      </div>
-      <p id="stock-ask-code-help" :class="{ 'is-error': codeError }" :role="codeError ? 'alert' : undefined">
-        {{ codeError || (selectedCode ? `当前锁定 ${stockName || '名称待返回'} ${selectedCode}` : '只接受六位数字；报价缺失不会被补成 0。') }}
-      </p>
-    </form>
-
-    <div class="stock-ask-workbench">
+    <div class="stock-ask-workbench" :class="{ 'is-history-expanded': historyExpanded }">
       <StockAskHistory
         class="stock-ask-workbench__history"
         :conversations="conversations"
@@ -84,6 +59,8 @@ defineExpose({ refresh })
         :error="conversationError"
         :active-id="activeConversationId"
         :disabled="streaming"
+        :expanded="historyExpanded"
+        @toggle="historyExpanded = !historyExpanded"
         @new="newConversation"
         @select="switchConversation"
         @delete="deleteConversation"
@@ -94,8 +71,11 @@ defineExpose({ refresh })
         :messages="messages"
         :prompt="prompt"
         :pending-images="pendingImages"
+        :code-input="codeInput"
         :selected-code="selectedCode"
         :stock-name="stockName"
+        :stock-loading="stockLoading"
+        :code-error="codeError"
         :streaming="streaming"
         :stage-text="stageText"
         :stage-seconds="stageSeconds"
@@ -103,6 +83,8 @@ defineExpose({ refresh })
         :chat-error="chatError"
         :save-warning="saveWarning"
         :can-ask="canAsk"
+        @code-input="codeInput = $event"
+        @submit-code="submitCode"
         @update:prompt="prompt = $event"
         @add-images="addPendingImages"
         @remove-image="removePendingImage"
@@ -146,19 +128,8 @@ defineExpose({ refresh })
 .stock-ask-page__stamp { display: grid; grid-template-columns: repeat(3, minmax(100px, 1fr)); min-width: min(100%, 440px); margin: 0; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
 .stock-ask-page__stamp div { min-width: 0; padding: 9px 10px; border-right: 1px solid var(--border); }.stock-ask-page__stamp div:last-child { border-right: 0; }
 .stock-ask-page__stamp dt { color: var(--text-3); font-size: 12px; }.stock-ask-page__stamp dd { margin: 2px 0 0; overflow-wrap: anywhere; color: var(--text); font-size: 14px; font-weight: 720; }
-.stock-ask-selector { display: grid; grid-template-columns: minmax(230px, 1fr) auto; align-items: center; gap: 8px 18px; padding: 12px 14px; }
-.stock-ask-selector__copy { display: flex; min-width: 0; flex-direction: column; }
-.stock-ask-selector__copy label { color: var(--text); font-weight: 750; }
-.stock-ask-selector__copy span { color: var(--text-3); font-size: 13px; }
-.stock-ask-selector__controls { display: grid; grid-template-columns: minmax(150px, 190px) auto; gap: 8px; }
-.stock-ask-selector input, .stock-ask-selector button { min-height: 48px; border: 1px solid var(--border-strong); border-radius: 8px; }
-.stock-ask-selector input { min-width: 0; padding: 0 12px; background: var(--surface-2); color: var(--text); font: 700 17px/1 "SFMono-Regular", Consolas, monospace; font-variant-numeric: tabular-nums; letter-spacing: .08em; }
-.stock-ask-selector button { padding: 0 16px; border-color: var(--accent); background: var(--accent); color: #111a27; font-weight: 760; cursor: pointer; }
-:global(:root[data-theme="light"] .stock-ask-selector button) { color: #fff; }
-.stock-ask-selector button:disabled, .stock-ask-selector input:disabled { cursor: wait; opacity: .55; }
-.stock-ask-selector > p { grid-column: 1 / -1; margin: 0; color: var(--text-3); font-size: 13px; }
-.stock-ask-selector > p.is-error { color: var(--danger); }
-.stock-ask-workbench { display: grid; grid-template-columns: minmax(190px, 220px) minmax(460px, 1fr) minmax(260px, 320px); grid-template-areas: "history conversation evidence"; align-items: start; gap: 12px; min-width: 0; }
+.stock-ask-workbench { display: grid; grid-template-columns: 56px minmax(460px, 1fr) minmax(260px, 320px); grid-template-areas: "history conversation evidence"; align-items: start; gap: 12px; min-width: 0; }
+.stock-ask-workbench.is-history-expanded { grid-template-columns: minmax(190px, 220px) minmax(460px, 1fr) minmax(260px, 320px); }
 .stock-ask-workbench > * { min-width: 0; }
 .stock-ask-workbench__history { grid-area: history; }
 .stock-ask-workbench__conversation { grid-area: conversation; }
@@ -169,13 +140,12 @@ defineExpose({ refresh })
   .stock-ask-page__header { flex-direction: column; gap: 10px; }
   .stock-ask-page__header dl { width: 100%; }
   .stock-ask-page__stamp { width: 100%; }
-  .stock-ask-workbench { grid-template-columns: minmax(190px, 220px) minmax(0, 1fr); grid-template-areas: "history conversation" "evidence evidence"; }
+  .stock-ask-workbench { grid-template-columns: 56px minmax(0, 1fr); grid-template-areas: "history conversation" "evidence evidence"; }
+  .stock-ask-workbench.is-history-expanded { grid-template-columns: minmax(190px, 220px) minmax(0, 1fr); }
 }
 
 @media (max-width: 800px) {
-  .stock-ask-selector { grid-template-columns: minmax(0, 1fr); }
-  .stock-ask-selector__controls { grid-template-columns: minmax(0, 1fr) auto; }
-  .stock-ask-workbench { grid-template-columns: minmax(0, 1fr); grid-template-areas: "conversation" "evidence" "history"; }
+  .stock-ask-workbench, .stock-ask-workbench.is-history-expanded { grid-template-columns: minmax(0, 1fr); grid-template-areas: "conversation" "evidence" "history"; }
 }
 
 @media (max-width: 720px) {
@@ -186,9 +156,5 @@ defineExpose({ refresh })
   .stock-ask-page__stamp { grid-template-columns: minmax(0, 1fr); }
   .stock-ask-page__stamp div { border-right: 0; border-bottom: 1px solid var(--border); }
   .stock-ask-page__stamp div:last-child { border-bottom: 0; }
-  .stock-ask-selector { padding: 10px; }
-  .stock-ask-selector__controls { grid-template-columns: minmax(0, 1fr); }
-  .stock-ask-selector input, .stock-ask-selector button { min-height: 52px; }
-  .stock-ask-selector__copy span, .stock-ask-selector > p { font-size: 14px; }
 }
 </style>

@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, watch } from 'vue'
 import SentimentEventFeed from './SentimentEventFeed.vue'
-import SentimentEventSummary from './SentimentEventSummary.vue'
 import { useSentimentEvents } from '../composables/useSentimentEvents'
 
 const emit = defineEmits<{ refreshState: [refreshing: boolean] }>()
@@ -51,7 +50,6 @@ defineExpose({ refresh })
 
     <div v-if="loading" class="sentiment-loading" role="status" aria-live="polite">
       <span class="sr-only">舆情事件正在加载</span>
-      <section class="panel sentiment-skeleton sentiment-skeleton--summary"></section>
       <section class="panel sentiment-skeleton sentiment-skeleton--feed"></section>
     </div>
 
@@ -63,8 +61,6 @@ defineExpose({ refresh })
         </div>
         <button type="button" class="secondary-button" :disabled="refreshing" @click="refresh()">重试</button>
       </div>
-
-      <SentimentEventSummary :data="data" :events="events" :unavailable="unavailable" :degraded="degraded" />
 
       <section v-if="trueEmpty" class="panel sentiment-empty" aria-labelledby="sentiment-empty-title">
         <p class="eyebrow">真实空结果</p>
@@ -113,7 +109,6 @@ defineExpose({ refresh })
 .sentiment-loading { display: grid; gap: 12px; }
 .sentiment-skeleton { position: relative; overflow: hidden; }
 .sentiment-skeleton::after { position: absolute; inset: 0; background: color-mix(in srgb, var(--surface-3) 68%, transparent); content: ""; animation: sentiment-pulse 1.2s ease-in-out infinite alternate; }
-.sentiment-skeleton--summary { min-height: 270px; }
 .sentiment-skeleton--feed { min-height: 480px; }
 .sentiment-alert { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 12px 14px; border: 1px solid var(--danger); border-radius: var(--radius); background: color-mix(in srgb, var(--danger) 7%, var(--surface)); }
 .sentiment-alert > div { display: grid; gap: 2px; }

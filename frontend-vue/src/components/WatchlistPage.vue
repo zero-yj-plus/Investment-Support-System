@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import WatchlistEditor from './WatchlistEditor.vue'
-import WatchlistItemCard from './WatchlistItemCard.vue'
+import WatchlistItemRow from './WatchlistItemRow.vue'
 import { useWatchlist } from '../composables/useWatchlist'
 import type { WatchlistInput, WatchlistItem } from '../types/watchlist'
 import { compactTime } from '../utils/watchlistFormat'
@@ -33,7 +33,6 @@ const {
 } = useWatchlist()
 
 const pageRefreshing = computed(() => refreshing.value || actionBusy.value)
-const gradeACount = computed(() => items.value.filter((item) => item.grade === 'A').length)
 const missingQuoteCount = computed(() => items.value.filter((item) => item.quote?.price == null).length)
 const degradedZoneCount = computed(() => items.value.filter((item) => (
   item.ideal_buy_zones?.ultra?.state === 'degraded'
@@ -64,12 +63,6 @@ const dataStatus = computed(() => {
   ) return '局部降级'
   return '数据完整'
 })
-const primaryConclusion = computed(() => {
-  if (!items.value.length) return '当前没有观察项，可添加“想买但尚未到价”的标的。'
-  if (gradeACount.value) return `${gradeACount.value} 项由服务端评为 A 级；先逐条核对买入前提与不买条件。`
-  return '当前没有服务端 A 级项；继续等待区间与触发条件，不以页面推算替代。'
-})
-
 watch(pageRefreshing, (value) => emit('refreshState', value), { immediate: true })
 
 function openCreate() {
@@ -113,6 +106,12 @@ defineExpose({ refresh })
         <h1 id="watchlist-page-title">观察池</h1>
         <p class="page-subtitle">管理“想买但尚未买”的标的。评级、状态、价格区间与位置只展示服务端确定性结果，页面不生成买卖结论。</p>
       </div>
+      <div class="watchlist-intro__actions">
+        <button type="button" class="secondary-button" :disabled="!loaded || pageRefreshing" @click="recalculate">
+          {{ recalculating ? '提交中' : '重算双周期区间' }}
+        </button>
+        <button type="button" class="primary-button" :disabled="!loaded || actionBusy" @click="openCreate">添加观察</button>
+      </div>
     </header>
 
     <div class="sr-only" aria-live="polite">
@@ -121,7 +120,6 @@ defineExpose({ refresh })
 
     <div v-if="loading" class="watchlist-loading" role="status" aria-live="polite">
       <span class="sr-only">观察池正在加载</span>
-      <section class="panel watchlist-skeleton watchlist-skeleton--summary"></section>
       <section class="panel watchlist-skeleton watchlist-skeleton--item"></section>
     </div>
 
@@ -135,26 +133,6 @@ defineExpose({ refresh })
       </section>
 
       <template v-else>
-        <section class="panel watchlist-summary" aria-labelledby="watchlist-summary-title">
-          <div class="watchlist-summary__conclusion">
-            <p class="eyebrow">当前确定性结论</p>
-            <h2 id="watchlist-summary-title">{{ primaryConclusion }}</h2>
-            <p>逐项查看服务端风险等级、生效区间、放弃价、买入前提与不买条件。本接口不提供仓位上限，页面不推断仓位；观察池不是下单指令。</p>
-          </div>
-          <dl class="watchlist-summary__metrics">
-            <div><dt>观察项</dt><dd class="mono">{{ items.length }}</dd></div>
-            <div><dt>服务端 A 级</dt><dd class="mono">{{ gradeACount }}</dd></div>
-            <div><dt>报价缺失</dt><dd class="mono">{{ missingQuoteCount }}</dd></div>
-            <div><dt>降级区间</dt><dd class="mono">{{ degradedZoneCount }}</dd></div>
-          </dl>
-          <div class="watchlist-summary__actions">
-            <button type="button" class="primary-button" :disabled="actionBusy" @click="openCreate">添加观察</button>
-            <button type="button" class="secondary-button" :disabled="pageRefreshing" @click="recalculate">
-              {{ recalculating ? '提交中' : '重算双周期区间' }}
-            </button>
-          </div>
-        </section>
-
         <div v-if="loadError" class="watchlist-alert" role="alert">
           <div><strong>自动刷新失败，保留最近已加载内容</strong><span>{{ loadError }}</span></div>
           <button type="button" class="secondary-button" :disabled="refreshing" @click="refresh">重试刷新</button>
@@ -165,7 +143,7 @@ defineExpose({ refresh })
         <div v-else-if="degradedZoneCount || staleQuoteCount || itemMissingCount" class="watchlist-alert is-warning" role="status">
           <div>
             <strong>观察池含降级、陈旧或缺失字段</strong>
-            <span>降级区间 {{ degradedZoneCount }} 项；陈旧报价 {{ staleQuoteCount }} 项；条目缺失 {{ itemMissingCount }} 项。各项原因在卡片中展开。</span>
+            <span>降级区间 {{ degradedZoneCount }} 项；陈旧报价 {{ staleQuoteCount }} 项；条目缺失 {{ itemMissingCount }} 项。各项原因可在对应行展开。</span>
           </div>
         </div>
 
@@ -192,8 +170,19 @@ defineExpose({ refresh })
           <button type="button" class="secondary-button" :disabled="showEditor" @click="openCreate">添加第一只观察标的</button>
         </section>
 
-        <div v-else class="watchlist-grid" aria-label="观察项明细">
-          <WatchlistItemCard
+        <div v-else class="watchlist-list" aria-label="观察项明细">
+          <div class="watchlist-list__head" aria-hidden="true">
+            <span>评级</span>
+            <span>标的</span>
+            <span>状态</span>
+            <span>当前价</span>
+            <span>生效理想区间</span>
+            <span>超短线 · 1—3日</span>
+            <span>波段 · 3—10日</span>
+            <span>风险边界</span>
+            <span>操作</span>
+          </div>
+          <WatchlistItemRow
             v-for="item in items"
             :key="String(item.id || item.code)"
             :item="item"
@@ -221,10 +210,11 @@ defineExpose({ refresh })
 </template>
 
 <style scoped>
-.watchlist-page { display: grid; min-width: 0; gap: 12px; }
+.watchlist-page { --watchlist-head-bg: #e7ecf2; --watchlist-head-text: #111827; --watchlist-head-border: #c5ced8; display: grid; min-width: 0; gap: 12px; }
 .watchlist-intro { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; padding: 4px 2px 2px; }
 .watchlist-intro h1 { margin: 0; font-size: clamp(24px, 2.2vw, 30px); line-height: 1.25; }
 .watchlist-intro > div > p:last-child { max-width: 800px; margin: 7px 0 0; color: var(--text-2); }
+.watchlist-intro__actions { display: grid; flex: 0 0 auto; grid-template-columns: repeat(2, max-content); gap: 8px; }
 .watchlist-stamp { display: grid; min-width: 520px; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px 14px; margin: 0; padding: 9px 11px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
 .watchlist-stamp.is-degraded { border-color: var(--warning); }
 .watchlist-stamp div { min-width: 0; }
@@ -232,16 +222,7 @@ defineExpose({ refresh })
 .watchlist-stamp dd { margin: 1px 0 0; font-size: 13px; font-weight: 720; overflow-wrap: anywhere; }
 .watchlist-loading { display: grid; gap: 12px; }
 .watchlist-skeleton { position: relative; overflow: hidden; background: var(--surface-2); animation: watchlist-pulse 1.1s ease-in-out infinite alternate; }
-.watchlist-skeleton--summary { min-height: 220px; }
-.watchlist-skeleton--item { min-height: 300px; }
-.watchlist-summary { display: grid; grid-template-columns: minmax(280px, 1.5fr) minmax(360px, 1fr) auto; align-items: center; gap: 14px; padding: 14px; border-color: color-mix(in srgb, var(--accent) 38%, var(--border)); }
-.watchlist-summary h2 { margin: 0; font-size: 20px; line-height: 1.4; }
-.watchlist-summary__conclusion > p:last-child { margin: 6px 0 0; color: var(--text-2); font-size: 13px; }
-.watchlist-summary__metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px; margin: 0; }
-.watchlist-summary__metrics div { min-width: 0; padding: 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); text-align: center; }
-.watchlist-summary__metrics dt { color: var(--text-3); font-size: 12px; }
-.watchlist-summary__metrics dd { margin: 2px 0 0; color: var(--text); font-size: 22px; font-weight: 760; }
-.watchlist-summary__actions { display: grid; gap: 8px; }
+.watchlist-skeleton--item { min-height: 220px; }
 .watchlist-alert, .watchlist-feedback { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 11px 14px; border: 1px solid var(--danger); border-radius: var(--radius); background: var(--surface); }
 .watchlist-alert.is-warning { border-color: var(--warning); }
 .watchlist-alert > div, .watchlist-feedback { display: grid; }
@@ -252,31 +233,25 @@ defineExpose({ refresh })
 .watchlist-fatal h2, .watchlist-empty h2 { margin: 0; font-size: 22px; }
 .watchlist-fatal > p:not(.eyebrow), .watchlist-empty > p:not(.eyebrow) { max-width: 680px; margin: 8px 0 0; color: var(--text-2); }
 .watchlist-fatal button, .watchlist-empty button { margin-top: 18px; }
-.watchlist-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); align-items: start; gap: 10px; }
+.watchlist-list { --watchlist-columns: 52px minmax(132px, 1.05fr) minmax(132px, 1fr) minmax(82px, .62fr) minmax(122px, .95fr) minmax(122px, .95fr) minmax(122px, .95fr) minmax(104px, .75fr) 168px; min-width: 0; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.watchlist-list__head { display: grid; min-height: 40px; grid-template-columns: var(--watchlist-columns); align-items: stretch; background: var(--watchlist-head-bg); color: var(--watchlist-head-text); font-size: 12px; font-weight: 760; }
+.watchlist-list__head span { display: flex; min-width: 0; align-items: center; padding: 7px 10px; border-right: 1px solid var(--watchlist-head-border); overflow-wrap: anywhere; }
+.watchlist-list__head span:last-child { justify-content: flex-end; border-right: 0; }
 .watchlist-footer { padding-top: 3px; }
 @keyframes watchlist-pulse { from { opacity: .5; } to { opacity: .82; } }
-@media (max-width: 1280px) {
-  .watchlist-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .watchlist-summary { grid-template-columns: minmax(0, 1fr) minmax(360px, .8fr); }
-  .watchlist-summary__actions { grid-column: 1 / -1; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
 @media (max-width: 1100px) {
   .watchlist-intro { align-items: stretch; flex-direction: column; gap: 12px; }
+  .watchlist-intro__actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .watchlist-stamp { min-width: 0; }
-  .watchlist-summary { grid-template-columns: minmax(0, 1fr); }
-  .watchlist-summary__metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
-@media (max-width: 1040px) {
-  .watchlist-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
-@media (max-width: 760px) {
-  .watchlist-grid { grid-template-columns: minmax(0, 1fr); }
+@media (max-width: 900px) {
+  .watchlist-list__head { display: none; }
 }
 @media (max-width: 720px) {
   .watchlist-page { gap: 8px; font-size: 18px; }
-  .watchlist-stamp, .watchlist-summary__metrics, .watchlist-summary__actions { grid-template-columns: minmax(0, 1fr); }
+  .watchlist-stamp { grid-template-columns: minmax(0, 1fr); }
   .watchlist-alert { align-items: stretch; flex-direction: column; }
-  .watchlist-alert .secondary-button, .watchlist-summary__actions button { width: 100%; }
+  .watchlist-alert .secondary-button, .watchlist-intro__actions button { width: 100%; }
   .watchlist-fatal, .watchlist-empty { min-height: 280px; padding: 18px 14px; }
   .watchlist-empty .secondary-button { width: 100%; }
 }

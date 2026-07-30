@@ -144,6 +144,21 @@ def test_vue_forecast_mining_has_responsive_table_and_accessibility_rules() -> N
     assert ":focus-visible" in read("src/styles.css")
 
 
+def test_vue_forecast_mining_omits_removed_conclusion_panel() -> None:
+    summary = read("src/components/ForecastMiningSummary.vue")
+
+    for removed in (
+        "forecast-conclusion",
+        "服务端规则给出",
+        "下一步只做证据复核",
+        "风险、仓位和禁止条件",
+        "本接口未提供仓位上限或价格区间",
+    ):
+        assert removed not in summary
+    assert 'class="forecast-metrics"' in summary
+    assert 'aria-label="榜单统计"' in summary
+
+
 def test_vue_forecast_mining_audit_has_real_fixture_and_required_states() -> None:
     audit = read("scripts/audit-ui.mjs")
     production = production_sources()

@@ -548,8 +548,9 @@ def basic_financial(code: str) -> dict | None:
 def _sector_members_for_codes_cached(entities: tuple[str, ...]) -> dict | None:
     """按需读取少量行业/概念板块成员，避免建立全量概念多对多索引。"""
     if not entities:
-        return {"by_sector": {}, "member_count": 0, "data_date": None}
+        return {"by_sector": {}, "names": {}, "member_count": 0, "data_date": None}
     by_sector: dict[str, list[str]] = {entity: [] for entity in entities}
+    names: dict[str, str] = {}
     as_of = ""
     for start in range(0, len(entities), 30):
         group = entities[start:start + 30]
@@ -568,10 +569,14 @@ def _sector_members_for_codes_cached(entities: tuple[str, ...]) -> dict | None:
             stock = _code6(body.get("Code") or row.get("series_key") or "")
             if sector in by_sector and stock:
                 by_sector[sector].append(stock)
+                name = str(body.get("Name") or body.get("name") or "").strip()
+                if name:
+                    names[stock] = name
                 as_of = max(as_of, str(row.get("as_of") or ""))
     deduped = {key: tuple(dict.fromkeys(values)) for key, values in by_sector.items()}
     return {
         "by_sector": deduped,
+        "names": names,
         "member_count": sum(len(values) for values in deduped.values()),
         "data_date": _iso_date(as_of),
     }

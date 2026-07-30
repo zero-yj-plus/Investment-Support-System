@@ -3,6 +3,7 @@ export type IndustryChainRunState = 'idle' | 'loading' | 'complete' | 'partial' 
 export interface IndustryChainHistoryEntry {
   id: string
   industry: string
+  focus?: string
   content: string
   ts: number
   incomplete: boolean

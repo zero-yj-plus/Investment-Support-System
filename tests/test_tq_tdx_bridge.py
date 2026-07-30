@@ -227,6 +227,11 @@ def test_sectors_members_and_relations() -> None:
     status, members = service.dispatch("GET", "/v1/data/sector_members?entities=881001.SH", auth())
     assert status == 200
     assert members["rows"][0]["payload"]["Code"] == "000001.SZ"
+    assert members["rows"][0]["payload"]["Name"] == "平安银行"
+    assert service.client.calls[-1] == (
+        "get_stock_list_in_sector",
+        {"block_code": "881001.SH", "block_type": 0, "list_type": 1},
+    )
 
     status, relations = service.dispatch("GET", "/v1/data/relation?entities=000001.SZ", auth())
     assert status == 200
