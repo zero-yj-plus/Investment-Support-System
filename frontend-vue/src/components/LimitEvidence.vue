@@ -15,6 +15,12 @@ const props = defineProps<{
 
 const expanded = ref(false)
 const marketAvailable = computed(() => props.market != null && props.market.ok !== false)
+const hasMarketTurnover = computed(() => finite(props.market?.total_amount) && props.market.total_amount > 0)
+const marketTurnoverCacheLabel = computed(() => {
+  if (!props.market?.total_amount_cached) return ''
+  const match = String(props.market.total_amount_asof || '').match(/(\d{2}:\d{2})(?::\d{2})?/)
+  return match ? ` · 缓存截至 ${match[1]}` : ' · 缓存值'
+})
 const downPool = computed(() => props.mainlines?.ok === false ? [] : props.mainlines?.limit_down_pool || [])
 const visibleDownPool = computed(() => expanded.value ? downPool.value : downPool.value.slice(0, 5))
 const downPoolMissing = computed(() => props.mainlines?.limit_down_missing?.filter(Boolean) || [])
@@ -40,7 +46,7 @@ function amount(value?: number | null) {
 }
 
 function marketTurnover(value?: number | null) {
-  if (!finite(value)) return '—'
+  if (!finite(value) || value <= 0) return ''
   // 当前 market overview 返回的两市成交额实际口径为“万元”。
   return `${(value / 1e8).toFixed(2)} 万亿`
 }
@@ -76,7 +82,7 @@ const stats = computed(() => {
           <p class="eyebrow">LIMIT STRUCTURE</p>
           <h3 id="limit-stats-title">涨跌停情况</h3>
         </div>
-        <span class="evidence-stamp">两市成交 {{ marketTurnover(market?.total_amount) }}</span>
+        <span v-if="hasMarketTurnover" class="evidence-stamp">两市成交 {{ marketTurnover(market?.total_amount) }}{{ marketTurnoverCacheLabel }}</span>
       </header>
 
       <div v-if="marketLoading && !market" class="evidence-metric-grid" aria-label="涨跌停数据加载中">

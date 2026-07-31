@@ -101,6 +101,8 @@ def test_vue_holdings_responsive_accessible_semantics_and_ui_audit() -> None:
     audit = _read("scripts/audit-ui.mjs")
 
     assert 'tabindex="0" role="region" aria-label="持仓明细宽表，可横向滚动"' in table
+    assert ".holdings-table thead th {" in table and "text-align: center;" in table
+    assert ".holdings-table th:first-child" in table and "text-align: left;" in table
     assert "@media (max-width: 720px)" in page + table
     assert "@media (max-width: 520px)" in editor
     assert "@media (prefers-reduced-motion: reduce)" in page

@@ -10,6 +10,16 @@ const props = defineProps<{
 
 const marketAvailable = computed(() => props.market != null && props.market.ok !== false)
 const indexes = computed(() => marketAvailable.value ? (props.market?.indexes || []).slice(0, 6) : [])
+const hasTotalAmount = computed(() => (
+  typeof props.market?.total_amount === 'number'
+  && Number.isFinite(props.market.total_amount)
+  && props.market.total_amount > 0
+))
+const totalAmountCacheLabel = computed(() => {
+  if (!props.market?.total_amount_cached) return ''
+  const match = String(props.market.total_amount_asof || '').match(/(\d{2}:\d{2})(?::\d{2})?/)
+  return match ? ` · 缓存截至 ${match[1]}` : ' · 缓存值'
+})
 const totalBreadth = computed(() => {
   const counts = [props.market?.up_count, props.market?.down_count, props.market?.flat_count]
   if (!counts.every((value) => typeof value === 'number' && Number.isFinite(value))) return null
@@ -23,7 +33,7 @@ function formatNumber(value?: number | null, digits = 0) {
 }
 
 function formatAmount(value?: number | null) {
-  if (value == null) return '—'
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return ''
   // 当前 market overview 返回的两市成交额实际口径为“万元”。
   return `${(value / 1e8).toFixed(2)} 万亿`
 }
@@ -42,7 +52,7 @@ function changeLabel(value?: number | null) {
         <h2 id="market-title">市场环境</h2>
       </div>
       <div class="section-heading__meta">
-        <span>成交额 {{ formatAmount(market?.total_amount) }}</span>
+        <span v-if="hasTotalAmount">成交额 {{ formatAmount(market?.total_amount) }}{{ totalAmountCacheLabel }}</span>
         <span>{{ market?.data_date || market?.ts || '时点待确认' }}</span>
       </div>
     </header>

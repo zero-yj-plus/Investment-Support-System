@@ -401,6 +401,11 @@ last-good 都必须是 `degraded`；两源失败且无 last-good 时为 `missing
 indexes 至少含：上证指数、深证成指、创业板指、科创50（拿得到几个给几个）。
 金额单位一律为 **元**；`change_pct`/`zhaban_rate` 为百分数数值（0.85 表示 0.85%；zhaban_rate 0.21 表示 21% 时给 21.0 —— 统一：**所有 *_pct / *_rate 字段都是百分数数值**）。
 
+`GET /api/market/overview_cached` 在当前刷新未取得 `total_amount` 时，只复用**同一
+`data_date`** 最近一次大于 0 的成交额，并返回 `total_amount_cached=true` 与原值时点
+`total_amount_asof`；跨数据日不回填。若当天从未取得有效成交额，则 `total_amount=null`，
+前端不渲染成交额标签，不显示 `—` 占位。
+
 ### GET /api/market/limitup
 ```json
 {
@@ -961,6 +966,8 @@ python3 scripts/data_backup_restore.py restore --archive /abs/backup.tar.gz --re
 ### GET /api/technical-screen/status
 
 返回 `state ∈ {missing,running,partial,ready}`、缓存股票数/K线数/信号数、`data_date`、复权方式、算法版本、`config_schema_version=2` 和后台刷新进度。无缓存必须返回 `missing`，不能显示为 0 只符合。
+
+可选查询参数 `include_counts=false` 用于首屏摘要：仍返回精确缓存股票数、数据日期、缓存状态和刷新进度，但 `bars`、`signal_matches` 返回 `null`，避免冷启动时扫描数百万条记录。省略参数保持完整计数契约；前端在首屏可操作后异步补取完整计数。
 
 ### POST /api/technical-screen/query
 

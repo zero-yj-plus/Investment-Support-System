@@ -42,7 +42,6 @@ def test_vue_company_research_uses_only_the_real_page_contracts() -> None:
 
     for endpoint in (
         "getJson<CompanyModelStatus>('/status'",
-        "/stock/${encodeURIComponent(code)}/research-enrichment",
         "/disclosures/announcements?code=${encodeURIComponent(code)}&limit=6",
         "/interactions/management?code=${encodeURIComponent(code)}&limit=6",
         "postEventStream('/chat'",
@@ -52,6 +51,8 @@ def test_vue_company_research_uses_only_the_real_page_contracts() -> None:
     assert "mode: 'company'" in composable
     assert "message: '生成单公司深度研究报告'" in composable
     assert "category: '复盘笔记'" in composable
+    assert "research-enrichment" not in production_source()
+    assert "盘后研究底座" not in production_source()
     assert "/api/diagnose" not in production_source()
     assert "/features/" not in production_source()
 
@@ -63,7 +64,6 @@ def test_vue_company_research_preserves_units_and_missing_semantics() -> None:
     formatter = read(FORMAT)
 
     for phrase in (
-        "元/股",
         "本页接口未独立提供，不从报告文本推导",
         "保持缺失，不补成 0%",
         "不能据此判断查询窗口内“无公告”",
@@ -74,9 +74,8 @@ def test_vue_company_research_preserves_units_and_missing_semantics() -> None:
         assert phrase in evidence + summary + page
     for state in ("complete_empty", "degraded", "last_good", "missing", "not_supported"):
         assert state in evidence
-    assert "value === null || value === undefined || value === ''" in formatter
     assert "return '—'" in formatter
-    assert "Number.isFinite(number) ? number.toFixed(digits) : '—'" in formatter
+    assert "parsed.protocol !== 'https:'" in formatter
 
 
 def test_vue_company_research_omits_removed_governance_panel() -> None:
@@ -100,7 +99,7 @@ def test_vue_company_research_cleans_every_request_reader_and_timer_on_unmount()
 
     assert "controllers: Partial<Record<CompanyRequestKey, AbortController>>" in composable
     assert "const generations: Record<CompanyRequestKey, number>" in composable
-    for key in ("status", "enrichment", "disclosures", "interactions", "research", "knowledge"):
+    for key in ("status", "disclosures", "interactions", "research", "knowledge"):
         assert f"{key}: 0" in composable
     assert "alive && controllers[key] === controller" in composable
     assert "onBeforeUnmount(() =>" in composable
@@ -155,8 +154,9 @@ def test_vue_company_research_has_page_rules_and_real_semantic_audit_fixture() -
     audit = read(AUDIT)
 
     assert "#/research?tab=company" in rules
-    for endpoint in ("GET /api/status", "research-enrichment", "disclosures/announcements", "interactions/management", "POST /api/chat"):
+    for endpoint in ("GET /api/status", "disclosures/announcements", "interactions/management", "POST /api/chat"):
         assert endpoint in rules
+    assert "research-enrichment" not in rules
     assert "不采用技能检索返回的巨型 Hero" in rules
     assert "name: 'company-research'" in audit
     assert "#/research?tab=company" in audit

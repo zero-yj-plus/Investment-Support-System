@@ -160,8 +160,8 @@ defineExpose({ refresh })
     <p v-if="refreshFeedback" class="technical-refresh-feedback" :class="{ 'is-error': refreshFeedback.includes('失败') }" aria-live="polite">{{ refreshFeedback }}</p>
 
     <div v-if="bootstrapLoading" class="panel technical-screener-loading" aria-live="polite">
-      <strong>正在加载技术信号目录、缓存状态与保存方案</strong>
-      <span>各接口独立失败；不会用示例数字填充。</span>
+      <strong>正在加载技术信号目录与缓存摘要</strong>
+      <span>页面会先开放可操作内容，K 线与信号总数随后补齐；不会用示例数字填充。</span>
     </div>
 
     <div v-else class="technical-screener-layout">

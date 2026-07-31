@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import time
 from pathlib import Path
 
@@ -66,12 +67,59 @@ def _snapshot_path(data_dir) -> Path:
     return Path(data_dir) / SNAPSHOT_FILE
 
 
+def _valid_total_amount(value) -> bool:
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(float(value))
+        and float(value) > 0
+    )
+
+
+def _with_total_amount_last_good(overview: dict) -> dict:
+    """当前成交额缺失时，仅复用同一数据日最近一次有效值，并显式标注缓存时点。"""
+    current = dict(overview)
+    if _valid_total_amount(current.get("total_amount")):
+        current.pop("total_amount_cached", None)
+        current.pop("total_amount_asof", None)
+        return current
+
+    previous = _boot_snapshot
+    same_data_day = (
+        isinstance(previous, dict)
+        and bool(current.get("data_date"))
+        and current.get("data_date") == previous.get("data_date")
+    )
+    if not same_data_day or not _valid_total_amount(previous.get("total_amount")):
+        current.pop("total_amount_cached", None)
+        current.pop("total_amount_asof", None)
+        return current
+
+    asof = previous.get("total_amount_asof") or previous.get("ts")
+    current["total_amount"] = previous["total_amount"]
+    current["total_amount_cached"] = True
+    current["total_amount_asof"] = asof
+    missing = [
+        str(item)
+        for item in (current.get("missing") or [])
+        if str(item).strip() != "两市成交额"
+    ]
+    cache_note = "两市成交额取自同数据日 last-good 缓存（当前刷新未取得新值）"
+    if asof:
+        cache_note = f"两市成交额取自同数据日 {asof} last-good 缓存（当前刷新未取得新值）"
+    if cache_note not in missing:
+        missing.append(cache_note)
+    current["missing"] = missing
+    return current
+
+
 def save_snapshot(data_dir, overview: dict) -> None:
     """把一份 market_overview 结果原子落盘（带采集时间戳）。失败静默——快照是优化，不是关键路径。"""
     global _boot_snapshot
     if not isinstance(overview, dict) or not overview.get("ok"):
         return  # 只持久化成功的 overview，绝不把失败/空结果落成 last-good
     try:
+        overview = _with_total_amount_last_good(overview)
         # 同时更新进程内 last-good。首屏只读端点必须可以直接返回上一轮成功值，
         # 不能为了“检查缓存是否热”再次调用 market_overview() 并把用户请求拖进慢源。
         _boot_snapshot = dict(overview)

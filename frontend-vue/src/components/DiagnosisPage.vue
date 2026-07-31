@@ -86,7 +86,6 @@ defineExpose({ refresh })
     <section v-if="!requested && !diagnosisLoading" class="panel diagnosis-empty" aria-labelledby="diagnosis-empty-title">
       <p class="eyebrow">WAITING FOR SYMBOL</p>
       <h2 id="diagnosis-empty-title">输入股票代码开始诊断</h2>
-      <p>当前没有诊断数据。页面不会自动请求其他业务接口，也不会用示例股票、演示数字或历史值填充。</p>
       <ol>
         <li>快速报价只负责确认标的与当前行情。</li>
         <li>正式诊断完成后才展示动作、仓位和价格条件。</li>
@@ -143,7 +142,7 @@ defineExpose({ refresh })
 .diagnosis-empty { display: grid; min-height: 360px; align-content: center; justify-items: center; padding: 28px; text-align: center; }
 .diagnosis-empty h2 { margin: 0; font-size: 22px; }
 .diagnosis-empty > p:not(.eyebrow) { max-width: 680px; margin: 7px 0 14px; color: var(--text-2); }
-.diagnosis-empty ol { display: grid; gap: 6px; max-width: 620px; margin: 0; padding-left: 24px; color: var(--text-3); text-align: left; }
+.diagnosis-empty ol { display: grid; gap: 6px; max-width: 620px; margin: 14px 0 0; padding-left: 24px; color: var(--text-3); text-align: left; }
 .diagnosis-footer { padding-top: 0; }
 @keyframes diagnosis-spin { to { transform: rotate(360deg); } }
 @keyframes diagnosis-pulse { from { opacity: .45; } to { opacity: .82; } }

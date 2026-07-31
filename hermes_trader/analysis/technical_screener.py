@@ -89,12 +89,16 @@ def _meta_set(key: str, value) -> None:
         db.execute("INSERT INTO meta(key,value_json) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json", (key, _json(value)))
 
 
-def status() -> dict:
+def status(*, include_counts: bool = True) -> dict:
     state = _meta_get("refresh_state", {}) or {}
     with _connect() as db:
         stocks = int(db.execute("SELECT COUNT(*) FROM stocks").fetchone()[0])
-        bars = int(db.execute("SELECT COUNT(*) FROM bars").fetchone()[0])
-        matches = int(db.execute("SELECT COUNT(*) FROM signal_matches").fetchone()[0])
+        # bars / signal_matches can contain millions of rows. Their exact COUNT(*)
+        # is governance detail, not a prerequisite for deciding whether the cache
+        # can be queried. Keep the default full contract for existing callers, but
+        # let first-paint and screening paths skip both cold full-table scans.
+        bars = int(db.execute("SELECT COUNT(*) FROM bars").fetchone()[0]) if include_counts else None
+        matches = int(db.execute("SELECT COUNT(*) FROM signal_matches").fetchone()[0]) if include_counts else None
         last_date = db.execute("SELECT MAX(last_date) FROM stocks").fetchone()[0]
         benchmark_bars = int(db.execute("SELECT COUNT(*) FROM benchmark_bars WHERE benchmark='000300.SH'").fetchone()[0])
     current = state.get("state") or ("ready" if stocks else "missing")

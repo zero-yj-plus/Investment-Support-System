@@ -5,6 +5,87 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from hermes_trader.analysis import features, mainline_runtime
+from hermes_trader.data import market
+
+
+def _run_market_overview_with_limit_down(
+    monkeypatch,
+    *,
+    limit_down_rows,
+    scan,
+) -> dict:
+    now = datetime(2026, 7, 31, 11, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+    monkeypatch.setattr(market, "now_cn", lambda: now)
+    monkeypatch.setattr(market, "_resolve_data_day", lambda _date: ("20260731", "2026-07-31", ""))
+    monkeypatch.setattr(market, "get_ak", lambda: None)
+    monkeypatch.setattr(market, "_relay_api", lambda: None)
+    monkeypatch.setattr(
+        market.tdxapi,
+        "index_quotes",
+        lambda symbols: {
+            symbol: {"price": 100.0, "change_pct": 1.0, "amount": 10_000_000.0}
+            for symbol in symbols
+        },
+    )
+    monkeypatch.setattr(
+        market.tdxapi,
+        "pricevol_breadth",
+        lambda: {"up_count": 3000, "down_count": 2000, "flat_count": 100, "count": 5100},
+    )
+    monkeypatch.setattr(
+        market,
+        "_limit_list_today_or_prev",
+        lambda _date, kind: (
+            ([{"code": "600001", "name": "涨停样本", "lianban": 1, "amount": 1_000_000.0}], None)
+            if kind == "U"
+            else (None, None)
+        ),
+    )
+    monkeypatch.setattr(market, "_promote_rate", lambda *_args: None)
+    monkeypatch.setattr(
+        market.tx,
+        "limit_list",
+        lambda _date, kind="U": limit_down_rows if kind == "D" else None,
+    )
+    monkeypatch.setattr(market.tc, "market_zt_scan", scan)
+
+    return market.market_overview.__wrapped__("20260731")
+
+
+def test_market_overview_preserves_confirmed_empty_limit_down_pool_as_zero(monkeypatch) -> None:
+    def must_not_scan():
+        raise AssertionError("真实空跌停池不应触发腾讯兜底扫描")
+
+    result = _run_market_overview_with_limit_down(
+        monkeypatch,
+        limit_down_rows=[],
+        scan=must_not_scan,
+    )
+
+    assert result["limit_down"] == 0
+    assert "跌停池" not in result["missing"]
+
+
+def test_market_overview_uses_tencent_scan_when_limit_down_sources_fail(monkeypatch) -> None:
+    result = _run_market_overview_with_limit_down(
+        monkeypatch,
+        limit_down_rows=None,
+        scan=lambda: {
+            "asof": "11:00",
+            "judged": 5000,
+            "limit_up": 20,
+            "zhaban": 5,
+            "limit_down": 3,
+            "zhaban_rate": 20.0,
+            "lu_list": [],
+            "ld_list": [],
+        },
+    )
+
+    assert result["limit_down"] == 3
+    assert result["zhaban_count"] == 5
+    assert result["zhaban_rate"] == 20.0
+    assert any("跌停家数来自腾讯全市场同一时点扫描(11:00" in note for note in result["missing"])
 
 
 def test_mainline_runtime_uses_same_moment_tencent_limit_down_rows(monkeypatch) -> None:

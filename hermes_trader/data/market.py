@@ -751,11 +751,28 @@ def market_overview(date_compact: str | None = None) -> dict:
         out["limit_down"] = _scan["limit_down"]   # 腾讯全市场扫描·今日实时(现价≤交易所跌停价)
     else:
         tdt = tx.limit_list(dc, "D")
-        out["limit_down"] = len(tdt) if tdt else _legu_dt
-        if tdt is None and _legu_dt is None:
-            missing.append("跌停池")
-        elif tdt is None:
+        if tdt is not None:
+            # 空列表是已确认的真实空池，必须保留为 0；只有 None 才表示上游失败。
+            out["limit_down"] = len(tdt)
+        elif _legu_dt is not None:
+            out["limit_down"] = _legu_dt
             missing.append("跌停家数取自乐咕(免费源,仅家数)")
+        else:
+            # 公开跌停池与乐咕同时失败时，复用腾讯全市场同一时点扫描兜底。
+            # 该扫描已有 90 秒缓存；仅今日视图触发，历史日期不拿实时值冒充。
+            if _scan is None and dc == now_cn().strftime("%Y%m%d"):
+                try:
+                    _scan = tc.market_zt_scan()
+                except Exception:  # noqa: BLE001 -- 扫描失败保持缺失，不阻断总览
+                    _scan = None
+            if _scan and _scan.get("limit_down") is not None:
+                out["limit_down"] = _scan["limit_down"]
+                missing.append(
+                    f"跌停家数来自腾讯全市场同一时点扫描({_scan.get('asof')}·实时封板口径)"
+                )
+            else:
+                out["limit_down"] = None
+                missing.append("跌停池")
     # 炸板率 = 炸板数/(涨停数+炸板数)：东财(中继)→ 腾讯全市场扫描(今日实时)→ 免费公开炸板池
     if zt is not None and zb is not None:
         # 【口径恒定】东财 zb 池同为剔除ST口径(2026-07-06 实测 41 vs 扫描含ST 51)。主数字优先

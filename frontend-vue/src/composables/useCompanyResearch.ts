@@ -7,7 +7,6 @@ import type {
   CompanyKnowledgeResponse,
   CompanyModelStatus,
   CompanyRequestKey,
-  CompanyResearchEnrichment,
   CompanyResearchRunState,
   CompanyResourceState,
 } from '../types/companyResearch'
@@ -40,7 +39,6 @@ export function useCompanyResearch() {
   const status = ref<CompanyModelStatus | null>(null)
   const statusLoading = ref(false)
   const statusError = ref('')
-  const enrichment = ref<CompanyResourceState<CompanyResearchEnrichment>>(emptyResource())
   const disclosures = ref<CompanyResourceState<CompanyDisclosureResponse>>(emptyResource())
   const interactions = ref<CompanyResourceState<CompanyInteractionResponse>>(emptyResource())
   const history = ref<CompanyHistoryEntry[]>([])
@@ -51,7 +49,6 @@ export function useCompanyResearch() {
   const controllers: Partial<Record<CompanyRequestKey, AbortController>> = {}
   const generations: Record<CompanyRequestKey, number> = {
     status: 0,
-    enrichment: 0,
     disclosures: 0,
     interactions: 0,
     research: 0,
@@ -77,7 +74,7 @@ export function useCompanyResearch() {
     }
     return modelReady.value ? 'AI 研究连接已就绪。' : 'AI 研究连接状态待确认。'
   })
-  const evidenceLoading = computed(() => enrichment.value.loading || disclosures.value.loading || interactions.value.loading)
+  const evidenceLoading = computed(() => disclosures.value.loading || interactions.value.loading)
   const canSave = computed(() => runState.value === 'complete' && Boolean(content.value.trim()) && !saving.value)
   const refreshing = computed(() => running.value || saving.value || statusLoading.value || evidenceLoading.value)
 
@@ -157,25 +154,6 @@ export function useCompanyResearch() {
     }
   }
 
-  async function loadEnrichment(code: string) {
-    const guard = requestGuard('enrichment', 20_000)
-    enrichment.value = { loading: true, data: null, error: '' }
-    try {
-      const response = await getJson<CompanyResearchEnrichment>(`/stock/${encodeURIComponent(code)}/research-enrichment`, guard.controller.signal)
-      if (!guard.current() || code !== currentCode.value) return
-      enrichment.value = { loading: false, data: response, error: '' }
-    } catch (error) {
-      if (!guard.current() || code !== currentCode.value) return
-      enrichment.value = {
-        loading: false,
-        data: null,
-        error: guard.timedOut() ? '盘后研究底座请求超时。' : errorMessage(error, '盘后研究底座暂不可用。'),
-      }
-    } finally {
-      guard.finish()
-    }
-  }
-
   async function loadDisclosures(code: string) {
     const guard = requestGuard('disclosures', 20_000)
     disclosures.value = { loading: true, data: null, error: '' }
@@ -216,7 +194,6 @@ export function useCompanyResearch() {
 
   async function loadEvidence(code: string) {
     await Promise.allSettled([
-      loadEnrichment(code),
       loadDisclosures(code),
       loadInteractions(code),
     ])
@@ -238,7 +215,7 @@ export function useCompanyResearch() {
     currentCode.value = code
     content.value = ''
     runState.value = 'loading'
-    stageText.value = '正在核验官方公告、互动问答与盘后研究底座…'
+    stageText.value = '正在核验官方公告与互动问答…'
     stageSeconds.value = 0
     completedAt.value = null
     activeHistoryId.value = ''
@@ -376,14 +353,14 @@ export function useCompanyResearch() {
   onBeforeUnmount(() => {
     alive = false
     clearStageTimer()
-    ;(['status', 'enrichment', 'disclosures', 'interactions', 'research', 'knowledge'] as CompanyRequestKey[])
+    ;(['status', 'disclosures', 'interactions', 'research', 'knowledge'] as CompanyRequestKey[])
       .forEach(abortRequest)
   })
 
   return {
     codeInput, currentCode, content, runState, runError, fieldError, stageText,
     stageSeconds, completedAt, statusLoading, statusError, modelReady, modelReason,
-    enrichment, disclosures, interactions, history, activeHistoryId, saving,
+    disclosures, interactions, history, activeHistoryId, saving,
     saveError, saveMessage, running, evidenceLoading, canSave, refreshing,
     startResearch, stopResearch, selectHistory, saveToKnowledge, refresh,
   }

@@ -409,7 +409,7 @@ FastAPI `/api`，不依赖旧前端。旧版默认不可访问，仅配置开启
 技术面选股页读取 `/api/technical-screen/catalog`、`/status` 与保存方案，且只在用户明确提交时调用 `/api/technical-screen/query`；显式缓存刷新通过 `/api/technical-screen/refresh` 排队并轮询状态。页面使用前复权本地技术信号缓存，保留事件/状态、两层满足/排除规则、旧方案只读兼容与追加式历史命中；候选仅表示规则命中，不在浏览器生成推荐、仓位或价格结论。
 业绩预告掘金页只读取 `/api/forecast/mining`，展示服务端主板阈值、披露时点、扣非疑点与基数陷阱分池结果；同比单位为百分数，利润与上年基数原始单位为人民币元。页面保持服务端顺序，区分接口失败、`ok:false`、真实空数组、数值缺失与 `missing[]` 部分覆盖；接口未提供独立数据日期或陈旧标记时不得把计算时点称为实时数据。
 产业链研究页仅在用户主动提交时调用 `/api/chat` 的 `mode=chain` SSE，并可显式写入 `/api/knowledge`；页面复用 `chain-research-v2`，把产业结论、交易时点、证据时点、真实空映射和不完整流分开呈现。TDX 成员只证明板块归属，现价单位为元、涨跌幅为百分比、PE/PB 为倍数、数据可研分无量纲且仅用于证据核验排序；前端不重算产业角色、价格、仓位或风险结论。
-公司研究页在用户提交 6 位代码后独立读取 `/api/stock/{code}/research-enrichment`、`/api/disclosures/announcements` 与 `/api/interactions/management`，并以 `/api/chat` 的 `mode=company` SSE 生成服务端治理后的研究正文；三类结构化证据各自降级，不完整流隔离，本地历史只追加。页面不从模型正文重算风险等级、仓位上限或价格结论，知识库存入仅表示服务端已接受保存。
+公司研究页在用户提交 6 位代码后独立读取 `/api/disclosures/announcements` 与 `/api/interactions/management`，并以 `/api/chat` 的 `mode=company` SSE 生成服务端治理后的研究正文；两类官方结构化证据各自降级，不完整流隔离，本地历史只追加。页面不请求或向模型注入盘后 TDX 研究增强，也不从模型正文重算风险等级、仓位上限或价格结论；知识库存入仅表示服务端已接受保存。
 报告中心读取 `/api/archive/dates`、`/api/reports/{rtype}` 与追加式 `/api/delivery/receipts`，保留六类报告查看、今日 SSE 生成、打印/PDF 和推送提交；页面严格区分真实空报告、局部接口失败、历史 `pushed` 标记、平台接受与最终送达，不从 Markdown 重算风险或仓位结论。
 知识库页只读取 `/api/knowledge`，并通过知识库治理端点新增、批准、拒绝、追加式替代和删除条目；页面保持服务端状态、来源、样本数、版本关系与字段缺失语义，不请求行情、报告或研究接口，也不推断风险、仓位或新鲜度。
 
@@ -430,7 +430,7 @@ FastAPI `/api`，不依赖旧前端。旧版默认不可访问，仅配置开启
 | `src/components/TechnicalScreener*.vue`、`TechnicalSignalDialog.vue` | 技术面选股的缓存结论、自然语言规则编辑、信号库、响应式候选明细、事件历史与数据治理。 |
 | `src/components/ForecastMining*.vue` | 业绩预告掘金的榜单统计、规则解释与响应式候选/陷阱明细。 |
 | `src/components/IndustryChain*.vue` | 产业链研究输入、产业/交易边界、真实空映射、安全 Markdown 正文、本地历史和数据治理。 |
-| `src/components/CompanyResearch*.vue` | 公司研究输入、结论边界、盘后研究底座、官方公告/互动证据、安全 Markdown 正文与追加式本地历史。 |
+| `src/components/CompanyResearch*.vue` | 公司研究输入、结论边界、官方公告/互动证据、安全 Markdown 正文与追加式本地历史。 |
 | `src/components/ReportCenter*.vue` | 报告中心的历史日期、服务端定稿摘要、安全正文、章节目录、版本治理与真实交付回执。 |
 | `src/components/Knowledge*.vue` | 知识库的治理摘要、检索筛选、条目明细、安全正文、原生治理对话框与独立状态。 |
 | `src/composables/useDecisionOverview.ts` | 并行请求、超时、刷新、可见性恢复和卸载清理。 |
@@ -449,7 +449,7 @@ FastAPI `/api`，不依赖旧前端。旧版默认不可访问，仅配置开启
 | `src/composables/useTechnicalScreener.ts` | 技术信号目录、缓存状态、显式筛选/刷新、方案 CRUD、历史事件的独立请求控制与卸载清理。 |
 | `src/composables/useForecastMining.ts` | 业绩预告单接口读取、防重复刷新、超时、可见性恢复与卸载清理。 |
 | `src/composables/useIndustryChain.ts` | 产业链 SSE、知识库写入、本地 append-only 历史、防重复动作、独立请求控制和卸载清理。 |
-| `src/composables/useCompanyResearch.ts` | 公司研究状态预检、三路结构化证据、SSE 正文、知识库写入、追加式历史与独立请求/定时器清理。 |
+| `src/composables/useCompanyResearch.ts` | 公司研究状态预检、两路官方结构化证据、SSE 正文、知识库写入、追加式历史与独立请求/定时器清理。 |
 | `src/composables/useReportCenter.ts` | 六类报告读取、历史日期、交付回执、SSE 生成、推送提交及各请求独立取消和生命周期清理。 |
 | `src/composables/useKnowledge.ts` | 知识列表及新增、批准、拒绝、替代、删除请求的独立控制、局部失败保留和卸载清理。 |
 | `src/utils/reportMarkdown.ts` | 把受治理报告 Markdown 解析为安全的 Vue 渲染块和章节目录，不使用原始 HTML 注入。 |

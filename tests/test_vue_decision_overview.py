@@ -126,7 +126,9 @@ def test_vue_limit_evidence_displays_market_turnover_in_trillion_yuan() -> None:
     assert "function marketTurnover(value?: number | null)" in limit
     assert "(value / 1e8).toFixed(2)" in limit
     assert "万亿`" in limit
-    assert "两市成交 {{ marketTurnover(market?.total_amount) }}" in limit
+    assert 'v-if="hasMarketTurnover"' in limit
+    assert "两市成交 {{ marketTurnover(market?.total_amount) }}{{ marketTurnoverCacheLabel }}" in limit
+    assert "缓存截至" in limit
 
 
 def test_vue_market_environment_displays_turnover_in_trillion_yuan() -> None:
@@ -134,7 +136,9 @@ def test_vue_market_environment_displays_turnover_in_trillion_yuan() -> None:
 
     assert "function formatAmount(value?: number | null)" in market
     assert "(value / 1e8).toFixed(2)" in market
-    assert "成交额 {{ formatAmount(market?.total_amount) }}" in market
+    assert 'v-if="hasTotalAmount"' in market
+    assert "成交额 {{ formatAmount(market?.total_amount) }}{{ totalAmountCacheLabel }}" in market
+    assert "缓存截至" in market
     assert "toFixed(0)} 亿" not in market
 
 

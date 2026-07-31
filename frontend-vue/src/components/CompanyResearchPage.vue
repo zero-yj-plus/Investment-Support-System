@@ -11,7 +11,7 @@ const emit = defineEmits<{ refreshState: [refreshing: boolean] }>()
 const {
   codeInput, currentCode, content, runState, runError, fieldError, stageText,
   stageSeconds, completedAt, statusLoading, modelReady, modelReason,
-  enrichment, disclosures, interactions, history, activeHistoryId, saving,
+  disclosures, interactions, history, activeHistoryId, saving,
   saveError, saveMessage, running, evidenceLoading, canSave, refreshing,
   startResearch, stopResearch, selectHistory, saveToKnowledge, refresh,
 } = useCompanyResearch()
@@ -22,7 +22,6 @@ onBeforeUnmount(() => emit('refreshState', false))
 const dataAsOf = computed(() => (
   disclosures.value.data?.data_as_of
   || disclosures.value.data?.evidence?.data_as_of
-  || enrichment.value.data?.ts
   || interactions.value.data?.data_as_of
   || '尚未核验'
 ))
@@ -48,7 +47,7 @@ defineExpose({ refresh })
     <header class="company-page-header">
       <div class="page-heading">
         <h1 id="company-page-title">公司研究</h1>
-        <p class="page-subtitle">公告、管理层互动与低频研究底座独立核验；模型只生成受治理的解释正文。</p>
+        <p class="page-subtitle">官方公告与管理层互动独立核验；模型只生成受治理的解释正文。</p>
       </div>
     </header>
 
@@ -82,7 +81,6 @@ defineExpose({ refresh })
       <div class="company-main-column">
         <CompanyResearchEvidence
           :code="currentCode"
-          :enrichment="enrichment"
           :disclosures="disclosures"
           :interactions="interactions"
         />

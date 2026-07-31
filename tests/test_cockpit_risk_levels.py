@@ -56,6 +56,33 @@ def test_risk_command_returns_position_cap_for_normal_and_extreme_markets() -> N
     assert extreme["position_cap"].startswith("总仓位 0—10%")
 
 
+def test_pulse_core_calculates_sentiment_when_limit_down_is_confirmed_zero(monkeypatch) -> None:
+    overview = {
+        **_overview(change_pct=1.0, limit_up=20, limit_down=0),
+        "ok": True,
+        "data_date": "2026-07-31",
+        "ts": "2026-07-31 11:20:00",
+    }
+    monkeypatch.setattr(cockpit_module.market, "market_overview", lambda: overview)
+    monkeypatch.setattr(
+        cockpit_module.senti_mod,
+        "compute_today",
+        lambda _store: {"score": 76, "phase": "发酵期", "missing": []},
+    )
+    monkeypatch.setattr(
+        cockpit_module,
+        "now_cn",
+        lambda: datetime(2026, 7, 31, 11, 20, tzinfo=CN),
+    )
+    monkeypatch.setattr(cockpit_module, "is_trade_day", lambda _day: True)
+
+    result = cockpit_module.pulse_core()
+
+    assert result["senti"] == 81
+    assert result["senti_label"] == "亢奋"
+    assert not any("情绪温度" in item for item in result["missing"])
+
+
 def test_premarket_never_exposes_previous_close_as_buy_instruction() -> None:
     guarded = apply_decision_time_guard(
         {

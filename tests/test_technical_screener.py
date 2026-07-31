@@ -14,6 +14,16 @@ def test_empty_cache_is_explicitly_unavailable(tmp_path) -> None:
     assert result["state"] == "missing"
 
 
+def test_summary_status_skips_large_record_counts(tmp_path) -> None:
+    technical_screener.init(tmp_path)
+    summary = technical_screener.status(include_counts=False)
+    assert summary["state"] == "missing"
+    assert summary["stocks"] == 0
+    assert summary["bars"] is None
+    assert summary["signal_matches"] is None
+    assert summary["data_date"] is None
+
+
 def test_scheme_round_trip_preserves_algorithm_version(tmp_path) -> None:
     technical_screener.init(tmp_path)
     saved = technical_screener.save_scheme({

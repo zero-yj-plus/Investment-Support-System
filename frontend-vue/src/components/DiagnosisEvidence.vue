@@ -1,23 +1,12 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { DiagnosisEvidencePoint, DiagnosisQuote, DiagnosisResponse } from '../types/diagnosis'
-import { evidenceFieldLabel, evidenceQualityLabel, evidenceUnavailableReason, formatEvidenceValue, qualityCoverage } from '../utils/diagnosisFormat'
+import { evidenceFieldLabel, formatEvidenceValue } from '../utils/diagnosisFormat'
 
 const props = defineProps<{ card: DiagnosisResponse; quote?: DiagnosisQuote | null }>()
 
-const hasDecisionSnapshot = computed(() => Array.isArray(props.card.decision_market_evidence))
-const decisionPoints = computed(() => Array.isArray(props.card.decision_market_evidence) ? props.card.decision_market_evidence : [])
-const currentPoints = computed(() => Array.isArray(props.card.market_evidence) ? props.card.market_evidence : [])
 const stages = computed(() => Array.isArray(props.card.analysis_pipeline?.stages) ? props.card.analysis_pipeline!.stages! : [])
 const evidence = computed(() => Array.isArray(props.card.evidence) ? props.card.evidence : [])
-const sameSnapshot = computed(() => {
-  const ids = (rows: DiagnosisEvidencePoint[]) => rows.map((row) => row.evidence_id).filter(Boolean).sort().join('|')
-  return Boolean(ids(currentPoints.value)) && ids(currentPoints.value) === ids(decisionPoints.value)
-})
-const primaryPoints = computed(() => hasDecisionSnapshot.value ? decisionPoints.value : currentPoints.value)
-const primaryQuality = computed(() => hasDecisionSnapshot.value ? props.card.decision_market_evidence_quality : props.card.market_evidence_quality)
-const missingFields = computed(() => primaryQuality.value?.missing_fields || [])
-const emptyReason = computed(() => evidenceUnavailableReason(primaryQuality.value?.reason))
 const quotePoints = computed<DiagnosisEvidencePoint[]>(() => {
   const quote = props.quote
   if (!quote) return []
@@ -30,45 +19,16 @@ const quotePoints = computed<DiagnosisEvidencePoint[]>(() => {
   return definitions.flatMap(([field, key, unit]) => quote[key] == null ? [] : [{ field, value: quote[key] as number, unit }])
 })
 const directionTone = (direction: string | undefined) => direction === '利多' ? 'is-positive' : direction === '利空' ? 'is-negative' : 'is-neutral'
-const pointTone = (point: DiagnosisEvidencePoint) => point.quality_status === 'ok' ? 'is-ok' : point.quality_status === 'conflict' ? 'is-conflict' : point.quality_status === 'missing' ? 'is-missing' : 'is-degraded'
 </script>
 
 <template>
   <section class="diagnosis-evidence-grid" aria-label="诊断结构化证据">
     <section class="panel diagnosis-market" aria-labelledby="diagnosis-market-title">
       <header class="section-heading">
-        <div><p class="eyebrow">PRICE EVIDENCE</p><h2 id="diagnosis-market-title">结论绑定的行情证据</h2></div>
-        <span>{{ qualityCoverage(primaryQuality) }} · {{ evidenceQualityLabel(primaryQuality?.status) }}</span>
+        <div><p class="eyebrow">QUICK QUOTE</p><h2 id="diagnosis-market-title">当前快速行情</h2></div>
+        <span>仅供核对 · 未绑定证据 ID · {{ quotePoints.length }}/8 项有值</span>
       </header>
-      <div v-if="primaryPoints.length" class="diagnosis-market__grid">
-        <article v-for="point in primaryPoints" :key="`${point.field}-${point.evidence_id || 'missing'}`" :class="pointTone(point)">
-          <div><span>{{ evidenceFieldLabel(point.field) }}</span><em>{{ evidenceQualityLabel(point.quality_status) }}</em></div>
-          <strong class="mono">{{ formatEvidenceValue(point) }}</strong>
-          <small>{{ point.source_id || point.source || '来源未标注' }}<template v-if="point.trading_day"> · {{ point.trading_day }}</template></small>
-        </article>
-      </div>
-      <div v-else class="diagnosis-evidence-empty is-unavailable" role="status">
-        <strong>正式行情证据采集未完成</strong>
-        <span>{{ emptyReason }} 快速行情只作当前值核对，不会被写成结论证据。</span>
-      </div>
-      <p v-if="missingFields.length" class="diagnosis-market__missing">
-        {{ primaryPoints.length ? '缺失字段' : '未绑定正式证据' }}：{{ missingFields.map(evidenceFieldLabel).join('、') }}
-      </p>
-      <details v-if="hasDecisionSnapshot && !sameSnapshot && currentPoints.length" class="diagnosis-current-snapshot">
-        <summary>查看当前字段级证据（未参与已冻结结论）</summary>
-        <div class="diagnosis-market__grid">
-          <article v-for="point in currentPoints" :key="`current-${point.field}-${point.evidence_id || 'missing'}`" :class="pointTone(point)">
-            <div><span>{{ evidenceFieldLabel(point.field) }}</span><em>{{ evidenceQualityLabel(point.quality_status) }}</em></div>
-            <strong class="mono">{{ formatEvidenceValue(point) }}</strong>
-            <small>{{ point.source_id || point.source || '来源未标注' }}</small>
-          </article>
-        </div>
-      </details>
-      <section v-if="!primaryPoints.length && !currentPoints.length && quotePoints.length" class="diagnosis-quote-fallback" aria-labelledby="diagnosis-quote-fallback-title">
-        <header>
-          <div><strong id="diagnosis-quote-fallback-title">当前快速行情</strong><span>仅供核对 · 未绑定证据 ID</span></div>
-          <small>{{ quotePoints.length }}/8 项有值</small>
-        </header>
+      <section v-if="quotePoints.length" class="diagnosis-quote-fallback" aria-label="当前快速行情字段">
         <div class="diagnosis-market__grid">
           <article v-for="point in quotePoints" :key="`quote-${point.field}`" class="is-unbound">
             <div><span>{{ evidenceFieldLabel(point.field) }}</span><em>未绑定</em></div>
@@ -77,6 +37,7 @@ const pointTone = (point: DiagnosisEvidencePoint) => point.quality_status === 'o
           </article>
         </div>
       </section>
+      <div v-else class="diagnosis-evidence-empty"><strong>快速行情暂不可用</strong><span>页面不会用示例数字或历史值补位。</span></div>
     </section>
 
     <section class="panel diagnosis-analysis" aria-labelledby="diagnosis-analysis-title">
@@ -116,23 +77,12 @@ const pointTone = (point: DiagnosisEvidencePoint) => point.quality_status === 'o
 .section-heading > span { color: var(--text-3); font-size: 12px; text-align: right; }
 .diagnosis-market__grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 10px; }
 .diagnosis-market__grid article { min-width: 0; padding: 9px 10px; border: 1px solid var(--border); border-left: 3px solid currentColor; border-radius: var(--radius-sm); background: var(--surface-2); }
-.diagnosis-market__grid article.is-ok { color: var(--info); }
-.diagnosis-market__grid article.is-degraded { color: var(--warning); }
-.diagnosis-market__grid article.is-conflict, .diagnosis-market__grid article.is-missing { color: var(--danger); }
 .diagnosis-market__grid article.is-unbound { color: var(--text-2); border-left-color: var(--border-strong); }
 .diagnosis-market__grid article > div { display: flex; justify-content: space-between; gap: 8px; }
 .diagnosis-market__grid span { color: var(--text-3); font-size: 12px; }
 .diagnosis-market__grid em { font-size: 11px; font-style: normal; }
 .diagnosis-market__grid strong { display: block; margin: 3px 0 1px; color: var(--text); font-size: 18px; }
 .diagnosis-market__grid small { display: block; color: var(--text-3); font-size: 11px; overflow-wrap: anywhere; }
-.diagnosis-market__missing { margin: 0; padding: 9px 12px; border-top: 1px solid var(--border); color: var(--warning); font-size: 12px; }
-.diagnosis-evidence-empty.is-unavailable { min-height: 112px; padding-bottom: 14px; color: var(--text-2); background: color-mix(in srgb, var(--warning) 6%, var(--surface)); }
-.diagnosis-evidence-empty.is-unavailable strong { color: var(--warning); }
-.diagnosis-quote-fallback { border-top: 1px solid var(--border); }
-.diagnosis-quote-fallback > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px 0; }
-.diagnosis-quote-fallback > header > div { display: grid; gap: 2px; }
-.diagnosis-quote-fallback > header span, .diagnosis-quote-fallback > header small { color: var(--text-3); font-size: 12px; }
-.diagnosis-current-snapshot summary { min-height: 44px; padding: 11px 12px; border-top: 1px solid var(--border); color: var(--text-2); font-size: 13px; cursor: pointer; }
 .diagnosis-stage-list { display: grid; gap: 8px; padding: 10px; }
 .diagnosis-stage-list article { min-width: 0; padding: 9px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); }
 .diagnosis-stage-list header { display: flex; justify-content: space-between; gap: 8px; }

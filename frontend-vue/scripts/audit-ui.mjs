@@ -98,14 +98,12 @@ const companyResearchMarkdown = `# 审计公司（000001）深度研究
 
 当前结构化接口未提供上下游收入占比，保持缺失，不推测供应链角色。
 
-## 四、财务与一致预期
+## 四、财务证据
 
 |指标|数值|单位|口径|
 |---|---:|---|---|
-|机构目标价|12.80|元|一致预期，非公司承诺|
-|2026E EPS|1.25|元/股|盘后低频辅助|
-|前十大股东合计|61.20|%|2026-03-31 报告期|
-|收入预测|—|亿元|接口未返回，保持缺失|
+|ROE|—|%|结构化财务接口未返回，保持缺失|
+|收入增长率|—|%|接口未返回，保持缺失|
 
 ## 五、估值
 
@@ -1257,29 +1255,6 @@ const fixtures = {
     traps: [
       { code: '002789', name: '审计低基数股份', ann_date: '20260714', type: '预增', p_chg_min: 1280, p_chg_max: 1360, net_min: 41000000, net_max: 45000000, last_net: 3100000, summary: '上年同期基数较低。', reason: '上年同期基数较低。', source: '公开业绩预告', board: '深主板', mandatory: true, layer: '压哨', trap: true, trap_reason: '同比下限≥1000%，数千倍式高增大多来自极低基数', nonrec_flag: false, is_new_today: false },
     ],
-  },
-  '/api/stock/000001/research-enrichment': {
-    ok: true,
-    ts: '2026-07-22 19:42:00',
-    code: '000001',
-    scope: 'after_hours_research_only',
-    intraday_score_weight: 0,
-    data_state: 'degraded',
-    missing: ['收入一致预期仅覆盖 2026E'],
-    consensus: {
-      status: 'available', as_of: '20260722', target_price_cny: 12.8,
-      eps_cny: [{ year: 2026, value: 1.25, as_of: '20260722' }],
-      net_profit_yi_cny: [{ year: 2026, value: 468.2, as_of: '20260722' }],
-      revenue_yi_cny: [], roe_pct: [{ year: 2026, value: 11.4, as_of: '20260722' }],
-      coverage: { complete: 4, total: 5 },
-      note: '一致预期仅作盘后辅助，不参与日内评分',
-    },
-    holders_top10: {
-      status: 'available', report_date: '20260331', top10_total_ratio_pct: 61.2,
-      hk_clearing_ratio_pct: null,
-      largest_holder: { rank: 1, name: '审计国有资本运营公司', shares: null, ratio_pct: 49.56 },
-    },
-    gpjy: { status: 'blocked', reason: 'GP字段语义/单位验真失败，不输出疑似精确数字', replacement: [] },
   },
   '/api/disclosures/announcements': {
     ok: true,
@@ -2496,7 +2471,7 @@ try {
   await diagnosisEmptyPage.addScriptTag({ content: axeSource })
   const diagnosisEmptyState = await diagnosisEmptyPage.evaluate((ownRequests) => ({
     emptyVisible: Boolean(document.querySelector('.diagnosis-empty')),
-    clearCopy: document.body.innerText.includes('当前没有诊断数据') && document.body.innerText.includes('不会用示例股票、演示数字或历史值填充'),
+    removedDescription: !document.body.innerText.includes('当前没有诊断数据。页面不会自动请求其他业务接口，也不会用示例股票、演示数字或历史值填充。'),
     noUnrelatedDiagnosisRequest: ownRequests.length === 0,
     nativeInput: document.querySelector('#diagnosis-code')?.tagName === 'INPUT',
   }), diagnosisOwnRequests)
@@ -2576,7 +2551,7 @@ try {
   const diagnosisEvidenceState = await diagnosisEvidencePage.evaluate(() => {
     const text = document.body.innerText
     return {
-      causeVisible: text.includes('正式行情证据采集未完成') && text.includes('超过 4 秒交互预算'),
+      removedEvidenceBlockHidden: !text.includes('结论绑定的行情证据') && !text.includes('正式行情证据采集未完成') && !text.includes('未绑定正式证据'),
       unboundSnapshotVisible: text.includes('当前快速行情') && text.includes('仅供核对 · 未绑定证据 ID'),
       realValuesVisible: text.includes('1,488.52 元') && text.includes('24.62 倍') && text.includes('7.82 倍'),
       missingNotZeroFilled: !text.includes('行情证据真实空数组'),
@@ -3358,7 +3333,6 @@ try {
   await companyEmptyPage.route('**/api/**', async (route) => {
     const path = new URL(route.request().url()).pathname
     if (path === '/api/status') return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ model_connection: { configured: false, connected: null }, hermes: { agent_capability: { ready: false, reason: '审计场景：模型未配置' } } }) })
-    if (path === '/api/stock/000001/research-enrichment') return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: false, ts: '2026-07-22 19:42:00', code: '000001', data_state: 'missing', missing: ['该股无非零机构预测', '该股无有效十大股东报告期'], consensus: { status: 'missing', target_price_cny: null, eps_cny: [] }, holders_top10: { status: 'missing', report_date: null, top10_total_ratio_pct: null, largest_holder: null }, gpjy: { status: 'blocked', reason: '字段语义与单位待核验' } }) })
     if (path === '/api/disclosures/announcements') return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, code: '000001', exchange: 'szse', state: 'complete', verification_state: 'empty_confirmed', used_last_good: false, data_as_of: '2026-07-22', requested_window: { start: '2026-06-22', end: '2026-07-22' }, items: [] }) })
     if (path === '/api/interactions/management') return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, code: '000001', state: 'complete_empty', data_as_of: '2026-07-22', is_formal_disclosure: false, items: [] }) })
     const body = fixtures[path]
@@ -3372,7 +3346,7 @@ try {
   const companyEmptyState = await companyEmptyPage.evaluate(() => ({
     disclosureTrueEmpty: document.body.innerText.includes('查询窗口内未发现公告'),
     interactionTrueEmpty: document.body.innerText.includes('查询窗口内暂无公开互动问答'),
-    enrichmentMissing: document.body.innerText.includes('该股无非零机构预测'),
+    researchFoundationRemoved: !document.body.innerText.includes('盘后研究底座'),
     reportAbsent: document.body.innerText.includes('本轮没有形成研究正文'),
     noInventedZero: !document.body.innerText.includes('0.00%') && !document.body.innerText.includes('0 元'),
     noPageOverflow: document.documentElement.scrollWidth <= window.innerWidth,

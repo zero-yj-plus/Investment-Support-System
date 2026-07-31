@@ -34,11 +34,6 @@ async def test_company_context_includes_bounded_official_disclosure_metadata(
     monkeypatch.setattr(market, "market_overview", lambda: {"ok": True})
     monkeypatch.setattr(mainforce_source, "longhu", lambda: {"data_date": "2026-07-13", "list": [], "inst": []})
     monkeypatch.setattr(free_source, "fina_indicator", lambda code: {"code": code, "roe": 8.2})
-    monkeypatch.setattr(
-        engine_mod.tdx_api_source,
-        "after_hours_research",
-        lambda code: {"ok": True, "code": code},
-    )
     monkeypatch.setattr(engine_mod.senti, "compute_today", lambda store: {"senti": 50})
     seen = {}
 
@@ -124,6 +119,7 @@ async def test_company_context_includes_bounded_official_disclosure_metadata(
     assert interaction_seen["code"] == "000001"
     assert interaction_seen["limit"] == 6
     assert interaction_seen["data_dir"] == str(tmp_path)
+    assert "盘后研究增强" not in context
     assert "must-not-enter-model-context" not in repr(context)
 
 
@@ -147,7 +143,6 @@ async def test_company_context_degrades_unsupported_exchange_without_failing_rep
     monkeypatch.setattr(market, "market_overview", lambda: {"ok": True})
     monkeypatch.setattr(mainforce_source, "longhu", lambda: {"data_date": None, "list": [], "inst": []})
     monkeypatch.setattr(free_source, "fina_indicator", lambda _code: {})
-    monkeypatch.setattr(engine_mod.tdx_api_source, "after_hours_research", lambda code: {"code": code})
     monkeypatch.setattr(engine_mod.senti, "compute_today", lambda _store: {"senti": 50})
     monkeypatch.setattr(
         official_disclosure,

@@ -19,6 +19,59 @@ def test_overview_cached_returns_last_good_without_touching_slow_source(tmp_path
     assert prewarmer.overview_with_snapshot() == payload
 
 
+def test_overview_snapshot_keeps_same_day_last_good_total_amount(tmp_path):
+    prewarmer._boot_snapshot = None
+    prewarmer.save_snapshot(tmp_path, {
+        "ok": True,
+        "ts": "2026-07-31 10:01:02",
+        "data_date": "2026-07-31",
+        "total_amount": 1_234_500_000_000,
+        "missing": [],
+    })
+
+    prewarmer.save_snapshot(tmp_path, {
+        "ok": True,
+        "ts": "2026-07-31 10:01:20",
+        "data_date": "2026-07-31",
+        "total_amount": None,
+        "missing": ["两市成交额"],
+    })
+
+    cached = prewarmer.overview_with_snapshot()
+    assert cached is not None
+    assert cached["total_amount"] == 1_234_500_000_000
+    assert cached["total_amount_cached"] is True
+    assert cached["total_amount_asof"] == "2026-07-31 10:01:02"
+    assert "当前刷新未取得新值" in "；".join(cached["missing"])
+    assert "两市成交额" not in cached["missing"]
+
+    envelope = json.loads((tmp_path / prewarmer.SNAPSHOT_FILE).read_text(encoding="utf-8"))
+    assert envelope["overview"]["total_amount"] == 1_234_500_000_000
+
+
+def test_overview_snapshot_does_not_reuse_previous_data_day_total_amount(tmp_path):
+    prewarmer._boot_snapshot = None
+    prewarmer.save_snapshot(tmp_path, {
+        "ok": True,
+        "ts": "2026-07-30 15:00:00",
+        "data_date": "2026-07-30",
+        "total_amount": 1_100_000_000_000,
+    })
+    prewarmer.save_snapshot(tmp_path, {
+        "ok": True,
+        "ts": "2026-07-31 09:30:00",
+        "data_date": "2026-07-31",
+        "total_amount": None,
+        "missing": ["两市成交额"],
+    })
+
+    current = prewarmer.overview_with_snapshot()
+    assert current is not None
+    assert current["total_amount"] is None
+    assert "total_amount_cached" not in current
+    assert "total_amount_asof" not in current
+
+
 def test_mainline_full_snapshot_round_trip_and_marks_stale(tmp_path):
     payload = {
         "ok": True,

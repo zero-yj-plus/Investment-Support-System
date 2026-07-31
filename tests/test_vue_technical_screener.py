@@ -83,6 +83,7 @@ def test_vue_technical_screener_cleans_every_request_and_page_resource() -> None
     for controller in (
         "catalogController",
         "statusController",
+        "statusDetailsController",
         "schemesController",
         "queryController",
         "refreshController",
@@ -94,6 +95,17 @@ def test_vue_technical_screener_cleans_every_request_and_page_resource() -> None
     assert "clearInterval(statusPollTimer)" in source
     assert "document.removeEventListener('visibilitychange', onVisibilityChange)" in source
     assert "lifecycleGeneration += 1" in source
+
+
+def test_vue_technical_screener_progressively_loads_cold_cache_details() -> None:
+    source = read("frontend-vue/src/composables/useTechnicalScreener.ts")
+    page = read("frontend-vue/src/components/TechnicalScreenerPage.vue")
+    assert "/technical-screen/status?include_counts=false" in source
+    assert "async function loadStatusDetails()" in source
+    assert "await Promise.allSettled([loadCatalog(), loadStatus()])" in source
+    assert "await Promise.allSettled([loadCatalog(), loadStatus(), loadSchemes()])" not in source
+    assert "void loadSchemes()" in source
+    assert "K 线与信号总数随后补齐" in page
 
 
 def test_vue_technical_screener_uses_safe_nodes_and_native_semantics() -> None:

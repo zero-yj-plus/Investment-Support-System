@@ -1,5 +1,5 @@
 export type CompanyResearchRunState = 'idle' | 'loading' | 'complete' | 'partial' | 'error'
-export type CompanyRequestKey = 'status' | 'enrichment' | 'disclosures' | 'interactions' | 'research' | 'knowledge'
+export type CompanyRequestKey = 'status' | 'disclosures' | 'interactions' | 'research' | 'knowledge'
 
 export interface CompanyHistoryEntry {
   id: string
@@ -21,51 +21,6 @@ export interface CompanyModelStatus {
       status?: string
       reason?: string
     }
-  }
-}
-
-export interface CompanyForecastPoint {
-  year?: number | null
-  value?: number | null
-  as_of?: string | null
-}
-
-export interface CompanyResearchEnrichment {
-  ok?: boolean
-  ts?: string | null
-  code?: string | null
-  scope?: string
-  intraday_score_weight?: number | null
-  data_state?: 'complete' | 'degraded' | 'missing' | string
-  missing?: string[]
-  consensus?: {
-    status?: string
-    as_of?: string | null
-    target_price_cny?: number | null
-    eps_cny?: CompanyForecastPoint[]
-    net_profit_yi_cny?: CompanyForecastPoint[]
-    revenue_yi_cny?: CompanyForecastPoint[]
-    roe_pct?: CompanyForecastPoint[]
-    coverage?: { complete?: number; total?: number }
-    note?: string
-  }
-  holders_top10?: {
-    status?: string
-    report_date?: string | null
-    top10_total_ratio_pct?: number | null
-    hk_clearing_ratio_pct?: number | null
-    largest_holder?: {
-      rank?: number | null
-      name?: string | null
-      shares?: number | null
-      ratio_pct?: number | null
-    } | null
-    note?: string
-  }
-  gpjy?: {
-    status?: string
-    reason?: string
-    replacement?: string[]
   }
 }
 

@@ -41,7 +41,6 @@ def test_vue_diagnosis_keeps_missing_degraded_conflict_and_empty_semantics() -> 
     combined = page + evidence + health + formatter
 
     for phrase in (
-        "正式行情证据采集未完成",
         "当前快速行情",
         "仅供核对 · 未绑定证据 ID",
         "证据链真实空数组",
@@ -61,7 +60,10 @@ def test_vue_diagnosis_keeps_missing_degraded_conflict_and_empty_semantics() -> 
     assert "market_evidence_timeout" in formatter
     assert "diagnosis_data_capacity_busy" in formatter
     assert "market_evidence_failed" in formatter
-    assert "hasDecisionSnapshot.value ? decisionPoints.value : currentPoints.value" in evidence
+    assert "当前没有诊断数据。页面不会自动请求其他业务接口，也不会用示例股票、演示数字或历史值填充。" not in page
+    assert "结论绑定的行情证据" not in evidence
+    assert "正式行情证据采集未完成" not in evidence
+    assert "未绑定正式证据" not in evidence
     assert ':quote="displayedQuote"' in page
 
 

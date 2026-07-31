@@ -89,7 +89,7 @@ function inputValue(event: Event): string {
 .holdings-table-wrap { max-width: 100%; overflow-x: auto; }
 .holdings-table { width: 100%; min-width: 1320px; border-collapse: collapse; font-size: 13px; }
 .holdings-table th, .holdings-table td { padding: 9px 10px; border-bottom: 1px solid var(--border); text-align: right; vertical-align: middle; }
-.holdings-table thead th { background: var(--surface-2); color: var(--text-3); font-size: 12px; }
+.holdings-table thead th { background: var(--surface-2); color: var(--text-3); font-size: 12px; text-align: center; }
 .holdings-table th:first-child, .holdings-table td:nth-child(2), .holdings-table td:nth-child(10) { text-align: left; }
 .holdings-table tbody th { min-width: 130px; text-align: left; }
 .holdings-table tbody th strong { display: block; margin-top: 3px; }

@@ -4559,12 +4559,12 @@ async def screen(request: Request):
 
 @router.get("/technical-screen/catalog")
 async def technical_screen_catalog():
-    return technical_screener_mod.catalog()
+    return await asyncio.to_thread(technical_screener_mod.catalog)
 
 
 @router.get("/technical-screen/status")
-async def technical_screen_status():
-    return await asyncio.to_thread(technical_screener_mod.status)
+async def technical_screen_status(include_counts: bool = True):
+    return await asyncio.to_thread(technical_screener_mod.status, include_counts=include_counts)
 
 
 @router.post("/technical-screen/query")
@@ -4588,7 +4588,7 @@ async def technical_screen_refresh(request: Request):
             body = {}
     except Exception:
         body = {}
-    current = await asyncio.to_thread(technical_screener_mod.status)
+    current = await asyncio.to_thread(technical_screener_mod.status, include_counts=False)
     if current.get("state") == "running":
         return JSONResponse({"ok": False, "state": "running", "error_code": "refresh_already_running"}, status_code=409)
     try:

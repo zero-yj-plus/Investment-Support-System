@@ -25,7 +25,6 @@
 ## 真实接口
 
 - `GET /api/status`：读取模型连接与 Agent 能力状态；失败不阻断结构化证据。
-- `GET /api/stock/{code}/research-enrichment`：盘后一致预期、十大股东与 GPJY 封锁状态。
 - `GET /api/disclosures/announcements?code=...&limit=6`：巨潮与所属交易所的公告核验结果。
 - `GET /api/interactions/management?code=...&limit=6`：深交所互动易问答；非正式公告。
 - `POST /api/chat`：用户主动生成时以 `mode=company` 请求 SSE；不完整流隔离。

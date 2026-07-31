@@ -27,18 +27,6 @@ export function normalizeCompanyHistory(value: unknown): CompanyHistoryEntry[] {
   }).slice(0, COMPANY_HISTORY_LIMIT)
 }
 
-export function formatCompanyNumber(value: unknown, digits = 2) {
-  if (value === null || value === undefined || value === '') return '—'
-  const number = Number(value)
-  return Number.isFinite(number) ? number.toFixed(digits) : '—'
-}
-
-export function formatCompanyDate(value: unknown) {
-  const raw = String(value || '').trim()
-  if (/^\d{8}$/.test(raw)) return `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`
-  return raw || '—'
-}
-
 export function formatCompanyDateTime(value: unknown) {
   const raw = String(value || '').trim()
   if (!raw) return '—'

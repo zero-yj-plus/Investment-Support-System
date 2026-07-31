@@ -78,6 +78,8 @@ export interface MarketOverviewResponse extends ApiResponseState {
   down_count?: number | null
   flat_count?: number | null
   total_amount?: number | null
+  total_amount_cached?: boolean
+  total_amount_asof?: string | null
   limit_up?: number | null
   limit_down?: number | null
   zhaban_count?: number | null

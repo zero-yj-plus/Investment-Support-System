@@ -24,7 +24,6 @@ from ..data import (
     official_disclosure,
     official_interaction,
     stock,
-    tdx_api_source,
 )
 from ..data.base import is_trade_day, next_trade_day, now_cn, prev_trade_day, ts_str
 from ..delivery import canonical_daily_plan_id, push_report_with_receipt
@@ -1887,7 +1886,6 @@ class Engine:
                 # 供应方只返回部分指标时按缺失处理，不推断未披露字段。
                 from ..data import free_source as _tx  # noqa: PLC0415
                 fina = _tx.fina_indicator(code)
-                research_enrichment = tdx_api_source.after_hours_research(code)
                 return {
                     "今日日期": today,
                     "个股代码": code,
@@ -1899,7 +1897,6 @@ class Engine:
                     "市场总览": market.market_overview(),
                     "市场情绪": senti.compute_today(self.store),
                     "本股龙虎榜": longhu_self,
-                    "盘后研究增强(TDX低频源·不参与日内评分)": research_enrichment,
                     # 北向资金已移除：其净流入实时数据自 2024-08 停止披露，旧源(moneyflow_hsgt)回的是
                     # 沪深港通【成交额】口径(数千亿),当净流入喂 AI 会编造"北向大幅流入"看多结论(铁律红线)。
                     # 关键：明确告知 AI 哪些维度【无确定性数据源】，使其在报告中标「数据不全」而非编造（铁律）。

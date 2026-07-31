@@ -147,6 +147,7 @@ export function useTechnicalScreener() {
   let lifecycleGeneration = 0
   let catalogController: AbortController | null = null
   let statusController: AbortController | null = null
+  let statusDetailsController: AbortController | null = null
   let schemesController: AbortController | null = null
   let queryController: AbortController | null = null
   let refreshController: AbortController | null = null
@@ -330,15 +331,18 @@ export function useTechnicalScreener() {
     statusController = controller
     const generation = lifecycleGeneration
     try {
-      const payload = await getJson<TechnicalStatusResponse>('/technical-screen/status', controller.signal)
+      const payload = await getJson<TechnicalStatusResponse>('/technical-screen/status?include_counts=false', controller.signal)
       if (!alive || controller !== statusController || generation !== lifecycleGeneration) return false
-      status.value = payload
+      status.value = status.value
+        ? { ...status.value, ...payload, bars: status.value.bars, signal_matches: status.value.signal_matches }
+        : payload
       statusError.value = ''
       if (payload.state === 'running' || payload.state === 'queued') ensureStatusPolling()
       if (refreshQueued.value && (payload.state === 'ready' || payload.state === 'partial')) {
         refreshQueued.value = false
         refreshFeedback.value = payload.state === 'ready' ? '后台刷新完成，缓存已可用。' : '后台刷新完成，但缓存只有部分覆盖。'
         stopStatusPolling()
+        void loadStatusDetails()
       }
       return true
     } catch (error) {
@@ -347,6 +351,33 @@ export function useTechnicalScreener() {
       return false
     } finally {
       if (controller === statusController) statusController = null
+    }
+  }
+
+  async function loadStatusDetails() {
+    statusDetailsController?.abort()
+    const controller = new AbortController()
+    statusDetailsController = controller
+    const generation = lifecycleGeneration
+    try {
+      const payload = await getJson<TechnicalStatusResponse>('/technical-screen/status', controller.signal)
+      if (!alive || controller !== statusDetailsController || generation !== lifecycleGeneration) return false
+      if (status.value) {
+        status.value = {
+          ...status.value,
+          bars: payload.bars,
+          signal_matches: payload.signal_matches,
+          benchmark_bars: payload.benchmark_bars,
+        }
+      } else {
+        status.value = payload
+      }
+      return true
+    } catch (error) {
+      if (!alive || controller !== statusDetailsController || generation !== lifecycleGeneration || (error instanceof DOMException && error.name === 'AbortError')) return false
+      return false
+    } finally {
+      if (controller === statusDetailsController) statusDetailsController = null
     }
   }
 
@@ -373,8 +404,11 @@ export function useTechnicalScreener() {
   async function refresh() {
     if (bootstrapLoading.value) return
     bootstrapLoading.value = true
-    await Promise.allSettled([loadCatalog(), loadStatus(), loadSchemes()])
+    statusDetailsController?.abort()
+    void loadSchemes()
+    await Promise.allSettled([loadCatalog(), loadStatus()])
     if (alive) bootstrapLoading.value = false
+    if (alive) void loadStatusDetails()
   }
 
   async function runScreen() {
@@ -595,8 +629,10 @@ export function useTechnicalScreener() {
     alive = true
     lifecycleGeneration += 1
     document.addEventListener('visibilitychange', onVisibilityChange)
-    await Promise.allSettled([loadCatalog(), loadStatus(), loadSchemes()])
+    void loadSchemes()
+    await Promise.allSettled([loadCatalog(), loadStatus()])
     if (alive) bootstrapLoading.value = false
+    if (alive) void loadStatusDetails()
     if (status.value?.state === 'running') ensureStatusPolling()
   })
 
@@ -605,6 +641,7 @@ export function useTechnicalScreener() {
     lifecycleGeneration += 1
     catalogController?.abort()
     statusController?.abort()
+    statusDetailsController?.abort()
     schemesController?.abort()
     queryController?.abort()
     refreshController?.abort()
