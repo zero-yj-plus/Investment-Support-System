@@ -75,7 +75,11 @@ def test_acknowledged_and_partial_are_valid_append_only_states(tmp_path) -> None
 class _RichPusher:
     delivery_channel = "feishu"
 
+    def __init__(self):
+        self.calls = 0
+
     async def push_report(self, _meta: dict, _rec: dict):
+        self.calls += 1
         return {"ok": True, "status": "delivered", "message_id": "om_rich"}
 
 
@@ -166,19 +170,82 @@ async def test_manual_report_push_records_manual_receipt_and_keeps_response(tmp_
         date="2026-07-13",
         claim_validation={"ok": True, "status": "passed"},
     )
+    pusher = _RichPusher()
     state = SimpleNamespace(
         store=store,
-        feishu=_RichPusher(),
+        feishu=pusher,
         config=SimpleNamespace(push_via="feishu"),
     )
 
     response = await push_report("morning", _Request(state, body={"date": "2026-07-13"}))
     receipt = DeliveryReceiptStore(store).receipts()[0][0]
 
-    assert response == {"ok": True}
+    assert response == {"ok": True, "resent": False}
+    assert pusher.calls == 1
     assert store.get_report("morning", "2026-07-13")["pushed"] is True
     assert receipt["trigger"] == "manual"
     assert receipt["status"] == "delivered"
+
+
+@pytest.mark.asyncio
+async def test_explicit_manual_resend_creates_audited_intent_and_keeps_its_own_idempotency(tmp_path) -> None:
+    store = Store(tmp_path)
+    store.save_report(
+        "morning",
+        "早盘内参",
+        "validated",
+        date="2026-07-13",
+        claim_validation={"ok": True, "status": "passed"},
+    )
+    pusher = _RichPusher()
+    state = SimpleNamespace(
+        store=store,
+        feishu=pusher,
+        config=SimpleNamespace(push_via="feishu"),
+    )
+
+    first = await push_report("morning", _Request(state, body={"date": "2026-07-13"}))
+    resend_body = {
+        "date": "2026-07-13",
+        "force_resend": True,
+        "resend_id": "manual-resend-001",
+    }
+    resent = await push_report("morning", _Request(state, body=resend_body))
+    duplicate_http_retry = await push_report("morning", _Request(state, body=resend_body))
+
+    receipts, total = DeliveryReceiptStore(store).receipts()
+    assert first == {"ok": True, "resent": False}
+    assert resent == {"ok": True, "resent": True}
+    assert duplicate_http_retry == {"ok": True, "resent": True}
+    assert pusher.calls == 2
+    assert total == 2
+    assert len({receipt["delivery_id"] for receipt in receipts}) == 2
+
+
+@pytest.mark.asyncio
+async def test_explicit_manual_resend_requires_valid_idempotency_key(tmp_path) -> None:
+    store = Store(tmp_path)
+    store.save_report(
+        "morning",
+        "早盘内参",
+        "validated",
+        date="2026-07-13",
+        claim_validation={"ok": True, "status": "passed"},
+    )
+    pusher = _RichPusher()
+    state = SimpleNamespace(
+        store=store,
+        feishu=pusher,
+        config=SimpleNamespace(push_via="feishu"),
+    )
+
+    response = await push_report("morning", _Request(state, body={
+        "date": "2026-07-13", "force_resend": True, "resend_id": "short",
+    }))
+
+    assert response.status_code == 400
+    assert "幂等键" in json.loads(response.body)["error"]
+    assert pusher.calls == 0
 
 
 @pytest.mark.asyncio

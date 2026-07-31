@@ -1,8 +1,8 @@
 client:
   name: "W.U.D.I. 默认实例"
   id: "default"
-  brand: "W.U.D.I. A 股决策支持"
-  brand_sub: "RESEARCH COPILOT"
+  brand: "W.U.D.I."
+  brand_sub: "A 股决策支持"
 
 server:
   host: 127.0.0.1

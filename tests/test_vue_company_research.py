@@ -64,8 +64,6 @@ def test_vue_company_research_preserves_units_and_missing_semantics() -> None:
 
     for phrase in (
         "元/股",
-        "收入/利润预测为亿元",
-        "ROE 与股东比例为 %",
         "本页接口未独立提供，不从报告文本推导",
         "保持缺失，不补成 0%",
         "不能据此判断查询窗口内“无公告”",
@@ -79,6 +77,21 @@ def test_vue_company_research_preserves_units_and_missing_semantics() -> None:
     assert "value === null || value === undefined || value === ''" in formatter
     assert "return '—'" in formatter
     assert "Number.isFinite(number) ? number.toFixed(digits) : '—'" in formatter
+
+
+def test_vue_company_research_omits_removed_governance_panel() -> None:
+    page = read(PAGE)
+
+    for removed in (
+        "company-governance",
+        "口径与限制",
+        "研究底座、公告、互动问答与主动",
+        "收入/利润预测为亿元",
+        "本页接口没有独立风险等级和仓位上限",
+        "本地研究记录只追加；不完整输出带隔离标记",
+    ):
+        assert removed not in page
+    assert 'aria-label="公司研究历史"' in page
 
 
 def test_vue_company_research_cleans_every_request_reader_and_timer_on_unmount() -> None:

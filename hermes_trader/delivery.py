@@ -318,6 +318,7 @@ async def push_report_with_receipt(
     rtype: str,
     trigger: str,
     config=None,
+    delivery_target: str = "aggregate",
 ) -> bool:
     """以持久化 intent 包住外发，无论成败都追加审计回执。"""
     attempted_at = utc_timestamp()
@@ -335,6 +336,7 @@ async def push_report_with_receipt(
             content_hash=rec.get("content_hash"),
             channel=channel,
             version=version,
+            target=delivery_target,
             trigger=trigger,
         )
     except ValueError as exc:

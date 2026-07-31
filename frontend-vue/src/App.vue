@@ -106,6 +106,8 @@ const settingsSection = computed<SettingsSection>(() => (
 ))
 const activeNavigation = computed(() => findActiveNavigation(routePath.value, routeTab.value))
 const pageTitle = computed(() => activeNavigation.value?.child.label || (routePath.value === 'settings' ? settingsSectionTitles[settingsSection.value] : '页面迁移中'))
+const brandName = computed(() => data.shell?.client?.brand?.trim() || 'Hermes Trader')
+const brandSubtitle = computed(() => data.shell?.client?.brand_sub?.trim() || 'TRADING COPILOT')
 const pageRefreshing = computed(() => isHotboard.value || isHoldings.value || isWatchlist.value || isTiming.value || isMainlineResearch.value || isSentimentEvents.value || isTomorrowStrategy.value || isCapitalTracking.value || isStockAsk.value || isDiagnosis.value || isForecastMining.value || isIndustryChain.value || isCompanyResearch.value || isScreener.value || isTechnicalScreener.value || isReportCenter.value || isKnowledge.value || isSettings.value
   ? reportRefreshing.value
   : refreshing.value || reportRefreshing.value)
@@ -315,7 +317,11 @@ onBeforeUnmount(() => {
   document.removeEventListener('keydown', onKeydown)
 })
 
-watch(pageTitle, (value) => { document.title = `${value} · W.U.D.I.` }, { immediate: true })
+watch([pageTitle, brandName], ([title, brand]) => { document.title = `${title} · ${brand}` }, { immediate: true })
+watch([routePath, routeTab], async () => {
+  await nextTick()
+  window.scrollTo({ top: 0, left: 0, behavior: 'instant' })
+})
 </script>
 
 <template>
@@ -338,6 +344,8 @@ watch(pageTitle, (value) => { document.title = `${value} · W.U.D.I.` }, { immed
       :quality="quality"
       :connection-label="connectionLabel"
       :theme="theme"
+      :brand="brandName"
+      :brand-sub="brandSubtitle"
       @close-menu="closeMenu()"
       @toggle-theme="toggleTheme"
       @toggle-collapsed="toggleSidebarCollapsed"
@@ -514,7 +522,7 @@ watch(pageTitle, (value) => { document.title = `${value} · W.U.D.I.` }, { immed
         />
 
         <template v-else-if="isDecisionOverview">
-          <h1 id="page-title" class="sr-only">W.U.D.I. 决策总览</h1>
+          <h1 id="page-title" class="sr-only">{{ brandName }} 决策总览</h1>
 
           <DecisionCommand :pulse="data.pulse" :loading="loading" :error="errors.pulse" :last-success-label="successTime" />
 

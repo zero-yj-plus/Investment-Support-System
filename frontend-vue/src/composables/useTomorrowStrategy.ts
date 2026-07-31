@@ -154,7 +154,10 @@ export function useTomorrowStrategy() {
     try {
       const payload = await postJson<TomorrowActionResponse>(
         '/reports/evening/push',
-        { date: report.value?.date || reportDate.value },
+        {
+          date: report.value?.date || reportDate.value,
+          ...(report.value?.pushed ? { force_resend: true, resend_id: crypto.randomUUID() } : {}),
+        },
         controller.signal,
       )
       if (!alive || controller !== pushController) return

@@ -55,3 +55,4 @@ Thumbs.db
 desktop.ini
 /.codex/
 /.github/workflows/
+/.pytest-tmp/

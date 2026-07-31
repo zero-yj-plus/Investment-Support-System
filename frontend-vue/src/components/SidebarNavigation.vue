@@ -13,6 +13,8 @@ const props = defineProps<{
   quality: QualityState
   connectionLabel: string
   theme: 'dark' | 'light'
+  brand: string
+  brandSub: string
 }>()
 
 const emit = defineEmits<{
@@ -23,6 +25,7 @@ const emit = defineEmits<{
 }>()
 
 const activeNavigation = computed(() => findActiveNavigation(props.currentPath, props.currentTab))
+const brandMark = computed(() => Array.from(props.brand.trim())[0]?.toUpperCase() || 'H')
 const openGroupId = ref<string | null>(activeNavigation.value?.group.id || 'today')
 const sidebarRoot = ref<HTMLElement | null>(null)
 
@@ -64,9 +67,9 @@ defineExpose({ focusFirstItem })
     :class="{ open: menuOpen, 'is-collapsed': collapsed }"
     aria-label="主导航"
   >
-    <a class="brand" href="#/today?tab=decision" aria-label="返回决策总览" @click="emit('closeMenu')">
-      <span class="brand__mark" aria-hidden="true">W</span>
-      <span class="brand__copy"><strong>W.U.D.I.</strong><span>投研决策</span></span>
+    <a class="brand" href="#/today?tab=decision" :aria-label="`返回 ${brand} 决策总览`" @click="emit('closeMenu')">
+      <span class="brand__mark" aria-hidden="true">{{ brandMark }}</span>
+      <span class="brand__copy"><strong>{{ brand }}</strong><span>{{ brandSub }}</span></span>
     </a>
 
     <nav class="side-nav" aria-label="交易工作台">

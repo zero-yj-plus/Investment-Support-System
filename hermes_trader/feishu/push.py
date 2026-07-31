@@ -67,11 +67,14 @@ HEADER_COLORS = {
 }
 
 _MD_HEADING = re.compile(r"^(#{1,6})\s*(.+)$", re.MULTILINE)
+_TABLE_SEPARATOR_CELL = re.compile(r"^:?-{3,}:?$")
+_FENCE_START = re.compile(r"^\s*(`{3,}|~{3,})")
 
 # 单卡片内容上限按【UTF-8 字节数】计：飞书卡片约 30KB，留足余量取 18000 字节。
 # 历史 bug：曾按【字符数】20000 切片，报告几乎全中文（UTF-8 每字 3 字节），
 # 单片最大可达 ~60KB 远超卡片上限，长报告第一片即被飞书拒收。
 CHUNK_BYTES = 18000
+MAX_TABLES_PER_CARD = 5
 
 
 def _md_for_card(md: str) -> str:
@@ -94,6 +97,218 @@ def _split_by_bytes(s: str, budget: int) -> list[str]:
     if cur:
         chunks.append("".join(cur))
     return chunks
+
+
+def _split_markdown_row(line: str) -> list[str]:
+    """拆分 GFM 表格行；忽略转义或行内代码中的竖线。"""
+    value = line.strip()
+    if "|" not in value:
+        return []
+    if value.startswith("|"):
+        value = value[1:]
+    if value.endswith("|") and not value.endswith(r"\|"):
+        value = value[:-1]
+
+    cells: list[str] = []
+    current: list[str] = []
+    code_ticks = 0
+    i = 0
+    while i < len(value):
+        ch = value[i]
+        if ch == "`":
+            j = i
+            while j < len(value) and value[j] == "`":
+                j += 1
+            ticks = j - i
+            if code_ticks == 0:
+                code_ticks = ticks
+            elif code_ticks == ticks:
+                code_ticks = 0
+            current.append(value[i:j])
+            i = j
+            continue
+        if ch == "|" and code_ticks == 0:
+            backslashes = 0
+            j = len(current) - 1
+            while j >= 0 and current[j] == "\\":
+                backslashes += 1
+                j -= 1
+            if backslashes % 2 == 0:
+                cells.append("".join(current).strip())
+                current = []
+                i += 1
+                continue
+        current.append(ch)
+        i += 1
+    cells.append("".join(current).strip())
+    return cells
+
+
+def _separator_alignment(cell: str) -> str | None:
+    value = re.sub(r"\s+", "", cell)
+    if not _TABLE_SEPARATOR_CELL.fullmatch(value):
+        return None
+    if value.startswith(":") and value.endswith(":"):
+        return "center"
+    if value.endswith(":"):
+        return "right"
+    return "left"
+
+
+def _native_table(headers: list[str], separators: list[str], rows: list[list[str]]) -> dict:
+    alignments = [_separator_alignment(cell) or "left" for cell in separators]
+    columns = []
+    for index, header in enumerate(headers):
+        columns.append({
+            "name": f"col_{index + 1}",
+            "display_name": header,
+            "data_type": "lark_md",
+            "width": "auto",
+            "vertical_align": "top",
+            "horizontal_align": alignments[index],
+        })
+    native_rows = []
+    for row in rows:
+        normalised = (row + ([""] * len(headers)))[:len(headers)]
+        native_rows.append({f"col_{index + 1}": value for index, value in enumerate(normalised)})
+    return {
+        "tag": "table",
+        "page_size": min(10, max(1, len(native_rows))),
+        "row_height": "high",
+        "freeze_first_column": len(headers) > 3,
+        "header_style": {
+            "text_align": "left",
+            "text_size": "normal",
+            "background_style": "grey",
+            "text_color": "default",
+            "bold": True,
+            "lines": 2,
+        },
+        "columns": columns,
+        "rows": native_rows,
+    }
+
+
+def _markdown_card_elements(md: str) -> list[dict]:
+    """把正文拆成卡片 Markdown 元素和原生表格元素。
+
+    只识别合法的 GFM 表头+分隔行，代码围栏中的表格样文本保持原样，避免误转换。
+    """
+    lines = md.splitlines(keepends=True)
+    elements: list[dict] = []
+    markdown_lines: list[str] = []
+    fence_char = ""
+    fence_length = 0
+
+    def flush_markdown() -> None:
+        if not markdown_lines:
+            return
+        content = _md_for_card("".join(markdown_lines))
+        if content:
+            elements.append({"tag": "markdown", "content": content})
+        markdown_lines.clear()
+
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        fence = _FENCE_START.match(line)
+        if fence:
+            marker = fence.group(1)
+            if not fence_char:
+                fence_char, fence_length = marker[0], len(marker)
+            elif marker[0] == fence_char and len(marker) >= fence_length:
+                fence_char, fence_length = "", 0
+            markdown_lines.append(line)
+            i += 1
+            continue
+
+        if not fence_char and i + 1 < len(lines):
+            headers = _split_markdown_row(line.rstrip("\r\n"))
+            separators = _split_markdown_row(lines[i + 1].rstrip("\r\n"))
+            alignments = [_separator_alignment(cell) for cell in separators]
+            if (
+                headers
+                and len(headers) <= 50
+                and len(separators) == len(headers)
+                and all(alignment is not None for alignment in alignments)
+            ):
+                flush_markdown()
+                i += 2
+                rows: list[list[str]] = []
+                while i < len(lines):
+                    row = _split_markdown_row(lines[i].rstrip("\r\n"))
+                    if not row:
+                        break
+                    rows.append(row)
+                    i += 1
+                elements.append(_native_table(headers, separators, rows))
+                continue
+
+        markdown_lines.append(line)
+        i += 1
+
+    flush_markdown()
+    return elements
+
+
+def _element_size(element: dict) -> int:
+    return len(json.dumps(element, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+
+
+def _split_native_table(element: dict, budget: int) -> list[dict]:
+    """大表按完整数据行拆分；每片重复列定义，不破坏单元格。"""
+    rows = list(element.get("rows") or [])
+    if not rows or _element_size(element) <= budget:
+        return [element]
+    pieces: list[dict] = []
+    current_rows: list[dict] = []
+    for row in rows:
+        candidate = {**element, "rows": [*current_rows, row]}
+        candidate["page_size"] = min(10, max(1, len(candidate["rows"])))
+        if current_rows and _element_size(candidate) > budget:
+            piece = {**element, "rows": current_rows}
+            piece["page_size"] = min(10, len(current_rows))
+            pieces.append(piece)
+            current_rows = [row]
+        else:
+            current_rows.append(row)
+    if current_rows:
+        piece = {**element, "rows": current_rows}
+        piece["page_size"] = min(10, len(current_rows))
+        pieces.append(piece)
+    return pieces
+
+
+def _card_element_groups(md: str) -> list[list[dict]]:
+    """按飞书卡片容量与每卡最多五张表限制生成有序元素组。"""
+    atomic: list[dict] = []
+    for element in _markdown_card_elements(md):
+        if element.get("tag") == "markdown":
+            # 为 JSON 包装和转义留出余量，避免正文刚好卡在平台上限。
+            for chunk in _split_by_bytes(str(element.get("content") or ""), CHUNK_BYTES - 1024):
+                if chunk:
+                    atomic.append({"tag": "markdown", "content": chunk})
+        else:
+            atomic.extend(_split_native_table(element, CHUNK_BYTES - 1024))
+
+    groups: list[list[dict]] = []
+    current: list[dict] = []
+    current_size = 0
+    table_count = 0
+    for element in atomic:
+        size = _element_size(element)
+        is_table = element.get("tag") == "table"
+        exceeds = current and current_size + size > CHUNK_BYTES
+        too_many_tables = current and is_table and table_count >= MAX_TABLES_PER_CARD
+        if exceeds or too_many_tables:
+            groups.append(current)
+            current, current_size, table_count = [], 0, 0
+        current.append(element)
+        current_size += size
+        table_count += int(is_table)
+    if current:
+        groups.append(current)
+    return groups
 
 
 class FeishuPusher:
@@ -225,11 +440,10 @@ class FeishuPusher:
         return await self._send({"msg_type": "text", "content": {"text": text[:9000]}})
 
     async def push_card(self, title: str, md: str, color: str = "blue") -> bool:
-        content = _md_for_card(md)
-        chunks = _split_by_bytes(content, CHUNK_BYTES)[:3]
+        groups = _card_element_groups(md)
         ok = True
-        total = len(chunks)
-        for i, chunk in enumerate(chunks):
+        total = len(groups)
+        for i, elements in enumerate(groups):
             suffix = f"（{i + 1}/{total}）" if total > 1 else ""
             card = {
                 "config": {"wide_screen_mode": True},
@@ -237,7 +451,7 @@ class FeishuPusher:
                     "template": color,
                     "title": {"tag": "plain_text", "content": f"{title}{suffix}"},
                 },
-                "elements": [{"tag": "markdown", "content": chunk}],
+                "elements": elements,
             }
             ok = await self._send({"msg_type": "interactive", "card": card}) and ok
         return ok
@@ -247,15 +461,15 @@ class FeishuPusher:
         title = f"{meta.get('emoji', '')} {self.config.client_name}·{rec.get('title', '报告')} · {rec.get('date', '')}"
         color = HEADER_COLORS.get(rec.get("rtype", ""), "blue")
         self._last_message_ids = []
-        content = _md_for_card(rec.get("content_md", ""))
+        content = rec.get("content_md", "")
         if rec.get("content_hash"):
             version = rec.get("plan_version") or rec.get("report_version") or 1
             content += f"\n\n---\n内容版本：v{version} · {str(rec['content_hash'])[:12]}"
-        chunks = _split_by_bytes(content, CHUNK_BYTES)[:3]
-        total = len(chunks)
+        groups = _card_element_groups(content)
+        total = len(groups)
         target = "feishu_home" if self._bot_ready() and not self.config.feishu_webhook else "feishu_webhook"
         target_results = []
-        for i, chunk in enumerate(chunks):
+        for i, elements in enumerate(groups):
             suffix = f"（{i + 1}/{total}）" if total > 1 else ""
             card = {
                 "config": {"wide_screen_mode": True},
@@ -263,7 +477,7 @@ class FeishuPusher:
                     "template": color,
                     "title": {"tag": "plain_text", "content": f"{title.strip()}{suffix}"},
                 },
-                "elements": [{"tag": "markdown", "content": chunk}],
+                "elements": elements,
             }
             before = len(self._last_message_ids)
             ok = await self._send({"msg_type": "interactive", "card": card})

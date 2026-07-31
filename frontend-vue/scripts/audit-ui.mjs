@@ -264,7 +264,7 @@ const fixtures = {
   '/api/status': {
     ok: true,
     client: { name: '审计个人投资者', id: 'audit' },
-    version: '1.3.1-audit',
+    version: '1.3.2-audit',
     date: '2026-07-28',
     data_source: '客户授权 TDX API + 免费公开源',
     model_connection: { configured: true, connected: true, status: 'connected', required_for_core: false },
@@ -315,6 +315,8 @@ const fixtures = {
   '/api/settings/model-connections': { ok: true, active_connection_id: 'audit-model', connections: [{ id: 'audit-model', name: '审计受限模型', provider: 'hermes', base_url: 'http://127.0.0.1:8874/v1', model: 'hermes-agent', api_key_set: true, active: true }] },
   '/api/shell-status': {
     ok: true,
+    client: { name: '审计个人投资者', id: 'audit', brand: '审计白标', brand_sub: 'A 股决策支持' },
+    version: '1.3.2-audit',
     is_trade_day: true,
     market_session: 'intraday',
     market_context: {
@@ -1391,6 +1393,9 @@ try {
         overflow: Math.max(0, root.scrollWidth - window.innerWidth),
         mainContentPresent: Boolean(document.querySelector('#main-content h1')),
         mainContentHeight: document.querySelector('#main-content')?.getBoundingClientRect().height || 0,
+        configuredBrandVisible: document.querySelector('.brand__copy strong')?.textContent?.trim() === '审计白标'
+          && document.querySelector('.brand__copy > span')?.textContent?.trim() === 'A 股决策支持'
+          && document.title.endsWith('· 审计白标'),
         retiredSimulationAbsent: !document.querySelector('#primary-navigation')?.textContent?.includes('模拟执行'),
         heatmapFallbackVisible: document.body.innerText.includes('面积改用 |涨跌幅|')
           && document.querySelectorAll('.sector-treemap rect').length === 9,
@@ -1426,7 +1431,21 @@ try {
       const hiddenAfterClose = await page.locator('#primary-navigation').evaluate((node) => getComputedStyle(node).visibility === 'hidden')
       mobileNavigation = { hiddenBeforeOpen, firstItemFocused, menuFocusRestored, hiddenAfterClose }
     }
-    report.push({ viewport, layout, mobileNavigation, pageErrors, violations })
+    const scrollResetOnNavigation = await page.evaluate(async () => {
+      const spacer = document.createElement('div')
+      spacer.style.height = '2000px'
+      document.body.append(spacer)
+      window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'instant' })
+      const before = window.scrollY
+      window.location.hash = '#/today?tab=hotboard'
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+      const after = window.scrollY
+      window.location.hash = '#/today?tab=decision'
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+      spacer.remove()
+      return { startedBelowTop: before > 0, endedAtTop: after === 0 }
+    })
+    report.push({ viewport, layout, mobileNavigation, scrollResetOnNavigation, pageErrors, violations })
 
     if (viewport.width === 375 || viewport.width === 1440) {
       await page.screenshot({ path: resolve(outputDir, `${viewport.name}.png`), fullPage: true })
@@ -3762,9 +3781,11 @@ await writeFile(resolve(outputDir, 'report.json'), JSON.stringify(report, null, 
 const failed = report.some((item) =>
   (item.layout?.overflow || 0) > 0
   || item.layout?.mainContentPresent === false
+  || item.layout?.configuredBrandVisible === false
   || item.layout?.retiredSimulationAbsent === false
   || (item.layout && item.layout.mainContentHeight < 500)
   || item.layout?.heatmapFallbackVisible === false
+  || (item.scrollResetOnNavigation && Object.values(item.scrollResetOnNavigation).some((value) => value !== true))
   || (item.layout?.heatmapLabelHierarchy && (
     item.layout.heatmapLabelHierarchy.largeNames < 1
     || item.layout.heatmapLabelHierarchy.compactNames < 1

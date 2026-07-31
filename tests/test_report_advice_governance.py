@@ -64,7 +64,8 @@ def test_blocked_price_line_is_removed_before_revalidation() -> None:
     )
 
     assert "10.20" not in sanitized
-    assert "价格数据不足，暂不给点位" in sanitized
+    assert "暂不给点位" in sanitized
+    assert "未绑定到唯一股票" in sanitized
     assert "保持低仓位" in sanitized
     assert meta == {
         "applied": True,
@@ -73,6 +74,18 @@ def test_blocked_price_line_is_removed_before_revalidation() -> None:
         "lines": [2],
         "original_blocked_count": 1,
         "blocked_reasons": ["price_claim_not_bound_to_stock"],
+        "replacements": [{
+            "line": 2,
+            "format": "text_line",
+            "code": None,
+            "name": None,
+            "blocked_reasons": ["price_claim_not_bound_to_stock"],
+        }],
+        "blocked_claims": [{
+            "line": 2,
+            "reason": "price_claim_not_bound_to_stock",
+            "value": 10.20,
+        }],
     }
 
 
@@ -94,9 +107,55 @@ def test_price_sanitizer_removes_all_locally_blocked_claim_failures(reason: str)
     )
 
     assert "99.99" not in sanitized
-    assert "价格数据不足，暂不给点位" in sanitized
+    assert "暂不给点位" in sanitized
     assert meta is not None
     assert meta["blocked_reasons"] == [reason]
+
+
+def test_price_sanitizer_preserves_markdown_table_shape_and_stock_identity() -> None:
+    content = (
+        "| 代码 | 名称 | 所属方向 | 入选逻辑 | 今日动作 |\n"
+        "|---|---|---|---|---|\n"
+        "| 600396 | 华电辽能 | 电力 | 对比华银电力 | 回踩16.16元，跌破15.5元放弃 |\n"
+        "| 301526 | 国际复材 | 新材料 | 成交活跃 | 只观察 |"
+    )
+    validation = {
+        "claims": [{
+            "line": 3,
+            "status": "blocked",
+            "reason": "price_claim_bound_to_multiple_stocks",
+            "value": 16.16,
+            "candidate_codes": ["600396", "600744"],
+            "candidate_names": ["华电辽能", "华银电力"],
+        }],
+    }
+
+    sanitized, meta = _sanitize_blocked_report_price_lines(content, validation)
+    lines = sanitized.splitlines()
+
+    assert lines[2].startswith("| 600396 | 华电辽能 |")
+    assert lines[2].endswith("|")
+    assert lines[3].startswith("| 301526 | 国际复材 |")
+    assert "16.16" not in sanitized
+    assert "15.5" not in sanitized
+    assert "同一行提及多只股票" in lines[2]
+    assert meta is not None
+    assert meta["replacements"][0] == {
+        "line": 3,
+        "format": "markdown_table_row",
+        "code": "600396",
+        "name": "华电辽能",
+        "blocked_reasons": ["price_claim_bound_to_multiple_stocks"],
+    }
+    assert meta["blocked_claims"][0]["candidate_codes"] == ["600396", "600744"]
+
+
+def test_morning_prompt_forbids_multiple_stock_identities_in_one_table_row() -> None:
+    prompt = engine_module.prompts._morning()
+
+    assert "一行只写一只股票" in prompt
+    assert "禁止提及其他股票代码或名称" in prompt
+    assert "仍须输出完整五列表格行" in prompt
 
 
 def test_advice_sanitizer_removes_only_known_text_level_violations() -> None:
@@ -226,7 +285,8 @@ async def test_report_degrades_only_unbound_price_line_and_saves_audited_result(
     assert events[-1]["done"] is True
     assert report is not None
     assert "10.20" not in report["content_md"]
-    assert "价格数据不足，暂不给点位" in report["content_md"]
+    assert "暂不给点位" in report["content_md"]
+    assert "未绑定到唯一股票" in report["content_md"]
     assert report["claim_validation"]["status"] == "passed"
     assert report["claim_validation"]["sanitation"]["line_count"] == 1
 
@@ -264,7 +324,8 @@ async def test_report_degrades_out_of_range_price_line_and_saves_audited_result(
     assert events[-1]["done"] is True
     assert report is not None
     assert "150" not in report["content_md"]
-    assert "价格数据不足，暂不给点位" in report["content_md"]
+    assert "暂不给点位" in report["content_md"]
+    assert "超出该股真实行情校验区间" in report["content_md"]
     sanitation = report["claim_validation"]["sanitation"]
     assert sanitation["blocked_reasons"] == ["price_outside_stock_evidence_range"]
 

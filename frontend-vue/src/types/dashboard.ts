@@ -48,6 +48,13 @@ export interface PulseResponse extends ApiResponseState {
 
 export interface ShellStatusResponse extends ApiResponseState {
   ok?: boolean
+  client?: {
+    name?: string
+    id?: string
+    brand?: string
+    brand_sub?: string
+  }
+  version?: string
   is_trade_day?: boolean
   market_session?: 'non_trading' | 'premarket' | 'intraday' | 'tail' | 'review' | string
   market_context?: {

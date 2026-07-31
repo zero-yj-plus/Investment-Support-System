@@ -141,7 +141,10 @@ export function usePremarketReport() {
     try {
       const payload = await postJson<PremarketActionResponse>(
         '/reports/morning/push',
-        { date: report.value?.date || reportDate.value },
+        {
+          date: report.value?.date || reportDate.value,
+          ...(report.value?.pushed ? { force_resend: true, resend_id: crypto.randomUUID() } : {}),
+        },
         actionController.signal,
       )
       if (payload.ok === false) throw new Error(payload.error || '推送失败')

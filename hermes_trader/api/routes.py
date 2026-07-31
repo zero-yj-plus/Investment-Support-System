@@ -2867,14 +2867,24 @@ async def push_report(rtype: str, request: Request):
             status_code=409,
         )
     date = None
+    force_resend = False
+    resend_id = ""
     try:
         body = await request.json()
+        body = body if isinstance(body, dict) else {}
         date = body.get("date")
+        force_resend = body.get("force_resend") is True
+        resend_id = str(body.get("resend_id") or "").strip()
     except Exception:
         pass
     # date 会拼入报告文件路径，非字符串/越界格式必须拦在这里（防路径穿越与 500）
     if date is not None and (not isinstance(date, str) or not _DATE_RE.match(date)):
         return JSONResponse({"ok": False, "error": "日期格式应为 YYYY-MM-DD"}, status_code=400)
+    if force_resend and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{7,79}", resend_id):
+        return JSONResponse(
+            {"ok": False, "error": "再次推送必须提供 8-80 位 resend_id 作为幂等键"},
+            status_code=400,
+        )
     rec = st.store.get_report(rtype, date)
     if not rec:
         return {"ok": False, "error": "报告不存在，请先生成"}
@@ -2897,10 +2907,11 @@ async def push_report(rtype: str, request: Request):
         rtype=rtype,
         trigger="manual",
         config=getattr(st, "config", None),
+        delivery_target=f"manual_resend:{resend_id}" if force_resend else "aggregate",
     )
     if ok:
         st.store.mark_pushed(rtype, rec["date"])
-        return {"ok": True}
+        return {"ok": True, "resent": force_resend}
     return {"ok": False, "error": "推送失败，请检查推送配置"}
 
 

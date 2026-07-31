@@ -239,7 +239,10 @@ export function useReportCenter() {
     try {
       const payload = await postJson<ReportActionResponse>(
         `/reports/${selectedType.value}/push`,
-        { date: selectedDate.value },
+        {
+          date: selectedDate.value,
+          ...(report.value?.pushed ? { force_resend: true, resend_id: crypto.randomUUID() } : {}),
+        },
         controller.signal,
       )
       if (!alive || controller !== pushController || generation !== generations.push) return

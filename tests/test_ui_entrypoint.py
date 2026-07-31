@@ -90,7 +90,8 @@ def test_vue_is_the_only_default_page_and_api_routes_are_not_swallowed() -> None
     root = client.get("/")
     assert root.status_code == 200
     assert '<div id="app"></div>' in root.text
-    assert "决策总览 · W.U.D.I." in root.text
+    assert "决策总览 · Hermes Trader" in root.text
+    assert "W.U.D.I." not in root.text
     assert client.get("/api/ping").json() == {"ok": True}
     assert client.get("/legacy/", follow_redirects=False).status_code == 404
     assert client.get("/js/app.js", follow_redirects=False).status_code == 404

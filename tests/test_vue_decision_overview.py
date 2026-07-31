@@ -196,6 +196,37 @@ def test_vue_decision_overview_has_responsive_and_accessible_shell() -> None:
     assert ".clock { display: flex; flex-direction: row" in styles
 
 
+def test_vue_shell_uses_configured_client_brand_instead_of_hardcoded_customer_name() -> None:
+    app = _read("src/App.vue")
+    sidebar = _read("src/components/SidebarNavigation.vue")
+    types = _read("src/types/dashboard.ts")
+    index = _read("index.html")
+
+    assert "data.shell?.client?.brand?.trim() || 'Hermes Trader'" in app
+    assert "data.shell?.client?.brand_sub?.trim() || 'TRADING COPILOT'" in app
+    assert ':brand="brandName"' in app
+    assert ':brand-sub="brandSubtitle"' in app
+    assert "document.title = `${title} · ${brand}`" in app
+    assert "<strong>{{ brand }}</strong><span>{{ brandSub }}</span>" in sidebar
+    assert "{{ brandMark }}" in sidebar
+    assert "brand?: string" in types
+    assert "brand_sub?: string" in types
+    assert "W.U.D.I." not in app
+    assert "W.U.D.I." not in sidebar
+    assert "W.U.D.I." not in index
+
+
+def test_vue_route_changes_reset_the_window_scroll_position() -> None:
+    app = _read("src/App.vue")
+    audit = _read("scripts/audit-ui.mjs")
+
+    assert "watch([routePath, routeTab], async () =>" in app
+    assert "await nextTick()" in app
+    assert "window.scrollTo({ top: 0, left: 0, behavior: 'instant' })" in app
+    assert "scrollResetOnNavigation" in audit
+    assert "startedBelowTop: before > 0, endedAtTop: after === 0" in audit
+
+
 def test_vue_sidebar_rebuilds_the_grouped_desktop_workspace_contract() -> None:
     app = _read("src/App.vue")
     sidebar = _read("src/components/SidebarNavigation.vue")
@@ -356,6 +387,8 @@ def test_vue_premarket_report_uses_locked_report_and_live_verification_contracts
     assert "readWithWatchdog" in api
     assert "90_000" in api
     assert "reader.cancel()" in api
+    assert "force_resend: true" in composable
+    assert "resend_id: crypto.randomUUID()" in composable
 
 
 def test_vue_premarket_report_renders_markdown_without_raw_html() -> None:

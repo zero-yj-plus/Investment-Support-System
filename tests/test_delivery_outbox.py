@@ -528,6 +528,124 @@ async def test_feishu_multichunk_partial_is_not_flattened_to_terminal_failure(mo
 
 
 @pytest.mark.asyncio
+async def test_feishu_report_does_not_silently_drop_chunks_after_legacy_cap(monkeypatch, tmp_path) -> None:
+    cfg = SimpleNamespace(
+        feishu_webhook="https://example.invalid/hook", feishu_secret="",
+        feishu_app_id="", feishu_app_secret="", data_dir=tmp_path,
+        client_name="test", client_id="test",
+    )
+    pusher = FeishuPusher(cfg)
+    payloads = []
+
+    async def send(payload):
+        payloads.append(payload)
+        return True
+
+    monkeypatch.setattr(pusher, "_send", send)
+    tail_marker = "TAIL_MARKER_AFTER_LEGACY_CAP"
+    result = await pusher.push_report({}, {
+        "title": "超长报告", "date": "2026-07-31", "rtype": "morning",
+        "content_md": "中" * 30000 + tail_marker,
+    })
+
+    assert result["status"] == "accepted"
+    assert len(payloads) > 3
+    assert tail_marker in payloads[-1]["card"]["elements"][-1]["content"]
+    assert payloads[-1]["card"]["header"]["title"]["content"].endswith(
+        f"（{len(payloads)}/{len(payloads)}）"
+    )
+
+
+@pytest.mark.asyncio
+async def test_feishu_report_renders_gfm_table_as_native_card_table(monkeypatch, tmp_path) -> None:
+    cfg = SimpleNamespace(
+        feishu_webhook="https://example.invalid/hook", feishu_secret="",
+        feishu_app_id="", feishu_app_secret="", data_dir=tmp_path,
+        client_name="test", client_id="test",
+    )
+    pusher = FeishuPusher(cfg)
+    payloads = []
+
+    async def send(payload):
+        payloads.append(payload)
+        return True
+
+    monkeypatch.setattr(pusher, "_send", send)
+    result = await pusher.push_report({}, {
+        "title": "报告", "date": "2026-07-30", "rtype": "morning",
+        "content_md": (
+            "# 主线评分\n\n"
+            "| 方向 | 分数 | 依据 |\n"
+            "| :--- | ---: | :---: |\n"
+            "| AI | 86 | [资金验证](https://example.com) |\n"
+            "| 医药 | 72 | 待观察 |\n\n"
+            "结论：优先跟踪 AI。"
+        ),
+    })
+
+    assert result["status"] == "accepted"
+    assert len(payloads) == 1
+    elements = payloads[0]["card"]["elements"]
+    assert [element["tag"] for element in elements] == ["markdown", "table", "markdown"]
+    assert elements[0]["content"].startswith("**主线评分**")
+    table = elements[1]
+    assert [column["display_name"] for column in table["columns"]] == ["方向", "分数", "依据"]
+    assert [column["horizontal_align"] for column in table["columns"]] == ["left", "right", "center"]
+    assert table["rows"] == [
+        {"col_1": "AI", "col_2": "86", "col_3": "[资金验证](https://example.com)"},
+        {"col_1": "医药", "col_2": "72", "col_3": "待观察"},
+    ]
+    assert all("| :---" not in element.get("content", "") for element in elements)
+
+
+@pytest.mark.asyncio
+async def test_feishu_card_does_not_convert_tables_inside_code_fences(monkeypatch, tmp_path) -> None:
+    cfg = SimpleNamespace(
+        feishu_webhook="https://example.invalid/hook", feishu_secret="",
+        feishu_app_id="", feishu_app_secret="", data_dir=tmp_path,
+        client_name="test", client_id="test",
+    )
+    pusher = FeishuPusher(cfg)
+    payloads = []
+
+    async def send(payload):
+        payloads.append(payload)
+        return True
+
+    monkeypatch.setattr(pusher, "_send", send)
+    ok = await pusher.push_card("代码示例", "```md\n| A | B |\n| --- | --- |\n| 1 | 2 |\n```\n")
+
+    assert ok is True
+    assert len(payloads) == 1
+    assert [element["tag"] for element in payloads[0]["card"]["elements"]] == ["markdown"]
+    assert "| --- | --- |" in payloads[0]["card"]["elements"][0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_feishu_card_splits_after_five_native_tables(monkeypatch, tmp_path) -> None:
+    cfg = SimpleNamespace(
+        feishu_webhook="https://example.invalid/hook", feishu_secret="",
+        feishu_app_id="", feishu_app_secret="", data_dir=tmp_path,
+        client_name="test", client_id="test",
+    )
+    pusher = FeishuPusher(cfg)
+    payloads = []
+
+    async def send(payload):
+        payloads.append(payload)
+        return True
+
+    monkeypatch.setattr(pusher, "_send", send)
+    table = "| 名称 | 值 |\n| --- | ---: |\n| A | 1 |\n\n"
+    ok = await pusher.push_card("多表报告", table * 6)
+
+    assert ok is True
+    assert len(payloads) == 2
+    assert sum(element["tag"] == "table" for element in payloads[0]["card"]["elements"]) == 5
+    assert sum(element["tag"] == "table" for element in payloads[1]["card"]["elements"]) == 1
+
+
+@pytest.mark.asyncio
 async def test_unsupported_retry_does_not_mutate_outbox_state(tmp_path) -> None:
     store = Store(tmp_path)
     outbox = DeliveryOutbox(store)

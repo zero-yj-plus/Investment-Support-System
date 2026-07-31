@@ -125,6 +125,22 @@ class ClaimValidatorTest(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertEqual(result["claims"][0]["reason"], "price_claim_not_bound_to_stock")
 
+    def test_multiple_stock_binding_keeps_candidate_identities_for_audit(self):
+        data = _context_with_guoci()
+        data["可买候选池"] = {
+            "stocks": [{"code": "600000", "name": "浦发银行", "price": 10.0}]
+        }
+
+        result = validate_report(
+            "| 300285 | 国瓷材料 | 对比浦发银行，回踩 78 元观察 |",
+            data,
+        )
+
+        blocked = next(c for c in result["claims"] if c["status"] == "blocked")
+        self.assertEqual(blocked["reason"], "price_claim_bound_to_multiple_stocks")
+        self.assertEqual(blocked["candidate_codes"], ["300285", "600000"])
+        self.assertEqual(blocked["candidate_names"], ["国瓷材料", "浦发银行"])
+
     def test_heading_context_binds_following_price_line(self):
         report = "### 国瓷材料（300285）\n\n- 止损位：150 元"
         result = validate_report(report, _context_with_guoci())

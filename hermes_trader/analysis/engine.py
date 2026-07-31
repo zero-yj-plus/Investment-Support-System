@@ -306,6 +306,85 @@ def _chain_sector_search_terms(industry: str) -> tuple[str, ...]:
     return industry_chain_mod.sector_search_terms(industry)
 
 
+_PRICE_SANITATION_MESSAGES = {
+    "stock_not_in_injected_context": "股票不在本次真实数据上下文中，已移除具体点位；暂不给点位，仅保留观察",
+    "price_claim_not_bound_to_stock": "具体价位未绑定到唯一股票，已移除具体点位；暂不给点位，仅保留观察",
+    "price_claim_bound_to_multiple_stocks": "同一行提及多只股票，价位无法唯一绑定，已移除具体点位；暂不给点位，仅保留观察",
+    "stock_has_no_price_evidence": "该股缺少可用价格证据，暂不给点位，仅保留观察",
+    "price_outside_stock_evidence_range": "具体价位超出该股真实行情校验区间，已移除具体点位；暂不给点位，仅保留观察",
+}
+
+
+def _price_sanitation_message(reasons: set[str]) -> str:
+    if len(reasons) == 1:
+        return _PRICE_SANITATION_MESSAGES.get(
+            next(iter(reasons)),
+            "具体价位未通过真实行情校验，已移除具体点位；暂不给点位，仅保留观察",
+        )
+    return "具体价位未通过真实行情校验，已移除具体点位；暂不给点位，仅保留观察"
+
+
+def _markdown_table_row_identity(line: str) -> tuple[list[str], int | None, str, str] | None:
+    """识别 Markdown 数据行，并只提取可安全保留的代码/名称单元格。"""
+    stripped = str(line or "").strip()
+    if not (stripped.startswith("|") and stripped.endswith("|")):
+        return None
+    cells = [cell.strip() for cell in stripped[1:-1].split("|")]
+    if len(cells) < 2:
+        return None
+    code_index: int | None = None
+    code = ""
+    for index, cell in enumerate(cells):
+        plain = re.sub(r"[*_`]", "", cell).strip()
+        if re.fullmatch(r"[034689]\d{5}", plain):
+            code_index = index
+            code = plain
+            break
+    name = ""
+    if code_index is not None and code_index + 1 < len(cells):
+        candidate = re.sub(r"[*_`]", "", cells[code_index + 1]).strip()
+        if candidate and len(candidate) <= 40 and not re.search(r"\d", candidate):
+            name = candidate
+    return cells, code_index, code, name
+
+
+def _sanitize_blocked_price_line(
+    line: str, reasons: set[str], line_number: int,
+) -> tuple[str, dict]:
+    """按原 Markdown 结构降级一行，避免安全闸把表格截断。"""
+    indent = re.match(r"^\s*", line).group(0)
+    message = _price_sanitation_message(reasons)
+    table = _markdown_table_row_identity(line)
+    if table is None:
+        return f"{indent}- {message}", {
+            "line": line_number,
+            "format": "text_line",
+            "code": None,
+            "name": None,
+        }
+
+    cells, code_index, code, name = table
+    safe_cells = ["—"] * len(cells)
+    if code_index is not None:
+        safe_cells[code_index] = code
+        if name and code_index + 1 < len(safe_cells):
+            safe_cells[code_index + 1] = name
+    message_index = len(safe_cells) - 1
+    if message_index in {code_index, (code_index + 1 if code_index is not None and name else None)}:
+        message_index = next(
+            (index for index in range(len(safe_cells) - 1, -1, -1)
+             if index not in {code_index, (code_index + 1 if code_index is not None and name else None)}),
+            len(safe_cells) - 1,
+        )
+    safe_cells[message_index] = message
+    return f"{indent}| " + " | ".join(safe_cells) + " |", {
+        "line": line_number,
+        "format": "markdown_table_row",
+        "code": code or None,
+        "name": name or None,
+    }
+
+
 def _sanitize_blocked_report_price_lines(content: str, validation: dict) -> tuple[str, dict | None]:
     """将所有未通过价格硬闸的模型行整行降级，再由原校验器重验。
 
@@ -328,15 +407,21 @@ def _sanitize_blocked_report_price_lines(content: str, validation: dict) -> tupl
         return content, None
     lines = str(content or "").splitlines()
     replaced: list[int] = []
+    replacements: list[dict] = []
     for line_number in line_numbers:
         index = line_number - 1
         if index >= len(lines):
             continue
-        indent = re.match(r"^\s*", lines[index]).group(0)
-        lines[index] = (
-            f"{indent}- 价格数据不足，暂不给点位"
-            "（原具体价位未通过真实行情校验，已由安全闸移除）"
+        line_claims = [
+            claim for claim in blocked
+            if int(claim.get("line") or 0) == line_number
+        ]
+        reasons = {str(claim.get("reason") or "unknown") for claim in line_claims}
+        lines[index], replacement = _sanitize_blocked_price_line(
+            lines[index], reasons, line_number,
         )
+        replacement["blocked_reasons"] = sorted(reasons)
+        replacements.append(replacement)
         replaced.append(line_number)
     if not replaced:
         return content, None
@@ -349,6 +434,18 @@ def _sanitize_blocked_report_price_lines(content: str, validation: dict) -> tupl
         "blocked_reasons": sorted({
             str(claim.get("reason") or "unknown") for claim in blocked
         }),
+        "replacements": replacements[:20],
+        "blocked_claims": [
+            {
+                key: claim.get(key)
+                for key in (
+                    "line", "reason", "value", "code", "name",
+                    "candidate_codes", "candidate_names", "allowed_low", "allowed_high",
+                )
+                if claim.get(key) not in (None, [], "")
+            }
+            for claim in blocked[:50]
+        ],
     }
 
 
@@ -1179,7 +1276,8 @@ class Engine:
                     "生成 RecommendationEvent。风险 5 级不得给任何新增风险提案。"
                     "任何包含具体交易价、买卖区间、止损或目标价的行/表格行，"
                     "必须在同一行明写唯一一只股票的 6 位代码和名称；"
-                    "无法逐行绑定时只能写「价格数据不足，暂不给点位」。"
+                    "同行不得再出现其他股票的代码或名称，比较时只写板块或指数；"
+                    "无法逐行绑定时只能写「价位无法唯一绑定，暂不给点位，仅保留观察」。"
                 )
         except Exception:  # noqa: BLE001 — 详情只写服务端日志
             log.exception("报告生成准备异常 [%s]", rtype)

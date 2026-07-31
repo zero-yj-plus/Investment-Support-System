@@ -149,7 +149,7 @@ defineExpose({ refresh })
                     :disabled="pushing || generating"
                     @click="pushReport"
                   >
-                    <AppIcon name="send" :size="18" />{{ pushing ? '提交中' : '提交推送' }}
+                    <AppIcon name="send" :size="18" />{{ pushing ? '提交中' : report.pushed ? '再次推送' : '提交推送' }}
                   </button>
                   <button v-else type="button" class="secondary-button" disabled title="尾盘草案仅供定稿复核，不能单独推送">
                     草案不可推送

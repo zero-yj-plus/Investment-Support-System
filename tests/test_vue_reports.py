@@ -47,6 +47,9 @@ def test_vue_report_center_uses_only_real_report_and_delivery_contracts() -> Non
         assert endpoint in composable
     for unrelated in ("/market/", "/features/", "/screen", "/diagnose", "/chat"):
         assert unrelated not in composable
+    assert "force_resend: true" in composable
+    assert "resend_id: crypto.randomUUID()" in composable
+    assert "report.pushed ? '再次推送'" in read(PAGE)
 
 
 def test_vue_report_center_preserves_missing_degraded_and_delivery_semantics() -> None:

@@ -22,8 +22,8 @@ Agent 权限、证据库健康或任务中心，因此不得因运维上游超�
 {
   "ok": true,
   "status_scope": "shell",
-  "client": {"name": "本地客户", "id": "local", "brand": "W.U.D.I."},
-  "version": "1.3.1",
+  "client": {"name": "本地客户", "id": "local", "brand": "W.U.D.I.", "brand_sub": "A 股决策支持"},
+  "version": "1.3.2",
   "date": "2026-06-10",
   "is_trade_day": true,
   "market_session": "intraday",
@@ -34,6 +34,8 @@ Agent 权限、证据库健康或任务中心，因此不得因运维上游超�
   "data_source": "多源行情"
 }
 ```
+
+`client.brand` 和 `client.brand_sub` 是客户可配置的显示品牌；`client.name` 是实例及报告署名，不能用作共享内核名称。Vue 页面不得写死 `W.U.D.I.`，服务端品牌不可用时回退显示 `Hermes Trader`。
 
 `ui.frontend` 当前只允许 `vue`。`ui.legacy_enabled` 是启动期静态挂载开关：默认
 `false` 时 `/legacy/` 与旧版兼容模块均为 404；改为 `true` 并重启后端后才提供旧版对照页面。
@@ -576,12 +578,17 @@ rtype 枚举与含义：
 `{"ok":true,"rtype":"close","date":"2026-06-10","title":"收盘复盘","content_md":"# ...","created_at":"2026-06-10 15:31:02","pushed":true}`
 不存在时 `{"ok": false, "error": "该日期无此报告"}`（HTTP 仍 200）。
 
+定稿报告可带 `claim_validation`。价格硬闸通过但执行过局部降级时，
+`claim_validation.sanitation.replacements[]` 记录受影响行的 `line/format/code/name/blocked_reasons`，
+`blocked_claims[]` 记录失败价位及候选股票身份；不保存已拒绝的完整原始建议行。
+Markdown 表格中的失败行仍保持相同列数，只移除未通过校验的点位，避免后续合法候选脱离表格显示。
+
 ### POST /api/reports/{rtype}/generate → `text/event-stream`
 立即生成（采集真实数据 → 调 Hermes 流式生成 → 自动落盘保存）。SSE 同 /api/chat 格式，`done` 事件附 `{"done":true,"saved":true,"date":"2026-06-10"}`。
 **阶段事件（`stage`）**：首个 `delta` 前先发 `{"stage":"采集行情数据…"}`（采集前）→ `{"stage":"生成报告中…"}`（调 Hermes 前）；前端处理同 §5。
 
 ### POST /api/reports/{rtype}/push
-把已生成的报告推送到飞书。body 可选 `{"date":"2026-06-10"}`。返回 `{"ok":true}` 或 `{"ok":false,"error":"..."}`。
+把已生成的报告推送到飞书。首次推送 body 可选 `{"date":"2026-06-10"}`。已经成功推送过的同版报告默认保持幂等；用户明确点击“再次推送”时，body 必须传 `{"date":"2026-06-10","force_resend":true,"resend_id":"客户端生成的8-80位幂等键"}`，服务端会创建独立、可审计的手工重发 intent，相同 `resend_id` 的网络重试不会重复外发。返回 `{"ok":true,"resent":false|true}` 或 `{"ok":false,"error":"..."}`。
 `date` 非法（非字符串或不符 `YYYY-MM-DD`）时返回 HTTP 400 `{"ok":false,"error":"日期格式应为 YYYY-MM-DD"}`。
 
 ## 7. 持仓

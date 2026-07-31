@@ -236,7 +236,9 @@ def _mentioned_codes(line: str, evidence: dict[str, dict]) -> list[str]:
 
 
 def _blocked_claim(claim: dict, line_no: int, line: str, reason: str,
-                   code: str = "", rec: dict | None = None) -> dict:
+                   code: str = "", rec: dict | None = None,
+                   candidate_codes: list[str] | None = None,
+                   evidence: dict[str, dict] | None = None) -> dict:
     result = {
         "line": line_no,
         "kind": claim["kind"],
@@ -251,6 +253,13 @@ def _blocked_claim(claim: dict, line_no: int, line: str, reason: str,
         result["allowed_low"] = rec.get("allowed_low")
         result["allowed_high"] = rec.get("allowed_high")
         result["source_paths"] = [v["path"] for v in (rec.get("values") or [])[:8]]
+    if candidate_codes:
+        unique_codes = list(dict.fromkeys(str(item) for item in candidate_codes if item))
+        result["candidate_codes"] = unique_codes
+        result["candidate_names"] = [
+            str((evidence or {}).get(item, {}).get("name") or "")
+            for item in unique_codes
+        ]
     return result
 
 
@@ -293,6 +302,7 @@ def validate_report(content_md: str, data: dict) -> dict:
             if len(bound_codes) != 1:
                 claims_out.append(_blocked_claim(
                     claim, line_no, line, "price_claim_bound_to_multiple_stocks",
+                    candidate_codes=bound_codes, evidence=evidence,
                 ))
                 continue
 
