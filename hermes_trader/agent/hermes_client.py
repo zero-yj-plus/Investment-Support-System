@@ -97,18 +97,38 @@ class HermesClient:
         configured = float(getattr(self.config, "hermes_timeout", 300) or 300)
         if explicit is not None:
             return max(5.0, min(float(explicit), configured, 600.0))
-        prefix_caps = {
-            "chat:": 120.0,
-            "cockpit:": 60.0,
-            "diagnosis:": 90.0,
-            "knowledge:": 90.0,
-            "diy:": 180.0,
-        }
+        # 长篇研究不能与普通问答共用 120 秒预算。产业链/公司研究已改为
+        # 服务端后台任务，浏览器只轮询状态，因此可使用完整 300 秒模型预算。
+        prefix_caps = (
+            ("chat:company", 300.0),
+            ("chat:chain", 300.0),
+            ("chat:", 120.0),
+            ("cockpit:", 60.0),
+            ("diagnosis:", 90.0),
+            ("knowledge:", 90.0),
+            ("diy:", 180.0),
+        )
         cap = next(
-            (value for prefix, value in prefix_caps.items() if purpose.startswith(prefix)),
+            (value for prefix, value in prefix_caps if purpose.startswith(prefix)),
             configured,
         )
         return max(5.0, min(configured, cap, 600.0))
+
+    @staticmethod
+    def _retry_after_timeout(purpose: str) -> bool:
+        """长篇研究超时后不重放整次请求，避免总等待翻倍。"""
+        return not purpose.startswith(("chat:company", "chat:chain"))
+
+    def _max_tokens_budget(self, purpose: str, explicit: int | None) -> int:
+        """为推理型模型保留长篇研究的思考与正文预算。"""
+        if explicit is not None:
+            return max(1, int(explicit))
+        configured = max(1, int(getattr(self.config, "hermes_max_tokens", 8000) or 8000))
+        if purpose.startswith("chat:company"):
+            return max(configured, 20_000)
+        if purpose.startswith("chat:chain"):
+            return max(configured, 16_000)
+        return configured
 
     def _is_local_gateway(self) -> bool:
         # A user-selected localhost OpenAI-compatible provider is a direct
@@ -482,8 +502,7 @@ class HermesClient:
         """
         if temperature is None:
             temperature = getattr(self.config, "hermes_temperature", 0.4)
-        if max_tokens is None:
-            max_tokens = getattr(self.config, "hermes_max_tokens", 8000)
+        max_tokens = self._max_tokens_budget(purpose, max_tokens)
         selected_model = model or self.config.hermes_model
         payload = {
             "model": selected_model,
@@ -538,6 +557,7 @@ class HermesClient:
                 tool_started = False
                 event_name = ""
                 finish_reason = ""
+                stop_retrying = False
                 if meta is not None:
                     meta.pop("finish_reason", None)
                 self.run_store.increment_attempt(run_id)
@@ -700,6 +720,10 @@ class HermesClient:
                         if isinstance(exc, httpx.TimeoutException)
                         else "gateway_unavailable"
                     )
+                    stop_retrying = (
+                        isinstance(exc, httpx.TimeoutException)
+                        and not self._retry_after_timeout(purpose)
+                    )
                 except Exception as exc:
                     last_err = exc
                     last_error_code = "gateway_unavailable"
@@ -717,6 +741,8 @@ class HermesClient:
                     )
                     terminal = True
                     raise HermesError("Hermes 流式中断（已输出部分内容，不重试）") from last_err
+                if stop_retrying:
+                    break
                 if attempt < _MAX_RETRIES:
                     log.warning("Hermes 调用失败，重试 %d/%d：%s", attempt + 1, _MAX_RETRIES, last_err)
                     await asyncio.sleep(_RETRY_BACKOFF * (attempt + 1))

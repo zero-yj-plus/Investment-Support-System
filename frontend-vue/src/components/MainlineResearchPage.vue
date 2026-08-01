@@ -71,7 +71,7 @@ defineExpose({ refresh })
     <section class="panel mainline-governance" aria-labelledby="mainline-governance-title"><header><div><p class="eyebrow">DATA GOVERNANCE</p><h2 id="mainline-governance-title">数据健康与口径</h2></div><span>{{ governanceNotes.length ? `${governanceNotes.length} 条缺失或降级说明` : '接口未声明缺口' }}</span></header><div><article><strong>真实接口</strong><span>money-effect / crowdedness / mainline / leaders 四路独立请求；失败局部隔离。</span></article><article><strong>单位</strong><span>涨跌、换手、成交占比为百分比；金额为元；赚钱分、拥挤分和主线强度不是同一量纲。</span></article><article><strong>确定性边界</strong><span>排名、分数、等级、梯队和切换信号由服务端返回；前端不重算风险或仓位。</span></article></div><details v-if="governanceNotes.length"><summary>查看全部缺失与降级说明</summary><ul><li v-for="note in governanceNotes" :key="note">{{ note }}</li></ul></details></section>
 
     <footer class="page-footer"><span>本页不消费 Markdown，也不注入原始 HTML；所有接口文本均作为 Vue 文本节点渲染。</span><span>空数组、字段缺失、降级状态和请求失败分别展示，缺失数字保持“—”。</span></footer>
-    <dl class="mainline-stamp" aria-label="主线深研数据日期、取数时点与质量状态"><div><dt>数据日期</dt><dd class="mono">{{ dataDate }}</dd></div><div><dt>证据时点</dt><dd class="mono">{{ evidenceTime }}</dd></div><div><dt>数据状态</dt><dd><DataStatus :state="quality" :label="statusLabel" /></dd></div></dl>
+    <dl class="mainline-stamp data-footnote-stamp" aria-label="主线深研数据日期、取数时点与质量状态"><div><dt>数据日期</dt><dd class="mono">{{ dataDate }}</dd></div><div><dt>证据时点</dt><dd class="mono">{{ evidenceTime }}</dd></div><div><dt>数据状态</dt><dd><DataStatus :state="quality" :label="statusLabel" /></dd></div></dl>
   </section>
 </template>
 

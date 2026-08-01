@@ -69,7 +69,7 @@ defineExpose({ refresh })
       </footer>
     </template>
 
-    <dl class="hotboard-stamp" :class="{ 'is-stale': data?.stale, 'is-degraded': isDegraded }" aria-label="涨停题材数据日期、取数时点、状态与覆盖说明">
+    <dl class="hotboard-stamp data-footnote-stamp" :class="{ 'is-stale': data?.stale, 'is-degraded': isDegraded }" aria-label="涨停题材数据日期、取数时点、状态与覆盖说明">
       <div><dt>数据日期</dt><dd class="mono">{{ data?.data_date || '—' }}<span v-if="!data?.data_date" class="sr-only">数据缺失</span></dd></div>
       <div><dt>取数时点</dt><dd class="mono">{{ data?.ts || '—' }}<span v-if="!data?.ts" class="sr-only">数据缺失</span></dd></div>
       <div><dt>数据状态</dt><dd>{{ statusLabel }}</dd></div>

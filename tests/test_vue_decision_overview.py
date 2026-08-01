@@ -600,7 +600,7 @@ def test_vue_hotboard_route_uses_only_the_real_independent_contract() -> None:
         "first_time", "last_time", "seal_amount", "seal_volume", "turnover_rate", "circ_mv",
     ):
         assert field in types
-    assert "不与驾驶舱主涨停池数字互相回填" in _read("src/components/HotboardThemeFilter.vue")
+    assert "不与驾驶舱主涨停池数字互相回填" not in _read("src/components/HotboardThemeFilter.vue")
     assert "当前确定性结论" not in page
     assert "hotboard-decision" not in page
 

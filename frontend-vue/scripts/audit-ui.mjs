@@ -37,7 +37,9 @@ const industryChainMarkdown = `## 光模块·产业链结构化研究
 ### 5. 国产替代
 - 没有进口依赖、国产认证和份额数据，不输出国产化率。
 
-### 6. 公司映射（TDX 真实成分约束）
+## 可核验证据附录
+
+### 板块与成员口径
 |核验序|代码|名称|TDX板块|现价|涨跌幅|PE|PB|数据可研分|
 |---:|---|---|---|---:|---:|---:|---:|---:|
 |1|300308|审计光通信甲|CPO概念|88.40|2.30%|34.20|5.10|96.00|
@@ -69,7 +71,9 @@ const emptyIndustryChainMarkdown = `## 未匹配产业·产业链结构化研究
 > 来源覆盖：TDX 数据 API / sectors=missing；TDX 数据 API / sector_members=missing。
 > 页首缺口：TDX 板块匹配；需求本质；链条结构与价值捕获。
 
-### 6. 公司映射（TDX 真实成分约束）
+## 可核验证据附录
+
+### 板块与成员口径
 |核验序|代码|名称|TDX板块|现价|涨跌幅|PE|PB|数据可研分|
 |---:|---|---|---|---:|---:|---:|---:|---:|
 |—|—|—|未取得可验证的 TDX 成分关系|—|—|—|—|—|
@@ -2346,6 +2350,42 @@ try {
     pageErrors: watchlistEmptyErrors,
     violations: watchlistEmptyAxe.violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help, nodes: item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })),
   })
+  await watchlistEmptyPage.getByRole('button', { name: '批量导入' }).click()
+  await watchlistEmptyPage.waitForSelector('dialog.watchlist-import[open]')
+  await watchlistEmptyPage.locator('dialog.watchlist-import input[type="file"]').setInputFiles({
+    name: 'Table_5680.txt',
+    mimeType: 'text/plain',
+    buffer: Buffer.from([
+      '初始    代码      名称        所属行业',
+      '1       600519    贵州茅台    白酒',
+      '2       09868     小鹏集团-W  汽车',
+      '3       300750    宁德时代    电池',
+    ].join('\n'), 'utf8'),
+  })
+  await watchlistEmptyPage.waitForFunction(() => document.querySelectorAll('.watchlist-import__rows li').length === 3)
+  const watchlistImportState = await watchlistEmptyPage.evaluate(() => {
+    const dialog = document.querySelector('dialog.watchlist-import')
+    const text = dialog?.textContent || ''
+    return {
+      nativeModal: dialog instanceof HTMLDialogElement && dialog.open,
+      sourceDetected: text.includes('东方财富'),
+      validRows: text.includes('600519') && text.includes('300750') && text.includes('可导入') && text.includes('2'),
+      skippedRows: text.includes('09868') && text.includes('不是可识别的 6 位 A 股代码'),
+      appendOnlyCopy: text.includes('不会清空或覆盖'),
+      noHorizontalOverflow: document.documentElement.scrollWidth <= window.innerWidth,
+    }
+  })
+  const watchlistImportAxe = await watchlistEmptyPage.evaluate(async () => window.axe.run(document, {
+    runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+  }))
+  await watchlistEmptyPage.screenshot({ path: resolve(outputDir, 'watchlist-import-preview-1440.png'), fullPage: true })
+  report.push({
+    page: 'watchlist', scenario: 'import-preview', watchlistImportState,
+    watchlistImportStateComplete: Object.values(watchlistImportState).every(Boolean),
+    pageErrors: watchlistEmptyErrors,
+    violations: watchlistImportAxe.violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help, nodes: item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })),
+  })
+  await watchlistEmptyPage.getByRole('button', { name: '取消' }).click()
   await watchlistEmptyPage.getByRole('button', { name: '添加第一只观察标的' }).click()
   await watchlistEmptyPage.waitForSelector('dialog.watchlist-editor[open]')
   const watchlistModalState = await watchlistEmptyPage.evaluate(() => {
@@ -3063,7 +3103,7 @@ try {
     await chainPage.goto('http://127.0.0.1:4175/#/research?tab=chain', { waitUntil: 'networkidle' })
     await chainPage.locator('#industry-chain-input').fill('光模块')
     await chainPage.locator('.chain-form .primary-button').click()
-    await chainPage.waitForSelector('.chain-company-links a')
+    await chainPage.waitForSelector('.report-diagnosis-link')
     if (variant.name === '1440-dark') {
       await chainPage.locator('.chain-document__actions .primary-button').click()
       await chainPage.waitForSelector('.chain-save-feedback .is-success')
@@ -3085,7 +3125,8 @@ try {
         titleVisible: document.body.innerText.includes('产业链研究'),
         conclusionVisible: document.body.innerText.includes('产业结论：已用 TDX 验证'),
         tradeBoundaryVisible: document.body.innerText.includes('当前是否可交易、价格、仓位和风险必须另用当时实时行情与风险闸复核'),
-        realCompanyLinks: document.querySelectorAll('.chain-company-links a[href*="tab=diagnosis&code="]').length === 2,
+        realCompanyLinks: document.querySelectorAll('.report-diagnosis-link[href*="tab=diagnosis&code="]').length === 2,
+        noCandidateShortcut: !document.querySelector('.chain-company-links'),
         semanticForm: document.querySelector('.chain-form')?.tagName === 'FORM',
         nativeActions: [...document.querySelectorAll('.chain-document__actions button')].every((node) => node.tagName === 'BUTTON'),
         tableContained: Boolean(table && table.scrollWidth >= table.clientWidth),
@@ -3163,7 +3204,7 @@ try {
   await chainEmptyPage.addScriptTag({ content: axeSource })
   const chainEmptyState = await chainEmptyPage.evaluate(() => ({
     trueEmpty: document.body.innerText.includes('真实空结果：TDX 板块或成分关系未匹配'),
-    noCompanyLinks: !document.querySelector('.chain-company-links a'),
+    noCompanyLinks: !document.querySelector('.report-diagnosis-link'),
     noInventedZero: !document.body.innerText.includes('0.00%') && !document.body.innerText.includes('0 元'),
     missingTimeVisible: document.body.innerText.includes('板块目录 缺失'),
     noPageOverflow: document.documentElement.scrollWidth <= window.innerWidth,
@@ -3795,6 +3836,7 @@ const failed = report.some((item) =>
   || item.holdingsFailureStateComplete === false
   || item.watchlistLoadingStateComplete === false
   || item.watchlistEmptyStateComplete === false
+  || item.watchlistImportStateComplete === false
   || item.watchlistModalStateComplete === false
   || item.watchlistFailureStateComplete === false
   || item.diagnosisLoadingStateComplete === false

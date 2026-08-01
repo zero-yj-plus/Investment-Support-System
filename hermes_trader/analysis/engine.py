@@ -218,7 +218,7 @@ def _company_deterministic_trade_section(context: dict, *, market_closed: bool) 
         "本段只复述确定性技术层的观察位；任何动作仍须等待盘中量价确认与风险闸。"
     )
     return "\n".join([
-        "八、交易节奏（确定性复核）",
+        "## 八、交易节奏（确定性复核）",
         "",
         timing,
         "",
@@ -299,6 +299,128 @@ def _sanitize_company_report(
         text,
     )
     return text.strip()
+
+
+def _company_report_evidence_appendix(context: dict) -> str:
+    """用冻结上下文生成结构化附录，不让模型转抄或补造公司数据。"""
+    detail = context.get("个股数据") if isinstance(context.get("个股数据"), dict) else {}
+    quote = detail.get("quote") if isinstance(detail.get("quote"), dict) else {}
+    board = detail.get("board") if isinstance(detail.get("board"), dict) else {}
+    financial = context.get("基本面财务(近一期·TDX主/新浪备)")
+    financial = financial if isinstance(financial, dict) else {}
+    technical = context.get("确定性技术分析(唯一价位依据)")
+    technical = technical if isinstance(technical, dict) else {}
+    disclosures = context.get("官方公告证据(近90日·不参与日内评分)")
+    disclosures = disclosures if isinstance(disclosures, dict) else {}
+    interactions = context.get("交易所互动问答(近90日·Tier3·不参与日内评分)")
+    interactions = interactions if isinstance(interactions, dict) else {}
+
+    def cell(value) -> str:
+        if value in (None, ""):
+            return "—"
+        return str(value).replace("|", "｜").replace("\r", " ").replace("\n", " ").strip()
+
+    def number(value, suffix: str = "", digits: int = 2) -> str:
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            return "—"
+        if parsed != parsed or parsed in {float("inf"), float("-inf")}:
+            return "—"
+        return f"{parsed:.{digits}f}{suffix}"
+
+    def money(value) -> str:
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            return "—"
+        if parsed != parsed or parsed in {float("inf"), float("-inf")}:
+            return "—"
+        if abs(parsed) >= 100_000_000:
+            return f"{parsed / 100_000_000:.2f}亿元"
+        if abs(parsed) >= 10_000:
+            return f"{parsed / 10_000:.2f}万元"
+        return f"{parsed:.2f}元"
+
+    lines = [
+        "## 附录：结构化公司数据与证据",
+        "",
+        "> 本附录由服务端从本轮真实上下文生成；`—` 表示本轮缺失，不补成 0。",
+        "",
+        "### 行情与估值快照",
+        "",
+        "|代码|名称|行业|现价|涨跌幅|换手率|量比|成交额|总市值|PE|PB|来源/时点|",
+        "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|",
+        f"|{cell(quote.get('code') or context.get('个股代码'))}|{cell(quote.get('name'))}|"
+        f"{cell(board.get('industry'))}|{number(quote.get('price'))}|{number(quote.get('change_pct'), '%')}|"
+        f"{number(quote.get('turnover_rate'), '%')}|{number(quote.get('volume_ratio'))}|"
+        f"{money(quote.get('amount'))}|{money(quote.get('total_mv'))}|{number(quote.get('pe'))}|"
+        f"{number(quote.get('pb'))}|{cell(quote.get('source'))} / {cell(quote.get('as_of'))}|",
+        "",
+        "### 最近报告期财务摘要",
+        "",
+        "|报告期|ROE|毛利率|营收同比|净利同比|资产负债率|来源|",
+        "|---|---:|---:|---:|---:|---:|---|",
+        f"|{cell(financial.get('end_date'))}|{number(financial.get('roe'), '%')}|"
+        f"{number(financial.get('grossprofit_margin'), '%')}|{number(financial.get('or_yoy'), '%')}|"
+        f"{number(financial.get('netprofit_yoy'), '%')}|{number(financial.get('debt_to_assets'), '%')}|"
+        f"{cell(financial.get('source'))}|",
+        "",
+        "### 确定性技术结构",
+        "",
+        "|维度|状态|分值|摘要|数据源|",
+        "|---|---|---:|---|---|",
+    ]
+    dimensions = technical.get("dimensions") if isinstance(technical.get("dimensions"), list) else []
+    for item in dimensions:
+        if not isinstance(item, dict):
+            continue
+        lines.append(
+            f"|{cell(item.get('label') or item.get('id'))}|{cell(item.get('status'))}|"
+            f"{number(item.get('score'), digits=0)}|{cell(item.get('summary'))}|{cell(item.get('source'))}|"
+        )
+    if not dimensions:
+        lines.append("|—|missing|—|本轮未形成可复算技术结构|—|")
+
+    levels = technical.get("levels") if isinstance(technical.get("levels"), dict) else {}
+    lines.extend([
+        "",
+        f"- 上方观察位：{number(levels.get('resistance'))} 元（{cell(levels.get('resistance_basis'))}）。",
+        f"- 下方观察位：{number(levels.get('support'))} 元（{cell(levels.get('support_basis'))}）。",
+        "",
+        "### 官方公告与互动问答",
+        "",
+        f"- 公告状态：{cell(disclosures.get('state'))}；核验状态：{cell(disclosures.get('verification_state'))}；"
+        f"数据截至：{cell(disclosures.get('data_as_of'))}。",
+    ])
+    disclosure_items = disclosures.get("items") if isinstance(disclosures.get("items"), list) else []
+    for item in disclosure_items[:8]:
+        if isinstance(item, dict):
+            lines.append(
+                f"- 公告 · {cell(item.get('announcement_date'))} · {cell(item.get('title'))} · "
+                f"{cell(item.get('verification'))}"
+            )
+    if not disclosure_items:
+        lines.append("- 本轮未取得可展示的公告标题；这不等于查询窗口内没有公告。")
+    lines.append(
+        f"- 互动问答状态：{cell(interactions.get('state'))}；数据截至：{cell(interactions.get('data_as_of'))}。"
+    )
+    interaction_items = interactions.get("items") if isinstance(interactions.get("items"), list) else []
+    for item in interaction_items[:5]:
+        if not isinstance(item, dict):
+            continue
+        answer = item.get("answer") if item.get("answered") else "未回复"
+        lines.append(
+            f"- 互动 · {cell(item.get('question_pub_date'))} · 问：{cell(item.get('question'))} · "
+            f"答：{cell(answer)}"
+        )
+    if not interaction_items:
+        lines.append("- 本轮未取得可展示的互动问答；这不等于公司没有互动记录。")
+    lines.extend([
+        "",
+        "> 证据边界：公告标题不等于公告全文；互动问答低于法定公告；单期财务不能推出历史趋势。",
+    ])
+    return "\n".join(lines)
 
 def _chain_sector_search_terms(industry: str) -> tuple[str, ...]:
     """兼容旧调用；真实实现由共享产业链内核统一维护。"""
@@ -1836,7 +1958,7 @@ class Engine:
                         "items": [],
                     }
 
-            def gather():
+            def gather_detail():
                 detail = stock.stock_detail(code)
                 # 分时同 stock：每5分钟采样 + 最近30分钟全量，按时间重排控制 token 又不让模型读反尾盘量价
                 minute = detail.get("minute", [])
@@ -1856,46 +1978,66 @@ class Engine:
                     detail.get("flow") if isinstance(detail.get("flow"), dict) else None,
                     detail.get("board") or {},
                 )
+                return detail, technical
 
-                industry_name = detail.get("board", {}).get("industry", "")
-                sectors = market.market_sectors()
-                related = [
-                    s for s in sectors.get("sectors", [])
-                    if industry_name and industry_name in s.get("name", "")
-                ]
+            # 公司主上下文原先把行情、板块、龙虎榜、财务、资金和情绪串行
+            # 放进一个工作线程，任一慢源都会拖住全部结果。现在各源独立有界、
+            # 并行降级，最长等待由最慢的 7 秒行情预算决定。
+            disclosure_task = asyncio.create_task(asyncio.to_thread(gather_disclosures))
+            interaction_task = asyncio.create_task(asyncio.to_thread(gather_interactions))
+            (
+                detail_bundle,
+                sectors,
+                lh,
+                fina,
+                market_flow,
+                market_overview,
+                sentiment,
+            ) = await asyncio.gather(
+                _bounded_thread_call(gather_detail, timeout=7.0, default=({}, {})),
+                _bounded_thread_call(market.market_sectors, timeout=3.0, default={"sectors": []}),
+                _bounded_thread_call(mainforce.longhu, timeout=4.0, default={}),
+                _bounded_thread_call(free_source.fina_indicator, code, timeout=3.0, default=None),
+                _bounded_thread_call(market.market_flow, timeout=3.0, default={"state": "missing"}),
+                _bounded_thread_call(market.market_overview, timeout=3.0, default={"state": "missing"}),
+                _bounded_thread_call(senti.compute_today, self.store, timeout=3.0, default={"state": "missing"}),
+            )
+            detail, technical = detail_bundle
+            detail = detail if isinstance(detail, dict) else {}
+            technical = technical if isinstance(technical, dict) else {}
+            sectors = sectors if isinstance(sectors, dict) else {"sectors": []}
+            lh = lh if isinstance(lh, dict) else {}
+            industry_name = (detail.get("board") or {}).get("industry", "")
+            related = [
+                row for row in (sectors.get("sectors") or [])
+                if isinstance(row, dict) and industry_name and industry_name in str(row.get("name") or "")
+            ]
+            lh_self_list = [r for r in (lh.get("list") or []) if r.get("code") == code]
+            lh_self_inst = [r for r in (lh.get("inst") or []) if r.get("code") == code]
+            if lh_self_list or lh_self_inst:
+                longhu_self = {
+                    "data_date": lh.get("data_date"),
+                    "个股上榜": lh_self_list or "本榜未见该股",
+                    "机构席位净买": lh_self_inst or "无机构专用席位",
+                    "missing": lh.get("missing", []),
+                }
+            else:
+                longhu_self = (
+                    f"该股近期未上龙虎榜（最近交易日 {lh.get('data_date') or '未知'} 龙虎榜中无此代码）"
+                    if lh.get("list") or lh.get("inst")
+                    else "龙虎榜数据不全（未取到当日龙虎榜，无法判断是否上榜）"
+                )
 
-                # 龙虎榜：过滤本 code 上榜记录（个股榜 + 机构席位榜），都没有 → 明确「近期未上龙虎榜」
-                lh = mainforce.longhu()
-                lh_self_list = [r for r in lh.get("list", []) if r.get("code") == code]
-                lh_self_inst = [r for r in lh.get("inst", []) if r.get("code") == code]
-                if lh_self_list or lh_self_inst:
-                    longhu_self = {
-                        "data_date": lh.get("data_date"),
-                        "个股上榜": lh_self_list or "本榜未见该股",
-                        "机构席位净买": lh_self_inst or "无机构专用席位",
-                        "missing": lh.get("missing", []),
-                    }
-                else:
-                    longhu_self = (
-                        f"该股近期未上龙虎榜（最近交易日 {lh.get('data_date') or '未知'} 龙虎榜中无此代码）"
-                        if lh.get("list") or lh.get("inst")
-                        else "龙虎榜数据不全（未取到当日龙虎榜，无法判断是否上榜）"
-                    )
-
-                # 基本面财务：TDX stock_info 主源、新浪公开财务备用。
-                # 供应方只返回部分指标时按缺失处理，不推断未披露字段。
-                from ..data import free_source as _tx  # noqa: PLC0415
-                fina = _tx.fina_indicator(code)
-                return {
+            context = {
                     "今日日期": today,
                     "个股代码": code,
-                    "个股数据": detail,  # 含 quote/分时/日K/board.industry/flow 资金（单位见各字段，价/额/市值=元，幅/换手=%）
+                    "个股数据": detail,
                     "确定性技术分析(唯一价位依据)": technical,
                     "基本面财务(近一期·TDX主/新浪备)": fina or "数据不全（未取到财务，基本面/估值段少下定论、勿臆造）",
                     "所属行业今日表现": related or "未匹配到所属板块行情（数据不全）",
-                    "全市场资金方向": market.market_flow(),
-                    "市场总览": market.market_overview(),
-                    "市场情绪": senti.compute_today(self.store),
+                    "全市场资金方向": market_flow,
+                    "市场总览": market_overview,
+                    "市场情绪": sentiment,
                     "本股龙虎榜": longhu_self,
                     # 北向资金已移除：其净流入实时数据自 2024-08 停止披露，旧源(moneyflow_hsgt)回的是
                     # 沪深港通【成交额】口径(数千亿),当净流入喂 AI 会编造"北向大幅流入"看多结论(铁律红线)。
@@ -1914,13 +2056,9 @@ class Engine:
                 }
 
             # 官方公告与互动问答是独立低频增强，与公司行情/财务主上下文并行。
-            # 主上下文完成后两项合计只额外等 0.5s；官网慢时明确降级，不阻塞 AI 首字。
-            base_task = asyncio.create_task(asyncio.to_thread(gather))
-            disclosure_task = asyncio.create_task(asyncio.to_thread(gather_disclosures))
-            interaction_task = asyncio.create_task(asyncio.to_thread(gather_interactions))
-            context = await base_task
+            # 主上下文完成后两项合计只额外等 0.8s；官网慢时明确降级，不阻塞 AI 首字。
             done, pending = await asyncio.wait(
-                {disclosure_task, interaction_task}, timeout=0.5
+                {disclosure_task, interaction_task}, timeout=0.8
             )
             for task in pending:
                 task.cancel()
@@ -2131,7 +2269,8 @@ class Engine:
             + "。第2段必须用简洁 Markdown 表格展示『环节｜主要参与者类型｜核心任务｜价值来源｜向下游传导』，"
             "且至少覆盖上游关键输入、中游制造/集成、下游系统/渠道和终端应用，不能把模块组装误写成终端需求；"
             "第3段解释利润为什么向某些环节集中；第5段按替代难度和路径展开；"
-            "第7段给出少而关键的观察指标；第8段至少列三条失效条件。全文不超过2200个中文字。"
+            "第3至5段分别至少写两段完整分析；第7段给出少而关键且可持续跟踪的观察指标；"
+            "第8段至少列四条失效条件。全文建议3000至4200个中文字，避免只有提纲式短句。"
             "结尾不要再写数据清单或验证标签。"
             "\n\n【仅供服务端约束公司名称的候选池 JSON】\n"
             + json.dumps(evidence_base, ensure_ascii=False, default=str)
@@ -2384,7 +2523,7 @@ class Engine:
         # 复读标题常**粘在行中间**，故不锚行首、只认「# +标题」子串；下发留 guard 尾缓冲防跨 chunk 漏检。
         guard = "# 重组事件深度拆解" if mode == "restructuring" else ""
         guard_tail = len(guard) + 160   # 留尾=guard+160字：防标题跨 chunk 漏检 + 截停时回收粘连残句
-        output_cap = 6000 if mode == "chain" else None
+        output_cap = 12000 if mode == "chain" else None
         company_market_closed = False
         if mode == "company":
             current_cn = now_cn()
@@ -2472,6 +2611,7 @@ class Engine:
                         market_closed=company_market_closed,
                     )
                     if company_content:
+                        company_content += "\n\n" + _company_report_evidence_appendix(ctx)
                         emitted = True
                         yield {"delta": company_content}
                 if emitted:

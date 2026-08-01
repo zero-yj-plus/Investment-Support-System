@@ -44,7 +44,10 @@ function reset() {
 <template>
   <section class="panel screener-filters" aria-labelledby="screener-filter-title">
     <header class="screener-section-heading">
-      <div><p class="eyebrow">筛选输入</p><h2 id="screener-filter-title">设置筛选条件</h2></div>
+      <div class="screener-heading-title">
+        <h2 id="screener-filter-title">设置筛选条件</h2>
+        <span>策略预设 · 选择后会回填真实条件，可继续调整</span>
+      </div>
       <span>空值表示不限制 · 数字不会自动补 0</span>
     </header>
 
@@ -54,7 +57,7 @@ function reset() {
       </div>
 
       <fieldset class="screener-fieldset screener-presets-fieldset">
-        <legend>策略预设 · 选择后会回填真实条件，可继续调整</legend>
+        <legend class="sr-only">筛选策略预设</legend>
         <div class="screener-presets" role="group" aria-label="筛选策略预设">
           <button
             v-for="preset in presets"
@@ -116,7 +119,12 @@ function reset() {
       </fieldset>
 
       <details class="screener-advanced">
-        <summary>高级条件 <span>估值、行业、板块与排除项</span></summary>
+        <summary>
+          <span class="screener-advanced-label"><strong>高级条件</strong><span>估值、行业、板块与排除项</span></span>
+          <svg class="screener-advanced-icon" aria-hidden="true" viewBox="0 0 20 20" fill="none">
+            <path d="m5 7.5 5 5 5-5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </summary>
         <div class="screener-advanced-body">
           <fieldset class="screener-fieldset">
             <legend>估值与行业</legend>
@@ -170,16 +178,18 @@ function reset() {
 
 <style scoped>
 .screener-filters { min-width: 0; overflow: hidden; }
-.screener-section-heading { display: flex; min-height: 68px; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+.screener-section-heading { display: flex; min-height: 56px; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 16px; border-bottom: 1px solid var(--border); }
+.screener-heading-title { display: flex; min-width: 0; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
 .screener-section-heading h2 { margin: 0; font-size: 18px; }
+.screener-heading-title > span { color: var(--text-3); font-size: 12px; font-weight: 550; }
 .screener-section-heading > span { color: var(--text-3); font-size: 12px; text-align: right; }
-#screener-filter-form { display: grid; gap: 14px; padding: 14px; }
+#screener-filter-form { display: grid; gap: 10px; padding: 12px 14px; }
 .screener-form-alert { display: grid; gap: 2px; padding: 9px 11px; border: 1px solid var(--danger); border-radius: var(--radius-sm); background: color-mix(in srgb, var(--danger) 7%, var(--surface)); }
 .screener-form-alert span { color: var(--text-2); font-size: 13px; }
 .screener-fieldset { min-width: 0; padding: 0; border: 0; }
-.screener-fieldset legend { width: 100%; margin-bottom: 8px; color: var(--text-3); font-size: 12px; font-weight: 750; letter-spacing: .08em; }
+.screener-fieldset legend { width: 100%; margin-bottom: 6px; color: var(--text-3); font-size: 12px; font-weight: 750; letter-spacing: .08em; }
 .screener-presets { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
-.screener-preset { display: grid; min-height: 68px; align-content: center; gap: 3px; padding: 9px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); color: var(--text); text-align: left; cursor: pointer; }
+.screener-preset { display: grid; min-height: 60px; align-content: center; gap: 2px; padding: 7px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); color: var(--text); text-align: left; cursor: pointer; }
 .screener-preset:hover { border-color: var(--border-strong); background: var(--surface-3); }
 .screener-preset.is-active { border-color: var(--accent); background: var(--accent-dim); }
 .screener-preset strong { font-size: 14px; }
@@ -196,8 +206,14 @@ function reset() {
 .screener-range-field > label:not(.screener-field-label) { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .screener-range-field > span[aria-hidden="true"] { color: var(--text-3); font-size: 12px; }
 .screener-advanced { overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); }
-.screener-advanced summary { display: flex; min-height: 44px; align-items: center; gap: 8px; padding: 8px 12px; color: var(--text); font-weight: 720; cursor: pointer; }
-.screener-advanced summary span { color: var(--text-3); font-size: 13px; font-weight: 500; }
+.screener-advanced summary { display: flex; min-height: 44px; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 12px; color: var(--text); cursor: pointer; }
+.screener-advanced summary::marker { content: ""; }
+.screener-advanced summary::-webkit-details-marker { display: none; }
+.screener-advanced-label { display: inline-flex; min-width: 0; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
+.screener-advanced-label strong { font-size: 14px; font-weight: 750; }
+.screener-advanced-label > span { color: var(--text-3); font-size: 13px; font-weight: 500; }
+.screener-advanced-icon { width: 20px; height: 20px; flex: 0 0 auto; color: var(--accent); transition: transform 180ms ease; }
+.screener-advanced[open] .screener-advanced-icon { transform: rotate(180deg); }
 .screener-advanced-body { display: grid; gap: 14px; padding: 12px; border-top: 1px solid var(--border); }
 .screener-checkbox-grid { display: flex; flex-wrap: wrap; gap: 8px; }
 .screener-checkbox-grid label { display: inline-flex; min-height: 44px; align-items: center; gap: 7px; padding: 6px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); color: var(--text-2); cursor: pointer; }
@@ -208,10 +224,12 @@ function reset() {
 @media (max-width: 860px) { .screener-filter-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .screener-presets { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 720px) {
   .screener-section-heading, .screener-form-actions { align-items: stretch; flex-direction: column; }
+  .screener-heading-title { align-items: flex-start; flex-direction: column; gap: 2px; }
   .screener-section-heading > span { text-align: left; }
   .screener-filter-grid { grid-template-columns: minmax(0, 1fr); }
   .screener-presets { grid-template-columns: minmax(0, 1fr); }
   .screener-form-actions .secondary-button { width: 100%; }
   .screener-checkbox-grid { display: grid; grid-template-columns: minmax(0, 1fr); }
 }
+@media (prefers-reduced-motion: reduce) { .screener-advanced-icon { transition: none; } }
 </style>

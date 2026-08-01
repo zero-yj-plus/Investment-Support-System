@@ -84,7 +84,7 @@ defineExpose({ refresh })
       </footer>
     </template>
 
-    <dl class="sentiment-page__stamp" :class="{ 'is-stale': stale, 'is-degraded': degraded }" aria-label="舆情事件数据日期、抓取时点、状态与覆盖说明">
+    <dl class="sentiment-page__stamp data-footnote-stamp" :class="{ 'is-stale': stale, 'is-degraded': degraded }" aria-label="舆情事件数据日期、抓取时点、状态与覆盖说明">
       <div><dt>最新事件</dt><dd class="mono">{{ data?.latest_event_time || '—' }}<span v-if="!data?.latest_event_time" class="sr-only">数据缺失</span></dd></div>
       <div><dt>最近抓取</dt><dd class="mono">{{ data?.fetched_at || data?.cn_fetched_at || '—' }}<span v-if="!data?.fetched_at && !data?.cn_fetched_at" class="sr-only">数据缺失</span></dd></div>
       <div><dt>数据状态</dt><dd>{{ statusLabel }}</dd></div>

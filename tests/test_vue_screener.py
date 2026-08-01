@@ -60,6 +60,8 @@ def test_vue_screener_preserves_units_and_missing_semantics() -> None:
         "页面不生成买入、风险或仓位结论",
     ):
         assert phrase in combined
+    assert "下一步是逐只进入个股诊断；筛选结果本身不是推荐。" not in page
+    assert "普通筛选最多返回前 300 只；接口最长等待 30 秒。" not in page
     assert "value == null || value === ''" in formatter
     assert "return parsed == null ? '—'" in formatter
     assert "payload.ok === false" in composable

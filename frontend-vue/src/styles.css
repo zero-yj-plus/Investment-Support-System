@@ -370,6 +370,48 @@ h1, h2, h3, p { overflow-wrap: anywhere; }
 .skeleton-line::after, .skeleton-block::after, .skeleton-card::after { position: absolute; inset: 0; background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--text) 8%, transparent), transparent); content: ""; transform: translateX(-100%); animation: shimmer 1.4s infinite; }
 .page-footer { display: flex; justify-content: space-between; gap: 16px; padding: 15px 2px 0; color: var(--text-3); font-size: 13px; }
 
+/* Page-bottom data provenance is supporting context, not primary content. */
+#app .data-footnote-stamp {
+  width: min(100%, 460px);
+  min-width: 0;
+  justify-self: end;
+  gap: 2px 6px;
+  padding: 3px 5px;
+  border-radius: 4px;
+  color: var(--text-3);
+}
+#app .data-footnote-stamp > div { min-width: 0; }
+#app .data-footnote-stamp dt {
+  color: var(--text-3);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.15;
+}
+#app .data-footnote-stamp dd {
+  margin-top: 0;
+  color: var(--text-3);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.2;
+}
+#app .data-footnote-stamp .data-status {
+  min-height: 18px;
+  gap: 3px;
+  padding: 0 5px;
+  font-size: 12px;
+  font-weight: 550;
+}
+#app .data-footnote-stamp .data-status__dot { width: 4px; height: 4px; border-width: 1px; }
+#app .data-footnote-stamp .hotboard-stamp__coverage,
+#app .data-footnote-stamp .forecast-stamp__freshness {
+  gap: 3px;
+  padding-top: 2px;
+}
+
+@media (max-width: 720px) {
+  #app .data-footnote-stamp { width: 100%; justify-self: stretch; }
+}
+
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes shimmer { to { transform: translateX(100%); } }
 

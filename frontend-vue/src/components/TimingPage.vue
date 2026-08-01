@@ -177,7 +177,7 @@ defineExpose({ refresh })
       </footer>
     </template>
 
-    <dl class="timing-stamp" :class="{ 'is-stale': data?.stale || data?.fear_greed?.stale }" aria-label="资金择时数据日期、取数时点与质量状态">
+    <dl class="timing-stamp data-footnote-stamp" :class="{ 'is-stale': data?.stale || data?.fear_greed?.stale }" aria-label="资金择时数据日期、取数时点与质量状态">
       <div><dt>数据日期</dt><dd class="mono">{{ data?.data_date || data?.fear_greed?.data_date || '—' }}</dd></div>
       <div><dt>取数时点</dt><dd class="mono">{{ data?.ts || '—' }}</dd></div>
       <div><dt>数据状态</dt><dd><DataStatus :state="quality" :label="statusLabel" /></dd></div>

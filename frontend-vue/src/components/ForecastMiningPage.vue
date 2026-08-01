@@ -135,7 +135,7 @@ defineExpose({ refresh })
       </footer>
     </template>
 
-    <dl class="forecast-stamp" :class="{ 'is-degraded': partialNotes.length, 'is-unavailable': unavailable }" aria-label="业绩预告报告期、服务端时点、数据状态与新鲜度说明">
+    <dl class="forecast-stamp data-footnote-stamp" :class="{ 'is-degraded': partialNotes.length, 'is-unavailable': unavailable }" aria-label="业绩预告报告期、服务端时点、数据状态与新鲜度说明">
       <div><dt>报告期</dt><dd class="mono">{{ formatCompactDate(data?.period) }}<span v-if="!data?.period" class="sr-only">报告期缺失</span></dd></div>
       <div><dt>服务端计算时点</dt><dd class="mono">{{ data?.ts || '—' }}<span v-if="!data?.ts" class="sr-only">时点缺失</span></dd></div>
       <div><dt>数据状态</dt><dd>{{ statusLabel }}</dd></div>

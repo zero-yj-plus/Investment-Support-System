@@ -104,7 +104,7 @@ defineExpose({ refresh })
       <span>风险、动作、仓位上限与价格条件均由服务端返回，前端不重算。</span>
     </footer>
 
-    <dl class="diagnosis-stamp" :class="{ 'is-stale': diagnosis?.analysis_pipeline?.quote_stale }" aria-label="诊断标的、数据时点与质量">
+    <dl class="diagnosis-stamp data-footnote-stamp" :class="{ 'is-stale': diagnosis?.analysis_pipeline?.quote_stale }" aria-label="诊断标的、数据时点与质量">
       <div><dt>诊断标的</dt><dd class="mono">{{ requestedCode || '尚未选择' }}</dd></div>
       <div><dt>关键时点</dt><dd class="mono">{{ dataDate ? formatBeijingTime(dataDate) : '—' }}</dd></div>
       <div><dt>依据状态</dt><dd><DataStatus :state="diagnosis ? quality : 'partial'" :label="diagnosis ? statusLabel : '等待诊断'" /></dd></div>

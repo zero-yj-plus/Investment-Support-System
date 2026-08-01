@@ -45,7 +45,7 @@ const conclusion = computed(() => {
   if (!response.value) return { eyebrow: '尚未形成结论', title: '先设置条件，再执行一次全市场筛选', detail: '页面不会预载候选或使用示例数据。' }
   if (response.value.ok === false) return { eyebrow: '本批次不可用', title: '行情或股票池覆盖未达到规则门槛', detail: '不展示候选，不把局部数据冒充全市场结果。' }
   if (!stocks.value.length) return { eyebrow: '本批次无命中', title: '返回真实空数组', detail: response.value.missing?.length ? '同时存在局部缺失，不能断言全市场没有候选。' : '可调整条件后重新执行。' }
-  return { eyebrow: '确定性候选已形成', title: `命中 ${formatInteger(response.value.matched)} 只，当前展示 ${formatInteger(response.value.returned)} 只`, detail: '下一步是逐只进入个股诊断；筛选结果本身不是推荐。' }
+  return { eyebrow: '确定性候选已形成', title: `命中 ${formatInteger(response.value.matched)} 只，当前展示 ${formatInteger(response.value.returned)} 只`, detail: '' }
 })
 
 async function submit() {
@@ -68,7 +68,7 @@ defineExpose({ refresh })
       <div class="screener-decision-copy">
         <p class="eyebrow">{{ conclusion.eyebrow }}</p>
         <h2 id="screener-decision-title">{{ conclusion.title }}</h2>
-        <p>{{ conclusion.detail }}</p>
+        <p v-if="conclusion.detail">{{ conclusion.detail }}</p>
       </div>
       <dl class="screener-decision-stats" aria-label="本次筛选命中与覆盖摘要">
         <div><dt>命中</dt><dd class="mono">{{ formatInteger(response?.matched) }}<small v-if="response?.matched != null"> 只</small></dd></div>
@@ -79,7 +79,6 @@ defineExpose({ refresh })
         <button class="primary-button" type="submit" form="screener-filter-form" :disabled="loading" :aria-busy="loading">
           {{ loading ? '筛选进行中' : response ? '按当前条件重新筛选' : '开始筛选' }}
         </button>
-        <small>普通筛选最多返回前 300 只；接口最长等待 30 秒。</small>
       </div>
     </section>
 
@@ -108,7 +107,7 @@ defineExpose({ refresh })
       <span>缺失、降级、陈旧、真实空数组和接口失败分别展示；任何缺失值都不补 0。</span>
     </footer>
 
-    <dl class="screener-stamp" aria-label="条件选股数据日期、生成时点与依据状态">
+    <dl class="screener-stamp data-footnote-stamp" aria-label="条件选股数据日期、生成时点与依据状态">
       <div><dt>数据日期</dt><dd class="mono">{{ response?.trade_date || '—' }}</dd></div>
       <div><dt>生成时点</dt><dd class="mono">{{ response?.ts ? formatDateTime(response.ts) : '—' }}</dd></div>
       <div><dt>依据状态</dt><dd><DataStatus :state="quality" :label="qualityLabel" /></dd></div>
@@ -135,9 +134,8 @@ defineExpose({ refresh })
 .screener-decision-stats dt { color: var(--text-3); font-size: 12px; }
 .screener-decision-stats dd { margin: 3px 0 0; color: var(--text); font-size: 20px; font-weight: 760; }
 .screener-decision-stats small { font-family: Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; font-size: 12px; }
-.screener-primary-action { display: grid; align-content: center; gap: 5px; padding: 12px; background: var(--surface-2); }
+.screener-primary-action { display: grid; align-content: center; padding: 8px 12px; background: var(--surface-2); }
 .screener-primary-action .primary-button { width: 100%; }
-.screener-primary-action small { color: var(--text-3); font-size: 12px; line-height: 1.45; }
 .screener-footer { padding-top: 0; }
 @media (max-width: 1240px) {
   .screener-intro { align-items: stretch; flex-direction: column; gap: 12px; }

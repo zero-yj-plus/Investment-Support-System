@@ -92,9 +92,10 @@ def test_chain_analysis_only_maps_real_tdx_members_and_score_is_recomputable() -
     analysis = _sample_analysis()
 
     assert analysis["schema_version"] == "industry-chain-analysis.v1"
-    assert analysis["coverage"]["tdx_member_count"] == 3
+    # 存在“机器人”精确板块时，不再合并“机器人概念”的宽泛成员池。
+    assert analysis["coverage"]["tdx_member_count"] == 2
     assert {row["code"] for row in analysis["company_mapping"]} == {
-        "000001", "000002", "000003",
+        "000001", "000002",
     }
     assert "999999" not in {row["code"] for row in analysis["company_mapping"]}
     assert all(row["verification"] == "tdx_sector_member" for row in analysis["company_mapping"])
@@ -166,6 +167,38 @@ def test_public_board_normalization_uses_real_constituents_and_names() -> None:
     assert [row["code"] for row in matched] == ["BK1234"]
     assert codes == ["300001", "000002"]
     assert names == {"300001": "甲光电", "000002": "乙通信"}
+
+
+def test_exact_sector_name_suppresses_broad_contains_matches() -> None:
+    catalog = {
+        "881459.SH": {"code": "881459.SH", "name": "电力", "kind": "industry"},
+        "880753.SH": {"code": "880753.SH", "name": "绿色电力", "kind": "concept"},
+        "880999.SH": {"code": "880999.SH", "name": "虚拟电厂", "kind": "concept"},
+    }
+
+    matched = industry_chain.match_sector_catalog("电力", catalog)
+    public = industry_chain._public_board_matches(
+        "电力",
+        [
+            {"板块代码": "BK1", "板块名称": "电力", "_kind": "industry"},
+            {"板块代码": "BK2", "板块名称": "绿色电力", "_kind": "concept"},
+        ],
+    )
+
+    assert [row["name"] for row in matched] == ["电力"]
+    assert [row["name"] for row in public] == ["电力"]
+
+
+def test_alias_exact_matches_remain_available_without_literal_subject_board() -> None:
+    catalog = {
+        "BK-CPO": {"code": "BK-CPO", "name": "CPO概念", "kind": "concept"},
+        "BK-OPTICAL": {"code": "BK-OPTICAL", "name": "光通信", "kind": "industry"},
+        "BK-NOISE": {"code": "BK-NOISE", "name": "光通信设备扩展", "kind": "concept"},
+    }
+
+    matched = industry_chain.match_sector_catalog("光模块", catalog)
+
+    assert {row["name"] for row in matched} == {"CPO概念", "光通信"}
 
 
 def test_public_board_adapter_calls_keyless_akshare_endpoints(monkeypatch) -> None:
@@ -282,13 +315,32 @@ def test_collect_analysis_falls_back_when_tdx_members_are_empty(monkeypatch) -> 
             "verification": "public_board_member",
         },
     )
+    monkeypatch.setattr(
+        industry_chain.stock,
+        "quick_quotes",
+        lambda codes: {
+            "300001": {
+                "code": "300001",
+                "name": "甲光电",
+                "price": 25.6,
+                "change_pct": 2.1,
+                "amount": 880_000_000,
+                "total_mv": 30_000_000_000,
+                "pe": 31.2,
+                "pb": 4.8,
+                "source": "测试批量行情",
+                "as_of": "2026-07-28 10:00:00",
+            }
+        },
+    )
 
     analysis = asyncio.run(industry_chain.collect_analysis("光模块"))
 
     assert analysis["coverage"]["verified_member_count"] == 1
     assert analysis["coverage"]["membership_verification"] == "public_board_member"
     assert analysis["company_mapping"][0]["name"] == "甲光电"
-    assert analysis["company_mapping"][0]["quote"]["price"] is None
+    assert analysis["company_mapping"][0]["quote"]["price"] == 25.6
+    assert analysis["company_mapping"][0]["valuation"]["total_mv"] == 30_000_000_000
     assert analysis["data_as_of"]["sector_market"] is None
     assert analysis["company_evidence_refresh"]["status"] == "disabled"
 
@@ -351,7 +403,9 @@ def test_governed_chain_stream_accepts_v2_and_model_only_adds_explanation() -> N
     rendered = "".join(chunks)
     assert chunks[0].startswith("# 产业链上下游研究")
     assert "### 1. 需求本质" in rendered
-    assert "## 可核验证据附录" not in rendered
+    assert "## 可核验证据附录" in rendered
+    assert "公司经营与官方证据快照" in rendered
+    assert "数据可研分" in rendered
     assert "研究说明：本报告以产业结构、上下游传导和商业逻辑为主" in rendered
     assert FakeState.engine.explanation_calls == 1
 
@@ -393,8 +447,48 @@ def test_governed_chain_stream_still_analyzes_industry_with_an_empty_candidate_p
     rendered = "".join(asyncio.run(collect()))
     assert FakeState.engine.explanation_calls == 1
     assert "行业级分析正文" in rendered
-    assert "## 可核验证据附录" not in rendered
+    assert "## 可核验证据附录" in rendered
     assert "产业结构、上下游传导和商业逻辑" in rendered
+
+
+def test_governed_chain_without_model_returns_concise_honest_failure() -> None:
+    analysis = _sample_analysis()
+
+    class FakeEngine:
+        async def industry_chain_analysis(self, _industry: str) -> dict:
+            return analysis
+
+    class FakeState:
+        engine = FakeEngine()
+
+    async def collect():
+        return "".join([
+            chunk
+            async for chunk in _governed_chain_chat_stream(
+                FakeState(), "机器人", "完整研究", model_available=False,
+            )
+        ])
+
+    rendered = asyncio.run(collect())
+    assert "# 产业链研究未完成" in rendered
+    assert "当前模型连接或能力预检不可用" in rendered
+    assert "## 已取得的可靠证据" in rendered
+    assert "### 1. 核心需求与驱动力" not in rendered
+    assert "## 可核验证据附录" not in rendered
+    assert "数据可研分" not in rendered
+
+
+def test_generation_fallback_does_not_masquerade_as_research_report() -> None:
+    rendered = industry_chain.render_generation_fallback(
+        _sample_analysis(), reason="模型输出被长度终态截断。",
+    )
+
+    assert "模型输出被长度终态截断" in rendered
+    assert "精确匹配板块" in rendered
+    assert "去重板块成员" in rendered
+    assert "未输出利润池、产业卡点、国产替代或公司受益排序" in rendered
+    assert "## 产业结论" not in rendered
+    assert "### 6. A股映射思路" not in rendered
 
 
 def _valid_model_research() -> str:
@@ -462,6 +556,36 @@ def test_model_receives_code_sorted_pool_without_data_researchability_rank() -> 
     assert "candidate_pool_order" in system
     assert "data_researchability_score" not in system
     assert system.index("000001") < system.index("000002")
+
+
+def test_structured_appendix_contains_company_market_financial_and_official_evidence() -> None:
+    analysis = _sample_analysis()
+    company = analysis["company_mapping"][0]
+    company["company_evidence"] = {
+        "status": "available",
+        "matched_terms": ["机器人"],
+        "financial_snapshot": {
+            "end_date": "20260331",
+            "roe": 8.2,
+            "grossprofit_margin": 31.5,
+            "or_yoy": 12.3,
+            "netprofit_yoy": 15.8,
+            "debt_to_assets": 42.0,
+        },
+        "formal_disclosures": [{
+            "announcement_date": "2026-07-20",
+            "title": "关于机器人业务进展的公告",
+        }],
+    }
+
+    rendered = industry_chain.render_evidence_appendix(analysis)
+
+    assert "成交额" in rendered
+    assert "总市值" in rendered
+    assert "公司经营与官方证据快照" in rendered
+    assert "20260331" in rendered
+    assert "31.50" in rendered
+    assert "关于机器人业务进展的公告" in rendered
 
 
 def test_model_company_section_is_replaced_by_frozen_candidate_pool() -> None:

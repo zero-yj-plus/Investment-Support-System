@@ -29,6 +29,7 @@ from .jobs.mainline_sampler import register as register_mainline_sampler
 from .jobs.news_event_observer import register as register_news_event_observer
 from .jobs.official_longhu_collector import register as register_official_longhu_collector
 from .knowledge.store import Store
+from .research_runs import ResearchRunManager
 from .simulation import SimulationStore
 
 log = logging.getLogger("hermes")
@@ -176,6 +177,7 @@ def create_app(config_path: str) -> FastAPI:
     else:
         notifier = FeishuPusher(config)
     engine = Engine(config, store, hermes, notifier)
+    research_runs = ResearchRunManager(config.data_dir)
     # 分析层只消费统一网关契约；不在各页再各自直连行情源。
     engine.market_gateway = market_gateway
     # 技术选股只读客户隔离的本地缓存；网络采集由盘后任务或显式刷新触发。
@@ -221,6 +223,7 @@ def create_app(config_path: str) -> FastAPI:
         except Exception:
             log.exception("飞书互动机器人启动失败（不影响主服务）")
         yield
+        await research_runs.shutdown()
         scheduler.shutdown(wait=False)
 
     app = FastAPI(title="Hermes 交易陪跑", version=__version__, lifespan=lifespan)
@@ -234,6 +237,7 @@ def create_app(config_path: str) -> FastAPI:
     app.state.agent_runs = hermes.run_store
     app.state.feishu = notifier   # 活动推送器（飞书 webhook 或 Hermes 网关，同接口鸭子类型）
     app.state.engine = engine
+    app.state.research_runs = research_runs
     app.state.scheduler = scheduler
     app.state.market_gateway = market_gateway
     app.state.evidence_store = market_gateway.store if market_gateway is not None else None

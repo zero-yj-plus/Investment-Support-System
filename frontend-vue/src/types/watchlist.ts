@@ -84,6 +84,38 @@ export interface WatchlistMutationResponse {
   error?: string
 }
 
+export interface WatchlistImportItem {
+  code: string
+  name: string
+  sector: string
+}
+
+export interface WatchlistImportSkippedRow {
+  line: number
+  code: string
+  name: string
+  reason: string
+}
+
+export interface ParsedWatchlistImport {
+  source: 'eastmoney' | 'ths'
+  totalRows: number
+  items: WatchlistImportItem[]
+  skipped: WatchlistImportSkippedRow[]
+}
+
+export interface WatchlistImportResponse {
+  ok: boolean
+  added_count?: number
+  duplicate_count?: number
+  invalid_count?: number
+  added_codes?: string[]
+  duplicate_codes?: string[]
+  invalid?: Array<{ index?: number; code?: string; reason?: string }>
+  zone_status?: 'queued' | string | null
+  error?: string
+}
+
 export interface WatchlistInput {
   code: string
   name: string

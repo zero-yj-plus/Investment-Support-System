@@ -85,6 +85,7 @@ flowchart LR
 - 行情页：`frontend-vue/src/composables/*.ts` → `services/api.ts` → `api/routes.py` →
   `data/runtime_gateway.py` 或具体数据模块 → 证据/质量字段 → 前端角标。
 - 报告：API/调度器 → `analysis/engine.py` 聚合真实上下文 → `agent/prompts.py` → `HermesClient` → 数字/建议治理闸 → `knowledge/store.py` 定稿 → 交付回执。
+- 产业链/公司研究：Vue 创建 `/api/research/runs` → `research_runs.py` 持有后台协程并按客户落盘 → Engine 生成与治理 → Vue 轮询任务；切页不取消，失败时保留最近成功正文。
 - 个股诊断：`/api/diagnose` → `analysis/diagnosis.py` → `data/stock.py` 与证据网关 → 结构化决策卡；深度解释可调用模型，快速路径不依赖模型。
 - 推荐闭环：建议草案 → 风险闸/人工批准 → append-only 推荐事件 → 到期真实价格回验 → T0/T1/T2/T5 统计。
 - 模拟执行：前端意图 → 服务端重新取风险和行情 → 人工批准 → 本地模拟成交事件；客户端传来的“市场价格”不会被信任。
@@ -167,6 +168,7 @@ flowchart LR
 | `mcp_server.py` | 独立 stdio MCP Server；暴露市场、资金、决策、公告、任务、回执等只读工具。 |
 | `notify.py` | `GatewaySender`，通过 Hermes `/sethome` 绑定的唯一 home channel 推送。 |
 | `product_state.py` | 北京时间交易阶段、推荐路由和旧路由重定向的确定性状态机。 |
+| `research_runs.py` | 产业链/单公司持久化后台任务；原子保存状态和正文、去重活跃任务、显式取消及启动期中断收口。 |
 | `simulation.py` | 无券商连接的 SQLite 模拟订单状态机、幂等和追加式审计事件。 |
 
 ### 7.2 `agent/`：模型接入层
@@ -408,8 +410,8 @@ FastAPI `/api`，不依赖旧前端。旧版默认不可访问，仅配置开启
 条件选股页仅在用户明确提交时调用 `/api/screen`，展示服务端 80% 全市场覆盖门槛、确定性候选和行业低频补全状态；表单市值/成交额使用亿元入参，结果保持元口径。八个数值列表头使用原生按钮重排当前返回行，缺失值保持末位且不改变候选集合。候选通过真实链接进入个股诊断，加入观察池只准确展示接受与排队状态；页面不把候选包装为推荐、风险或仓位结论。
 技术面选股页读取 `/api/technical-screen/catalog`、`/status` 与保存方案，且只在用户明确提交时调用 `/api/technical-screen/query`；显式缓存刷新通过 `/api/technical-screen/refresh` 排队并轮询状态。页面使用前复权本地技术信号缓存，保留事件/状态、两层满足/排除规则、旧方案只读兼容与追加式历史命中；候选仅表示规则命中，不在浏览器生成推荐、仓位或价格结论。
 业绩预告掘金页只读取 `/api/forecast/mining`，展示服务端主板阈值、披露时点、扣非疑点与基数陷阱分池结果；同比单位为百分数，利润与上年基数原始单位为人民币元。页面保持服务端顺序，区分接口失败、`ok:false`、真实空数组、数值缺失与 `missing[]` 部分覆盖；接口未提供独立数据日期或陈旧标记时不得把计算时点称为实时数据。
-产业链研究页仅在用户主动提交时调用 `/api/chat` 的 `mode=chain` SSE，并可显式写入 `/api/knowledge`；页面复用 `chain-research-v2`，把产业结论、交易时点、证据时点、真实空映射和不完整流分开呈现。TDX 成员只证明板块归属，现价单位为元、涨跌幅为百分比、PE/PB 为倍数、数据可研分无量纲且仅用于证据核验排序；前端不重算产业角色、价格、仓位或风险结论。
-公司研究页在用户提交 6 位代码后独立读取 `/api/disclosures/announcements` 与 `/api/interactions/management`，并以 `/api/chat` 的 `mode=company` SSE 生成服务端治理后的研究正文；两类官方结构化证据各自降级，不完整流隔离，本地历史只追加。页面不请求或向模型注入盘后 TDX 研究增强，也不从模型正文重算风险等级、仓位上限或价格结论；知识库存入仅表示服务端已接受保存。
+产业链研究页仅在用户主动提交时通过 `/api/research/runs` 创建 `chain` 后台任务，并可显式写入 `/api/knowledge`；页面每 2 秒轮询任务，切页只清理轮询、不取消服务端生成，重新进入时恢复活跃任务或最近成功结果。TDX 成员只证明板块归属，现价单位为元、涨跌幅为百分比、PE/PB 为倍数、数据可研分无量纲且仅用于证据核验排序；前端不重算产业角色、价格、仓位或风险结论。
+公司研究页在用户提交 6 位代码后独立读取 `/api/disclosures/announcements` 与 `/api/interactions/management`，并通过 `/api/research/runs` 创建 `company` 后台任务；页面切换后任务继续运行，重新进入时恢复状态或最近成功正文。两类官方结构化证据各自降级，本地历史只追加；页面不从模型正文重算风险等级、仓位上限或价格结论。
 报告中心读取 `/api/archive/dates`、`/api/reports/{rtype}` 与追加式 `/api/delivery/receipts`，保留六类报告查看、今日 SSE 生成、打印/PDF 和推送提交；页面严格区分真实空报告、局部接口失败、历史 `pushed` 标记、平台接受与最终送达，不从 Markdown 重算风险或仓位结论。
 知识库页只读取 `/api/knowledge`，并通过知识库治理端点新增、批准、拒绝、追加式替代和删除条目；页面保持服务端状态、来源、样本数、版本关系与字段缺失语义，不请求行情、报告或研究接口，也不推断风险、仓位或新鲜度。
 
@@ -422,7 +424,7 @@ FastAPI `/api`，不依赖旧前端。旧版默认不可访问，仅配置开启
 | `src/components/Capital*.vue` | 资金追踪的数据边界、行业/热门股榜单、日内连续采样趋势和局部动作反馈。 |
 | `src/components/MainlineResearchPage.vue`、`MainlineMoneyEffect.vue`、`MainlineCrowdedness.vue`、`MainlineContinuity.vue`、`MainlineLeaders.vue` | 主线深研结论边界、四类结构化证据和各模块独立状态。 |
 | `src/components/HoldingsPage.vue`、`HoldingEditor.vue`、`HoldingsTable.vue` | 我的持仓标题操作、自动成本/市值汇总边界、账本编辑和桌面宽表/移动卡片明细。 |
-| `src/components/WatchlistPage.vue`、`WatchlistItemRow.vue`、`WatchlistEditor.vue` | 观察池紧凑单行列表、服务端双周期价格边界、逐项数据健康与显式核验编辑。 |
+| `src/components/WatchlistPage.vue`、`WatchlistItemRow.vue`、`WatchlistEditor.vue`、`WatchlistImportDialog.vue` | 观察池紧凑单行列表、服务端双周期价格边界、逐项数据健康、显式核验编辑及 TXT 批量导入预览。 |
 | `src/components/TomorrowStrategyPage.vue`、`TomorrowDecisionSummary.vue`、`TomorrowWatchlist.vue`、`TomorrowDataHealth.vue` | 次日策略的风险底座、观察池触发条件、依据健康和安全报告工作区。 |
 | `src/components/StockAsk*.vue` | 专属盘中问股的历史栏、对话、安全消息节点、标的证据与等高输入区。 |
 | `src/components/Diagnosis*.vue` | 个股诊断的代码查询、确定性结论、风险/价格边界、结构化证据与数据治理。 |
@@ -441,20 +443,21 @@ FastAPI `/api`，不依赖旧前端。旧版默认不可访问，仅配置开启
 | `src/composables/useCapitalTracking.ts` | 资金趋势读取、手动快照采集、独立请求控制、可见性刷新和卸载清理。 |
 | `src/composables/useMainlineResearch.ts` | 主线深研四路有界请求、共享底座预热、局部降级、自动刷新和卸载清理。 |
 | `src/composables/useHoldings.ts` | 持仓、批量报价、单票核验与整体保存的独立请求控制、覆盖保护、自动刷新和卸载清理。 |
-| `src/composables/useWatchlist.ts` | 观察池读取、代码核验、逐条 CRUD、区间重算排队、自动刷新与独立请求卸载清理。 |
+| `src/composables/useWatchlist.ts` | 观察池读取、代码核验、逐条 CRUD、原子批量追加、区间重算排队、自动刷新与独立请求卸载清理；`utils/watchlistImport.ts` 负责东方财富/同花顺 TXT 的本地解码、解析和预去重。 |
 | `src/composables/useTomorrowStrategy.ts` | 次日策略报告与观察池的独立请求、SSE 生成、推送提交语义、自动刷新和卸载清理。 |
 | `src/composables/useStockAsk.ts` | 问股核心/增强证据、会话、SSE、附件和生命周期资源的独立控制与局部降级。 |
 | `src/composables/useDiagnosis.ts` | 快速报价与正式诊断的独立请求控制、跨页代码意图、刷新保留和卸载清理。 |
 | `src/composables/useScreener.ts` | 条件筛选与观察池提交的独立请求控制、覆盖/空值语义、结果保留和卸载清理。 |
 | `src/composables/useTechnicalScreener.ts` | 技术信号目录、缓存状态、显式筛选/刷新、方案 CRUD、历史事件的独立请求控制与卸载清理。 |
 | `src/composables/useForecastMining.ts` | 业绩预告单接口读取、防重复刷新、超时、可见性恢复与卸载清理。 |
-| `src/composables/useIndustryChain.ts` | 产业链 SSE、知识库写入、本地 append-only 历史、防重复动作、独立请求控制和卸载清理。 |
-| `src/composables/useCompanyResearch.ts` | 公司研究状态预检、两路官方结构化证据、SSE 正文、知识库写入、追加式历史与独立请求/定时器清理。 |
+| `src/composables/useIndustryChain.ts` | 产业链后台任务创建/恢复/轮询/显式取消、最近成功结果回退、知识库写入和本地 append-only 历史。 |
+| `src/composables/useCompanyResearch.ts` | 公司研究状态预检、两路官方证据、后台任务恢复/轮询/显式取消、最近成功结果回退和知识库写入。 |
 | `src/composables/useReportCenter.ts` | 六类报告读取、历史日期、交付回执、SSE 生成、推送提交及各请求独立取消和生命周期清理。 |
 | `src/composables/useKnowledge.ts` | 知识列表及新增、批准、拒绝、替代、删除请求的独立控制、局部失败保留和卸载清理。 |
 | `src/utils/reportMarkdown.ts` | 把受治理报告 Markdown 解析为安全的 Vue 渲染块和章节目录，不使用原始 HTML 注入。 |
 | `src/styles.css` | 深浅主题、响应式断点、焦点和 reduced-motion 规则。 |
 | `scripts/audit-ui.mjs` | 使用本机 Chrome + axe-core 检查已迁移页面的 375/768/1024/1440 布局、深浅主题、关键状态和 WCAG。 |
+| `scripts/audit-watchlist-import.mjs` | 对观察池 TXT 导入预览执行桌面/375px 布局、格式识别、跳过语义和 axe-core 无障碍门禁。 |
 
 设计来源见 `design-system/wudi-decision-console/MASTER.md` 和页面覆盖文件。
 构建运行 `npm run build`；自动 UI 审计运行 `npm run audit:ui`。

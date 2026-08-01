@@ -150,7 +150,7 @@ defineExpose({ refresh })
       </template>
     </template>
 
-    <dl class="holdings-stamp" :class="{ 'is-degraded': quotesError || hasStaleQuotes || holdingsError }" aria-label="持仓数据日期、关键时点与状态">
+    <dl class="holdings-stamp data-footnote-stamp" :class="{ 'is-degraded': quotesError || hasStaleQuotes || holdingsError }" aria-label="持仓数据日期、关键时点与状态">
       <div><dt>账本状态</dt><dd>{{ loaded ? '已加载' : loading ? '加载中' : '未加载' }}</dd></div>
       <div><dt>报价时点</dt><dd class="mono">{{ quoteStamp }}<span v-if="!quoteAsOf" class="sr-only">时点缺失</span></dd></div>
       <div><dt>报价来源</dt><dd>{{ sourceLabel }}<span v-if="!quoteSources.length" class="sr-only">来源缺失</span></dd></div>
@@ -178,6 +178,7 @@ defineExpose({ refresh })
 .holdings-alert, .holdings-feedback { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 11px 14px; border: 1px solid var(--danger); border-radius: var(--radius); background: var(--surface); }
 .holdings-alert.is-warning { border-color: var(--warning); }
 .holdings-alert > div, .holdings-feedback { display: grid; }
+.holdings-alert.is-warning > div { display: flex; min-width: 0; gap: 8px; overflow-x: auto; white-space: nowrap; }
 .holdings-alert span, .holdings-feedback span { color: var(--text-2); }
 .holdings-feedback { border-color: var(--info); }
 .holdings-feedback.is-error { border-color: var(--danger); }

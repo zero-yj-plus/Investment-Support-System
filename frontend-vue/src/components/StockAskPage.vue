@@ -107,7 +107,7 @@ defineExpose({ refresh })
       <span>本页不提供自由问答、持仓判断或产业链挖掘。</span>
       <span>未完整回答不保存；历史消息只追加，不覆盖既有事实。</span>
     </footer>
-    <dl class="stock-ask-page__stamp" aria-label="问股标的、数据时点与证据状态">
+    <dl class="stock-ask-page__stamp data-footnote-stamp" aria-label="问股标的、数据时点与证据状态">
       <div><dt>当前标的</dt><dd class="mono">{{ selectedCode || '—' }}</dd></div>
       <div><dt>数据时点</dt><dd class="mono">{{ dataStamp }}</dd></div>
       <div><dt>证据状态</dt><dd>{{ healthLabel }}</dd></div>

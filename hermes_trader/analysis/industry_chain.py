@@ -21,6 +21,7 @@ from ..data import (
     free_source,
     official_disclosure,
     official_interaction,
+    stock,
     tdx_api_source as tdx_api,
 )
 from ..data.base import get_ak, now_cn, safe, ttl_cache
@@ -102,7 +103,11 @@ def _public_board_matches(
         if not name:
             continue
         folded = name.casefold()
-        indexes = [
+        exact_indexes = [
+            index for index, term in enumerate(terms)
+            if term.casefold() == folded
+        ]
+        indexes = exact_indexes or [
             index
             for index, term in enumerate(terms)
             if term.casefold() in folded or folded in term.casefold()
@@ -119,7 +124,12 @@ def _public_board_matches(
             "data_date": now_cn().date().isoformat(),
             "source": _PUBLIC_MEMBERSHIP_SOURCE,
             "_term_index": min(indexes),
+            "_exact": bool(exact_indexes),
         })
+    # 存在精确板块时，禁止把“绿色电力”“虚拟电厂”等宽泛包含项并入
+    # “电力”的成员池。只有完全没有精确项时才使用包含匹配兜底。
+    if any(item.get("_exact") for item in matched):
+        matched = [item for item in matched if item.get("_exact")]
     matched.sort(key=lambda item: (
         0 if item["name"] == normalized else 1,
         item["_term_index"],
@@ -255,7 +265,11 @@ def match_sector_catalog(
         if not name:
             continue
         folded = name.casefold()
-        indexes = [
+        exact_indexes = [
+            index for index, term in enumerate(terms)
+            if term.casefold() == folded
+        ]
+        indexes = exact_indexes or [
             index
             for index, term in enumerate(terms)
             if term.casefold() in folded or folded in term.casefold()
@@ -268,7 +282,10 @@ def match_sector_catalog(
             "kind": str(item.get("kind") or "other"),
             "data_date": item.get("data_date"),
             "_term_index": min(indexes),
+            "_exact": bool(exact_indexes),
         })
+    if any(item.get("_exact") for item in matched):
+        matched = [item for item in matched if item.get("_exact")]
     matched.sort(key=lambda item: (
         0 if item["name"] == normalized else 1,
         item["_term_index"],
@@ -1066,9 +1083,14 @@ async def collect_analysis(
             effective_catalog = public_catalog
             matched = public_matched
             member_codes = public_codes
-    # 产业链结构是低频研究，不应等待实时报价或板块盘面。成员名称由 TQ
-    # sector_members / 公开板块成员契约直接提供；行情与估值留空并明确标缺。
-    quotes: dict[str, dict] = {}
+    # 成员关系仍是低频研究底座；只对报告候选做一次有界批量报价，禁止逐股
+    # N+1。行情只进入结构化附录，不改变产业结论或 trade_timing。
+    quotes = await _bounded_call(
+        stock.quick_quotes,
+        sorted(member_codes)[:max(0, int(company_limit))],
+        timeout=3.0,
+        default={},
+    ) if member_codes else {}
     sector_market: dict = {}
     evidence_codes = sorted(member_codes)
     company_evidence, evidence_refresh = _company_evidence_snapshot(
@@ -1091,6 +1113,22 @@ async def collect_analysis(
 def _fmt_number(value: Any, digits: int = 2) -> str:
     number = _number(value)
     return "—" if number is None else f"{number:.{digits}f}"
+
+
+def _fmt_money(value: Any) -> str:
+    number = _number(value)
+    if number is None:
+        return "—"
+    if abs(number) >= 100_000_000:
+        return f"{number / 100_000_000:.2f}亿元"
+    if abs(number) >= 10_000:
+        return f"{number / 10_000:.2f}万元"
+    return f"{number:.2f}元"
+
+
+def _md_cell(value: Any) -> str:
+    text = str(value if value not in (None, "") else "—")
+    return text.replace("|", "｜").replace("\r", " ").replace("\n", " ").strip()
 
 
 def _header_lines(analysis: dict) -> list[str]:
@@ -1131,8 +1169,8 @@ def _header_lines(analysis: dict) -> list[str]:
 
 def _company_table_lines(analysis: dict) -> list[str]:
     lines = [
-        "|核验序|代码|名称|板块集合|公司证据|现价|涨跌幅|PE|PB|数据可研分|",
-        "|---:|---|---|---|---|---:|---:|---:|---:|---:|",
+        "|核验序|代码|名称|板块集合|公司证据|现价|涨跌幅|成交额|总市值|PE|PB|数据可研分|",
+        "|---:|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|",
     ]
     companies = analysis.get("company_mapping") or []
     for row in companies[:10]:
@@ -1151,11 +1189,12 @@ def _company_table_lines(analysis: dict) -> list[str]:
             f"{row.get('name') or '名称待行情补齐'}|{sectors}|"
             f"{evidence_status}|"
             f"{_fmt_number(quote.get('price'))}|{_fmt_number(quote.get('change_pct'))}%|"
+            f"{_fmt_money(quote.get('amount'))}|{_fmt_money(valuation.get('total_mv'))}|"
             f"{_fmt_number(valuation.get('pe'))}|{_fmt_number(valuation.get('pb'))}|"
             f"{_fmt_number(row.get('data_researchability_score'))}|"
         )
     if not companies:
-        lines.append("|—|—|—|未取得可验证的板块成分关系|missing|—|—|—|—|—|")
+        lines.append("|—|—|—|未取得可验证的板块成分关系|missing|—|—|—|—|—|—|—|")
     lines.extend([
         "",
         "- “数据可研分”=公开板块成员验证 + 字段覆盖 + 成交额数据可得性；"
@@ -1163,6 +1202,48 @@ def _company_table_lines(analysis: dict) -> list[str]:
         "- 公司产业链角色、相关收入、订单与国产替代仍须公告/财报正文证明；"
         "板块成分和互动问答关键词本身不作业务背书。",
     ])
+    return lines
+
+
+def _company_evidence_lines(analysis: dict) -> list[str]:
+    """展示已有公司经营证据；没有就诚实保留刷新/缺失状态。"""
+    lines = [
+        "### 公司经营与官方证据快照",
+        "",
+        "|代码|名称|证据状态|财务期|ROE|毛利率|营收同比|净利同比|资产负债率|产业关键词|",
+        "|---|---|---|---|---:|---:|---:|---:|---:|---|",
+    ]
+    rows = analysis.get("company_mapping") or []
+    for row in rows[:10]:
+        evidence = row.get("company_evidence") or {}
+        financial = evidence.get("financial_snapshot") or {}
+        keywords = "、".join(str(item) for item in (evidence.get("matched_terms") or [])) or "—"
+        lines.append(
+            f"|{_md_cell(row.get('code'))}|{_md_cell(row.get('name'))}|"
+            f"{_md_cell(evidence.get('status') or (analysis.get('company_evidence_refresh') or {}).get('status') or 'missing')}|"
+            f"{_md_cell(financial.get('end_date'))}|{_fmt_number(financial.get('roe'))}|"
+            f"{_fmt_number(financial.get('grossprofit_margin'))}|{_fmt_number(financial.get('or_yoy'))}|"
+            f"{_fmt_number(financial.get('netprofit_yoy'))}|{_fmt_number(financial.get('debt_to_assets'))}|"
+            f"{_md_cell(keywords)}|"
+        )
+    if not rows:
+        lines.append("|—|—|missing|—|—|—|—|—|—|—|")
+    lines.extend([
+        "",
+        "- 财务指标均为最近可得报告期原值；单期数据不能推出历史改善或恶化。",
+        "- 产业关键词只来自公告标题或交易所互动问答，构成核验线索，不证明收入占比、订单或产业链角色。",
+    ])
+
+    disclosures: list[str] = []
+    for row in rows[:10]:
+        evidence = row.get("company_evidence") or {}
+        for item in (evidence.get("formal_disclosures") or [])[:2]:
+            disclosures.append(
+                f"- {_md_cell(row.get('name') or row.get('code'))}（{_md_cell(row.get('code'))}）"
+                f"· {_md_cell(item.get('announcement_date'))} · {_md_cell(item.get('title'))}"
+            )
+    lines.extend(["", "### 近期官方公告线索"])
+    lines.extend(disclosures[:12] or ["- 本轮未取得可展示的官方公告标题；不等于公司近期没有公告。"])
     return lines
 
 
@@ -1226,8 +1307,55 @@ def render_evidence_appendix(analysis: dict) -> str:
         "",
         *_company_table_lines(analysis),
         "",
+        *_company_evidence_lines(analysis),
+        "",
         *_footer_lines(analysis),
     ]
+    return "\n".join(lines)
+
+
+def render_generation_fallback(analysis: dict, *, reason: str) -> str:
+    """生成失败时只报告状态与少量可靠证据，不伪装成完整研究。"""
+    subject = str(analysis.get("industry") or "目标产业")
+    matched = analysis.get("matched_sectors") or []
+    coverage = analysis.get("coverage") or {}
+    as_of = analysis.get("data_as_of") or {}
+    matched_text = "；".join(
+        f"{item.get('name')}（{item.get('code')}，{item.get('member_count')}只）"
+        for item in matched
+        if isinstance(item, dict)
+    ) or "未匹配到可验证板块"
+    reliable_sources = [
+        item for item in (analysis.get("evidence") or [])
+        if isinstance(item, dict) and item.get("status") == "available"
+    ]
+    lines = [
+        "# 产业链研究未完成",
+        "",
+        "## 本轮状态",
+        f"“{subject}”本轮没有形成可采信的完整模型正文。{str(reason or '').strip()}",
+        "部分生成内容未通过完整终态门禁，已丢弃，不能作为产业结论展示。",
+        "",
+        "## 已取得的可靠证据",
+        f"- 精确匹配板块：{matched_text}。",
+        f"- 去重板块成员：{int(coverage.get('verified_member_count') or 0)} 只；"
+        f"取得报价：{int(coverage.get('quoted_count') or 0)} 只。",
+        f"- 公司资料可用：{int(coverage.get('company_evidence_available_count') or 0)} 只；"
+        "这只表示取得公告、互动或基础财务资料，不证明产业链角色。",
+        f"- 数据时点：板块 {as_of.get('sector_members') or as_of.get('sector_catalog') or '未知'}；"
+        f"行情 {as_of.get('quotes') or '未知'}。",
+    ]
+    if reliable_sources:
+        lines.append(
+            "- 可用来源：" + "；".join(
+                f"{item.get('source')}（仅支持：{item.get('supports')}）"
+                for item in reliable_sources
+            ) + "。"
+        )
+    lines.extend([
+        "",
+        "> 本页未输出利润池、产业卡点、国产替代或公司受益排序；请修复模型生成后重试。",
+    ])
     return "\n".join(lines)
 
 

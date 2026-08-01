@@ -44,12 +44,12 @@ def test_vue_company_research_uses_only_the_real_page_contracts() -> None:
         "getJson<CompanyModelStatus>('/status'",
         "/disclosures/announcements?code=${encodeURIComponent(code)}&limit=6",
         "/interactions/management?code=${encodeURIComponent(code)}&limit=6",
-        "postEventStream('/chat'",
+        "postJson<ResearchRunResponse>('/research/runs'",
+        "getJson<ResearchRunLatestResponse>('/research/runs/latest?kind=company'",
         "postJson<CompanyKnowledgeResponse>('/knowledge'",
     ):
         assert endpoint in composable
-    assert "mode: 'company'" in composable
-    assert "message: '生成单公司深度研究报告'" in composable
+    assert "kind: 'company', code" in composable
     assert "category: '复盘笔记'" in composable
     assert "research-enrichment" not in production_source()
     assert "盘后研究底座" not in production_source()
@@ -105,8 +105,12 @@ def test_vue_company_research_cleans_every_request_reader_and_timer_on_unmount()
     assert "onBeforeUnmount(() =>" in composable
     assert ".forEach(abortRequest)" in composable
     assert "clearStageTimer()" in composable
+    assert "clearPollTimer()" in composable
     assert "clearTimeout(timeout)" in composable
     assert "reader.cancel" in api
+    assert "requestGuard('research', 15_000)" in composable
+    assert "服务端后台研究任务继续运行" in composable
+    assert "setTimeout(() => { void pollRun(runId) }, 2_000)" in composable
 
 
 def test_vue_company_research_uses_safe_markdown_urls_and_native_semantics() -> None:

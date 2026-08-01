@@ -65,7 +65,7 @@ defineExpose({ refresh })
     />
 
     <div v-if="running" class="company-progress panel" role="status" aria-live="polite">
-      <div><strong>{{ stageText || '正在生成公司研究…' }}</strong><span>完成前不形成完整结论；官方证据分区会独立更新。</span></div>
+      <div><strong>{{ stageText || '后台正在生成公司研究…' }}</strong><span>可以离开或刷新页面；再次进入会自动恢复任务状态。</span></div>
       <span class="mono">{{ stageSeconds }}s</span>
     </div>
 
@@ -123,7 +123,7 @@ defineExpose({ refresh })
       <span>写入知识库只表示已接受保存，不等于已审批或已送达。</span>
     </footer>
 
-    <dl class="company-data-stamp" aria-label="公司研究数据与生成时点">
+    <dl class="company-data-stamp data-footnote-stamp" aria-label="公司研究数据与生成时点">
       <div><dt>当前公司</dt><dd class="mono">{{ currentCode || '尚未选择' }}</dd></div>
       <div><dt>数据日期 / 时点</dt><dd class="mono">{{ dataAsOf }}</dd></div>
       <div><dt>生成时点</dt><dd class="mono">{{ generatedAt }}</dd></div>

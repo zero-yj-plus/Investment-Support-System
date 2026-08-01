@@ -15,6 +15,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import threading
 import time
 import uuid
@@ -32,6 +33,10 @@ KNOWLEDGE_CATEGORIES = [
 ERROR_TYPES = {"A": "模型可改进", "B": "数据问题", "C": "黑天鹅", "D": "执行偏差", "N": "无错"}
 
 KNOWLEDGE_RULE_SCHEMA = "KnowledgeRule.v1"
+
+_A_SHARE_CODE_RE = re.compile(
+    r"^(?:00[0123]\d{3}|30[01]\d{3}|60[0135]\d{3}|68[89]\d{3}|[48]\d{5}|92\d{4})$"
+)
 KNOWLEDGE_STATUSES = {
     "draft", "approved", "rejected", "superseded", "legacy_unverified",
 }
@@ -1406,6 +1411,34 @@ class Store:
     def watchlist(self) -> list[dict]:
         return self._read_json(self._watchlist_path, [])
 
+    @staticmethod
+    def _watchlist_record(item: dict, wid: str) -> dict:
+        code = str(item.get("code", "")).strip()
+        if not code:
+            raise ValueError("股票代码不能为空")
+        try:
+            risk = int(item.get("risk_level") or 3)
+        except (TypeError, ValueError):
+            raise ValueError("风险等级应为整数") from None
+        risk = min(5, max(1, risk))
+        return {
+            "id": wid,
+            "code": code.zfill(6),
+            "name": str(item.get("name", ""))[:30],
+            "market": str(item.get("market", "") or "a股")[:20],
+            "sector": str(item.get("sector", ""))[:30],
+            "add_reason": str(item.get("add_reason", ""))[:500],
+            "target_low": Store._opt_float(item.get("target_low"), "理想买入下沿"),
+            "target_high": Store._opt_float(item.get("target_high"), "理想买入上沿"),
+            "trigger_condition": str(item.get("trigger_condition", ""))[:500],
+            "no_buy_condition": str(item.get("no_buy_condition", ""))[:500],
+            "abandon_condition": str(item.get("abandon_condition", ""))[:300],
+            "abandon_price": Store._opt_float(item.get("abandon_price"), "放弃价"),
+            "risk_level": risk,
+            "note": str(item.get("note", ""))[:300],
+            "created_at": now_cn().strftime("%Y-%m-%d %H:%M:%S"),
+        }
+
     @property
     def _watchlist_zones_path(self) -> Path:
         return self.root / "watchlist_zones.json"
@@ -1440,35 +1473,59 @@ class Store:
     def add_watch(self, item: dict) -> str:
         if not isinstance(item, dict):
             raise ValueError("观察池条目应为对象")
-        code = str(item.get("code", "")).strip()
-        if not code:
-            raise ValueError("股票代码不能为空")
-        try:
-            risk = int(item.get("risk_level") or 3)
-        except (TypeError, ValueError):
-            raise ValueError("风险等级应为整数") from None
-        risk = min(5, max(1, risk))
-        items = self.watchlist()
-        wid = f"w_{int(time.time() * 1000)}"
-        items.append({
-            "id": wid,
-            "code": code.zfill(6),
-            "name": str(item.get("name", ""))[:30],
-            "market": str(item.get("market", "") or "a股")[:20],
-            "sector": str(item.get("sector", ""))[:30],
-            "add_reason": str(item.get("add_reason", ""))[:500],
-            "target_low": self._opt_float(item.get("target_low"), "理想买入下沿"),
-            "target_high": self._opt_float(item.get("target_high"), "理想买入上沿"),
-            "trigger_condition": str(item.get("trigger_condition", ""))[:500],
-            "no_buy_condition": str(item.get("no_buy_condition", ""))[:500],
-            "abandon_condition": str(item.get("abandon_condition", ""))[:300],
-            "abandon_price": self._opt_float(item.get("abandon_price"), "放弃价"),
-            "risk_level": risk,
-            "note": str(item.get("note", ""))[:300],
-            "created_at": self.now_str(),
-        })
-        self._write_json(self._watchlist_path, items)
+        wid = f"w_{time.time_ns()}"
+        record = self._watchlist_record(item, wid)
+        with self._lock:
+            items = self.watchlist()
+            items.append(record)
+            self._write_json(self._watchlist_path, items)
         return wid
+
+    def import_watchlist(self, candidates: list[dict]) -> dict:
+        """一次性追加观察项；已有代码、文件内重复及非 A 股代码均跳过。"""
+        if not isinstance(candidates, list):
+            raise ValueError("导入条目应为数组")
+        if not candidates or len(candidates) > 200:
+            raise ValueError("单次导入应包含 1—200 条记录")
+
+        added_codes: list[str] = []
+        duplicate_codes: list[str] = []
+        invalid: list[dict] = []
+        with self._lock:
+            items = self.watchlist()
+            known_codes = {
+                str(row.get("code") or "").strip().zfill(6)
+                for row in items
+                if isinstance(row, dict) and str(row.get("code") or "").strip()
+            }
+            for index, candidate in enumerate(candidates):
+                if not isinstance(candidate, dict):
+                    invalid.append({"index": index, "code": "", "reason": "条目不是对象"})
+                    continue
+                code = str(candidate.get("code") or "").strip()
+                if not _A_SHARE_CODE_RE.fullmatch(code):
+                    invalid.append({"index": index, "code": code, "reason": "不是可识别的 6 位 A 股代码"})
+                    continue
+                if code in known_codes:
+                    duplicate_codes.append(code)
+                    continue
+                payload = {
+                    "code": code,
+                    "name": candidate.get("name", ""),
+                    "sector": candidate.get("sector", ""),
+                    "market": "a股",
+                }
+                record = self._watchlist_record(payload, f"w_{time.time_ns()}_{index}")
+                items.append(record)
+                known_codes.add(code)
+                added_codes.append(code)
+            if added_codes:
+                self._write_json(self._watchlist_path, items)
+        return {
+            "added_codes": added_codes,
+            "duplicate_codes": duplicate_codes,
+            "invalid": invalid,
+        }
 
     def update_watch(self, wid: str, fields: dict) -> bool:
         if not isinstance(fields, dict):

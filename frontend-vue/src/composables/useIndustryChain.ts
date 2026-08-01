@@ -1,13 +1,14 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { postEventStream, postJson } from '../services/api'
+import { getJson, postJson } from '../services/api'
 import type {
   IndustryChainHistoryEntry,
   IndustryChainKnowledgeResponse,
   IndustryChainRequestKey,
   IndustryChainRunState,
 } from '../types/industryChain'
+import type { ResearchRun, ResearchRunLatestResponse, ResearchRunResponse } from '../types/researchRun'
+import { RESEARCH_ACTIVE_STATUSES } from '../types/researchRun'
 import {
-  buildIndustryChainRequest,
   INDUSTRY_CHAIN_HISTORY_KEY,
   INDUSTRY_CHAIN_HISTORY_LIMIT,
   normalizeIndustryHistory,
@@ -16,6 +17,11 @@ import {
 
 function errorMessage(error: unknown, fallback: string) {
   return error instanceof Error && error.message ? error.message : fallback
+}
+
+function runTimestamp(run: ResearchRun): number {
+  const value = Date.parse(run.finished_at || run.updated_at || run.created_at)
+  return Number.isFinite(value) ? value : Date.now()
 }
 
 export function useIndustryChain() {
@@ -30,14 +36,16 @@ export function useIndustryChain() {
   const fieldError = ref('')
   const history = ref<IndustryChainHistoryEntry[]>([])
   const activeHistoryId = ref('')
+  const activeRunId = ref('')
   const saving = ref(false)
   const saveError = ref('')
   const saveMessage = ref('')
   const controllers: Partial<Record<IndustryChainRequestKey, AbortController>> = {}
   const generations: Record<IndustryChainRequestKey, number> = { research: 0, knowledge: 0 }
   let alive = false
-  let stopRequested = false
+  let pollTimer: ReturnType<typeof setTimeout> | null = null
   let stageTimer: ReturnType<typeof setInterval> | null = null
+  let stageStartedAt = 0
 
   const running = computed(() => runState.value === 'loading')
   const summary = computed(() => summarizeIndustryChain(content.value))
@@ -48,9 +56,23 @@ export function useIndustryChain() {
     localStorage.setItem(INDUSTRY_CHAIN_HISTORY_KEY, JSON.stringify(history.value))
   }
 
+  function clearPollTimer() {
+    if (pollTimer) clearTimeout(pollTimer)
+    pollTimer = null
+  }
+
   function clearStageTimer() {
     if (stageTimer) clearInterval(stageTimer)
     stageTimer = null
+  }
+
+  function startElapsed(run: ResearchRun) {
+    clearStageTimer()
+    stageStartedAt = Date.parse(run.started_at || run.created_at)
+    if (!Number.isFinite(stageStartedAt)) stageStartedAt = Date.now()
+    const update = () => { stageSeconds.value = Math.max(0, Math.floor((Date.now() - stageStartedAt) / 1000)) }
+    update()
+    stageTimer = setInterval(update, 1000)
   }
 
   function abortRequest(key: IndustryChainRequestKey) {
@@ -80,24 +102,130 @@ export function useIndustryChain() {
     }
   }
 
-  function appendHistory(incomplete: boolean) {
-    if (!content.value.trim()) return
+  function appendCompletedRun(run: ResearchRun) {
+    const report = String(run.content || '').trim()
+    if (!report || history.value.some((entry) => entry.id === run.run_id)) return
     const entry: IndustryChainHistoryEntry = {
-      id: `chain-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-      industry: currentIndustry.value,
-      focus: focusInput.value,
-      content: content.value.slice(0, 60_000),
-      ts: Date.now(),
-      incomplete,
+      id: run.run_id,
+      industry: run.subject,
+      focus: run.focus || '',
+      content: report.slice(0, 60_000),
+      ts: runTimestamp(run),
+      incomplete: false,
     }
     history.value = [entry, ...history.value].slice(0, INDUSTRY_CHAIN_HISTORY_LIMIT)
-    activeHistoryId.value = entry.id
     persistHistory()
+  }
+
+  function showCompleted(run: ResearchRun) {
+    clearPollTimer()
+    clearStageTimer()
+    activeRunId.value = ''
+    industryInput.value = run.subject
+    currentIndustry.value = run.subject
+    focusInput.value = run.focus || ''
+    content.value = String(run.content || '')
+    runState.value = content.value.trim() ? 'complete' : 'error'
+    stageText.value = ''
+    stageSeconds.value = 0
+    activeHistoryId.value = run.run_id
+    appendCompletedRun(run)
+  }
+
+  function showActive(run: ResearchRun) {
+    activeRunId.value = run.run_id
+    industryInput.value = run.subject
+    currentIndustry.value = run.subject
+    focusInput.value = run.focus || ''
+    content.value = String(run.content || '')
+    runState.value = 'loading'
+    stageText.value = run.stage || '后台正在生成产业链研究…'
+    activeHistoryId.value = ''
+    startElapsed(run)
+  }
+
+  function schedulePoll(runId: string) {
+    clearPollTimer()
+    if (!alive || !runId) return
+    pollTimer = setTimeout(() => { void pollRun(runId) }, 2_000)
+  }
+
+  async function restoreLatest() {
+    const guard = requestGuard('research', 15_000)
+    try {
+      const response = await getJson<ResearchRunLatestResponse>('/research/runs/latest?kind=chain', guard.controller.signal)
+      if (!guard.current()) return
+      if (response.active) {
+        runError.value = ''
+        showActive(response.active)
+        schedulePoll(response.active.run_id)
+        return
+      }
+      if (response.latest_completed) {
+        showCompleted(response.latest_completed)
+        if (response.latest && response.latest.run_id !== response.latest_completed.run_id && response.latest.status !== 'completed') {
+          runError.value = `${response.latest.error || '最近一次后台研究未完成'}；当前展示上一次成功结果。`
+        } else {
+          runError.value = ''
+        }
+        return
+      }
+      if (response.latest) {
+        clearPollTimer()
+        clearStageTimer()
+        activeRunId.value = ''
+        currentIndustry.value = response.latest.subject
+        industryInput.value = response.latest.subject
+        focusInput.value = response.latest.focus || ''
+        runState.value = 'error'
+        stageText.value = ''
+        stageSeconds.value = 0
+        runError.value = response.latest.error || '最近一次后台研究未完成。'
+      }
+    } catch (error) {
+      if (!guard.current()) return
+      runError.value = guard.timedOut()
+        ? '后台任务状态查询超过 15 秒；生成任务不会因此停止。'
+        : errorMessage(error, '暂时无法读取后台研究任务状态。')
+    } finally {
+      guard.finish()
+    }
+  }
+
+  async function pollRun(runId: string) {
+    if (!alive || !runId) return
+    const guard = requestGuard('research', 15_000)
+    let restoreAfterFailure = false
+    try {
+      const response = await getJson<ResearchRunResponse>(`/research/runs/${encodeURIComponent(runId)}`, guard.controller.signal)
+      if (!guard.current() || response.run.run_id !== activeRunId.value) return
+      const run = response.run
+      if (RESEARCH_ACTIVE_STATUSES.includes(run.status)) {
+        showActive(run)
+        schedulePoll(run.run_id)
+      } else if (run.status === 'completed') {
+        runError.value = ''
+        showCompleted(run)
+      } else {
+        restoreAfterFailure = true
+        runError.value = run.error || '本次后台研究未完成。'
+      }
+    } catch (error) {
+      if (!guard.current()) return
+      runError.value = guard.timedOut()
+        ? '本次状态查询超时；后台生成仍在继续，将自动重试。'
+        : errorMessage(error, '后台任务状态暂不可用，将自动重试。')
+      schedulePoll(runId)
+    } finally {
+      guard.finish()
+    }
+    if (restoreAfterFailure && alive) await restoreLatest()
   }
 
   async function startResearch(rawIndustry = industryInput.value, rawFocus = focusInput.value) {
     if (running.value || saving.value) return
     const industry = String(rawIndustry || '').trim().slice(0, 120)
+    const focus = String(rawFocus || '').trim().slice(0, 1000)
     fieldError.value = ''
     runError.value = ''
     saveError.value = ''
@@ -108,67 +236,48 @@ export function useIndustryChain() {
     }
 
     industryInput.value = industry
-    focusInput.value = String(rawFocus || '').trim().slice(0, 1000)
+    focusInput.value = focus
     currentIndustry.value = industry
     content.value = ''
     runState.value = 'loading'
-    stageText.value = '正在拆解需求、上下游与价值传导…'
+    stageText.value = '正在提交后台研究任务…'
     stageSeconds.value = 0
     activeHistoryId.value = ''
-    stopRequested = false
-    clearStageTimer()
-    stageTimer = setInterval(() => { stageSeconds.value += 1 }, 1000)
-    const guard = requestGuard('research', 105_000)
-    let completed = false
-
+    clearPollTimer()
+    const guard = requestGuard('research', 15_000)
     try {
-      await postEventStream('/chat', buildIndustryChainRequest(industry, focusInput.value), {
-        signal: guard.controller.signal,
-        onStage(stage) {
-          if (guard.current()) stageText.value = stage
-        },
-        onDelta(delta) {
-          if (guard.current()) content.value += delta
-        },
-        onDone() {
-          if (guard.current()) completed = true
-        },
-      })
+      const response = await postJson<ResearchRunResponse>('/research/runs', {
+        kind: 'chain', industry, focus,
+      }, guard.controller.signal)
       if (!guard.current()) return
-      if (!completed || !content.value.trim()) throw new Error('研究流未返回完整正文，已按不完整输出隔离')
-      runState.value = 'complete'
-      appendHistory(false)
+      showActive(response.run)
+      schedulePoll(response.run.run_id)
     } catch (error) {
       if (!guard.current()) return
-      const aborted = error instanceof DOMException && error.name === 'AbortError'
-      if (content.value.trim()) {
-        runState.value = 'partial'
-        runError.value = stopRequested
-          ? '已停止生成；部分正文已隔离，不能存入知识库。'
-          : '研究流未完整结束；部分正文已隔离，不能作为完整研究结论。'
-        appendHistory(true)
-      } else {
-        runState.value = 'error'
-        runError.value = guard.timedOut()
-          ? '研究请求超过 105 秒，已停止等待；本轮没有形成结果。'
-          : aborted && stopRequested
-            ? '已停止本次产业链研究。'
-            : errorMessage(error, '产业链研究暂不可用，请稍后重试')
-      }
+      runState.value = 'error'
+      runError.value = guard.timedOut()
+        ? '任务提交超过 15 秒；正在查询服务端是否已受理。'
+        : errorMessage(error, '产业链后台任务创建失败。')
     } finally {
-      clearStageTimer()
       guard.finish()
-      if (alive) {
-        stageText.value = ''
-        stageSeconds.value = 0
-      }
     }
+    if (runState.value === 'error' && alive) await restoreLatest()
   }
 
-  function stopResearch() {
-    if (!running.value) return
-    stopRequested = true
-    controllers.research?.abort()
+  async function stopResearch() {
+    const runId = activeRunId.value
+    if (!running.value || !runId) return
+    clearPollTimer()
+    stageText.value = '正在停止后台任务…'
+    const guard = requestGuard('research', 15_000)
+    try {
+      await postJson<ResearchRunResponse>(`/research/runs/${encodeURIComponent(runId)}/cancel`, {}, guard.controller.signal)
+    } catch (error) {
+      if (guard.current()) runError.value = errorMessage(error, '停止后台任务失败；将继续查询状态。')
+    } finally {
+      guard.finish()
+    }
+    if (alive) await restoreLatest()
   }
 
   function selectHistory(entry: IndustryChainHistoryEntry) {
@@ -211,7 +320,7 @@ export function useIndustryChain() {
   }
 
   async function refresh() {
-    if (currentIndustry.value) await startResearch(currentIndustry.value)
+    await restoreLatest()
   }
 
   onMounted(() => {
@@ -221,11 +330,14 @@ export function useIndustryChain() {
     } catch {
       history.value = []
     }
+    void restoreLatest()
   })
 
   onBeforeUnmount(() => {
     alive = false
+    clearPollTimer()
     clearStageTimer()
+    // 这里只中止短轮询；服务端后台研究任务继续运行。
     abortRequest('research')
     abortRequest('knowledge')
   })

@@ -58,6 +58,7 @@ from ..jobs.scheduler import JOB_NAMES, apply_schedule, task_center_status  # no
 from ..product_state import build_market_context, route_lifecycle_contract  # noqa: E402
 from ..decision.risk_gate import evaluate_risk_gate  # noqa: E402
 from ..simulation import SimulationError  # noqa: E402
+from ..research_runs import ActiveResearchRunError, KINDS as RESEARCH_KINDS  # noqa: E402
 
 log = logging.getLogger("hermes.api")
 
@@ -2640,18 +2641,23 @@ async def _governed_chain_chat_stream(
         except Exception:  # noqa: BLE001 — 结构化首答已完整，不因解释层失败降级
             log.warning("产业链模型解释未返回，保留结构化首答 industry=%s", industry)
         if not emitted:
-            yield (
-                "> 模型深度研究未通过证据边界，本轮展示可复核研究框架。\n\n"
-                + industry_chain_mod.render_markdown(analysis)
+            yield industry_chain_mod.render_generation_fallback(
+                analysis,
+                reason="模型未返回完整终态，未把提纲或半截正文冒充研究报告。",
             )
         else:
             yield (
                 "\n\n---\n\n"
                 "> 研究说明：本报告以产业结构、上下游传导和商业逻辑为主。"
                 "公司业务归属、订单、份额、财务表现及当前交易时点需在具体研究中另行确认。"
+                "\n\n"
+                + industry_chain_mod.render_evidence_appendix(analysis)
             )
         return
-    yield industry_chain_mod.render_markdown(analysis)
+    yield industry_chain_mod.render_generation_fallback(
+        analysis,
+        reason="当前模型连接或能力预检不可用，未执行模型增强。",
+    )
 
 
 async def _governed_chat_sse_events(gen, *, stage: str):
@@ -2766,6 +2772,130 @@ async def chat(request: Request):
         ))
     return _sse(st.engine.chat_stream(mode, message, code=code, industry=industry,
                                       history=history, images=images, codes=codes))
+
+
+# ---------------------------------------------------------------- 持久化后台研究任务（产业链 / 单公司）
+
+def _chain_research_message(industry: str, focus: str) -> str:
+    research_focus = focus or "完成整套产业链研究，并给出后续需要核验的证据清单。"
+    return "\n".join([
+        f"请按研究中心统一的「产业链深度研究」契约分析「{industry}」。",
+        f"本轮重点：{research_focus}",
+        "必须沿同一条推导链完成：核心需求与驱动力 → 上中下游全景 → 利润池与价值分配 → "
+        "核心卡点与竞争壁垒 → 国产替代路径 → A股映射思路 → 兑现节奏与观察指标 → 风险与失效条件。",
+        "重点解释产业为什么成立、价值如何沿上下游传导、利润为什么集中、瓶颈如何形成；不要把报告写成数据清单。",
+        "不要逐段输出依据边界、待公告核验、数据不全或数值占位；真实性边界只在报告末尾集中说明一次。",
+        "产业研究与交易时点分开；本报告不输出目标价、仓位或即时买卖动作。",
+    ])
+
+
+def _research_manager(st):
+    manager = getattr(st, "research_runs", None)
+    if manager is None:
+        raise RuntimeError("后台研究任务管理器未装配")
+    return manager
+
+
+@router.post("/research/runs")
+async def create_research_run(request: Request):
+    """立即返回任务 ID；模型生成在服务端后台继续，不依赖当前页面连接。"""
+    st = _state(request)
+    try:
+        body = await request.json()
+        assert isinstance(body, dict)
+    except Exception:
+        return JSONResponse({"ok": False, "error": "无效 JSON"}, status_code=400)
+    kind = str(body.get("kind") or "").strip()
+    if kind not in RESEARCH_KINDS:
+        return JSONResponse({"ok": False, "error": "kind 必须是 chain 或 company"}, status_code=400)
+
+    if kind == "chain":
+        subject = str(body.get("industry") or "").strip()[:120]
+        focus = str(body.get("focus") or "").strip()[:1000]
+        if not subject:
+            return JSONResponse({"ok": False, "error": "产业链研究需提供 industry"}, status_code=400)
+        message = _chain_research_message(subject, focus)
+
+        async def generator():
+            model_status = await diagnosis_mod._model_connection_state(st.engine)
+            if model_status != "available":
+                yield {"error": "模型连接或能力预检不可用，后台任务未启动生成。"}
+                return
+            governed = _invoke_governed_chat_stream(
+                _governed_chain_chat_stream,
+                st,
+                subject,
+                message,
+                history=[],
+                images=[],
+                model_available=True,
+                research_contract="chain-research-v2",
+            )
+            async for event in _governed_chat_sse_events(
+                governed,
+                stage="后台正在拆解需求、上下游与价值传导…",
+            ):
+                yield event
+    else:
+        subject = str(body.get("code") or "").strip()
+        focus = ""
+        if not _CODE_RE.fullmatch(subject):
+            return JSONResponse({"ok": False, "error": "单公司研究需提供 6 位股票代码"}, status_code=400)
+
+        async def generator():
+            model_status = await diagnosis_mod._model_connection_state(st.engine)
+            if model_status != "available":
+                yield {"error": "模型连接或能力预检不可用，后台任务未启动生成。"}
+                return
+            async for event in st.engine.chat_stream(
+                "company",
+                "生成单公司深度研究报告",
+                code=subject,
+                industry="",
+                history=[],
+                images=[],
+            ):
+                yield event
+
+    try:
+        run, reused = await _research_manager(st).start(
+            kind=kind,
+            subject=subject,
+            focus=focus,
+            generator_factory=generator,
+        )
+    except ActiveResearchRunError as exc:
+        return JSONResponse(
+            {"ok": False, "error": str(exc), "active": exc.run},
+            status_code=409,
+        )
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    return JSONResponse({"ok": True, "reused": reused, "run": run}, status_code=202)
+
+
+@router.get("/research/runs/latest")
+async def latest_research_run(request: Request, kind: str):
+    kind = str(kind or "").strip()
+    if kind not in RESEARCH_KINDS:
+        return JSONResponse({"ok": False, "error": "kind 必须是 chain 或 company"}, status_code=400)
+    return {"ok": True, "kind": kind, **_research_manager(_state(request)).latest(kind)}
+
+
+@router.get("/research/runs/{run_id}")
+async def get_research_run(run_id: str, request: Request):
+    run = _research_manager(_state(request)).get(run_id)
+    if run is None:
+        return JSONResponse({"ok": False, "error": "研究任务不存在"}, status_code=404)
+    return {"ok": True, "run": run}
+
+
+@router.post("/research/runs/{run_id}/cancel")
+async def cancel_research_run(run_id: str, request: Request):
+    run = await _research_manager(_state(request)).cancel(run_id)
+    if run is None:
+        return JSONResponse({"ok": False, "error": "研究任务不存在"}, status_code=404)
+    return {"ok": True, "run": run}
 
 
 # ---------------------------------------------------------------- 对话会话（多会话/历史/分组）
@@ -3343,6 +3473,39 @@ async def add_watchlist(request: Request):
         return JSONResponse({"ok": False, "error": f"观察池条目不合法：{e}"}, status_code=400)
     _queue_watchlist_zone_refresh(st.store, str(body.get("code") or ""))
     return {"ok": True, "id": wid, "zone_status": "queued"}
+
+
+@router.post("/watchlist/import")
+async def import_watchlist(request: Request):
+    """批量追加 TXT 已解析出的观察项；单次原子写入，重复与无效代码显式跳过。"""
+    st = _state(request)
+    try:
+        body = await request.json()
+        items = body.get("items") if isinstance(body, dict) else None
+    except Exception:
+        items = None
+    if not isinstance(items, list):
+        return JSONResponse({"ok": False, "error": "items 应为数组"}, status_code=400)
+    try:
+        result = st.store.import_watchlist(items)
+    except ValueError as e:
+        return JSONResponse({"ok": False, "error": f"观察池批量导入不合法：{e}"}, status_code=400)
+
+    added_codes = result.get("added_codes") or []
+    duplicate_codes = result.get("duplicate_codes") or []
+    invalid = result.get("invalid") or []
+    if added_codes:
+        _queue_watchlist_zone_refresh(st.store)
+    return {
+        "ok": True,
+        "added_count": len(added_codes),
+        "duplicate_count": len(duplicate_codes),
+        "invalid_count": len(invalid),
+        "added_codes": added_codes,
+        "duplicate_codes": duplicate_codes,
+        "invalid": invalid,
+        "zone_status": "queued" if added_codes else None,
+    }
 
 
 @router.post("/watchlist/recalculate")

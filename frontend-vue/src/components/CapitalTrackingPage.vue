@@ -96,7 +96,7 @@ defineExpose({ refresh })
       </footer>
     </template>
 
-    <dl class="capital-stamp" :class="{ 'is-stale': isStale, 'is-degraded': isRaw || data?.ok === false }" aria-label="资金追踪数据日期、采样时点与状态">
+    <dl class="capital-stamp data-footnote-stamp" :class="{ 'is-stale': isStale, 'is-degraded': isRaw || data?.ok === false }" aria-label="资金追踪数据日期、采样时点与状态">
       <div><dt>行业日期</dt><dd class="mono">{{ data?.sector_date || '—' }}<span v-if="!data?.sector_date" class="sr-only">数据缺失</span></dd></div>
       <div><dt>热门股日期</dt><dd class="mono">{{ data?.hot_date || '—' }}<span v-if="!data?.hot_date" class="sr-only">数据缺失</span></dd></div>
       <div><dt>最近采样</dt><dd class="mono">{{ data?.snap_ts || '—' }}<span v-if="!data?.snap_ts" class="sr-only">数据缺失</span></dd></div>

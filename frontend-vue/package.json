@@ -8,6 +8,7 @@
     "type-check": "vue-tsc --noEmit",
     "build": "npm run type-check && vite build",
     "audit:ui": "node scripts/audit-ui.mjs",
+    "audit:watchlist-import": "node scripts/audit-watchlist-import.mjs",
     "audit:reports": "node scripts/audit-reports-ui.mjs",
     "preview": "vite preview"
   },

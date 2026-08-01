@@ -1,21 +1,25 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import WatchlistEditor from './WatchlistEditor.vue'
+import WatchlistImportDialog from './WatchlistImportDialog.vue'
 import WatchlistItemRow from './WatchlistItemRow.vue'
 import { useWatchlist } from '../composables/useWatchlist'
-import type { WatchlistInput, WatchlistItem } from '../types/watchlist'
+import type { WatchlistImportItem, WatchlistInput, WatchlistItem } from '../types/watchlist'
 import { compactTime } from '../utils/watchlistFormat'
 
 const emit = defineEmits<{ refreshState: [refreshing: boolean] }>()
 const showEditor = ref(false)
+const showImporter = ref(false)
 const editingItem = ref<WatchlistItem | null>(null)
 let editorOpener: HTMLElement | null = null
+let importerOpener: HTMLElement | null = null
 const {
   items,
   loading,
   refreshing,
   verifying,
   saving,
+  importing,
   deletingId,
   recalculating,
   loaded,
@@ -26,8 +30,10 @@ const {
   mutationError,
   feedback,
   actionBusy,
+  clearMutationError,
   refresh,
   saveItem,
+  importItems,
   deleteItem,
   recalculate,
 } = useWatchlist()
@@ -39,6 +45,7 @@ const degradedZoneCount = computed(() => items.value.filter((item) => (
   || item.ideal_buy_zones?.swing?.state === 'degraded'
 )).length)
 const staleQuoteCount = computed(() => items.value.filter((item) => item.quote?.stale === true).length)
+const existingCodes = computed(() => items.value.map((item) => String(item.code || '').trim()).filter(Boolean))
 const itemMissingCount = computed(() => items.value.filter((item) => (
   Array.isArray(item.missing) && item.missing.length > 0
 )).length)
@@ -77,6 +84,12 @@ function openEdit(item: WatchlistItem) {
   showEditor.value = true
 }
 
+function openImporter() {
+  importerOpener = document.activeElement instanceof HTMLElement ? document.activeElement : null
+  clearMutationError()
+  showImporter.value = true
+}
+
 function closeEditor() {
   showEditor.value = false
   editingItem.value = null
@@ -85,9 +98,21 @@ function closeEditor() {
   void nextTick(() => opener?.focus())
 }
 
+function closeImporter() {
+  showImporter.value = false
+  const opener = importerOpener
+  importerOpener = null
+  void nextTick(() => opener?.focus())
+}
+
 async function handleSave(input: WatchlistInput) {
   const saved = await saveItem(input, String(editingItem.value?.id || ''))
   if (saved) closeEditor()
+}
+
+async function handleImport(candidates: WatchlistImportItem[]) {
+  const imported = await importItems(candidates)
+  if (imported) closeImporter()
 }
 
 async function handleDelete(item: WatchlistItem) {
@@ -109,6 +134,9 @@ defineExpose({ refresh })
       <div class="watchlist-intro__actions">
         <button type="button" class="secondary-button" :disabled="!loaded || pageRefreshing" @click="recalculate">
           {{ recalculating ? '提交中' : '重算双周期区间' }}
+        </button>
+        <button type="button" class="secondary-button" :disabled="!loaded || pageRefreshing" @click="openImporter">
+          {{ importing ? '导入中…' : '批量导入' }}
         </button>
         <button type="button" class="primary-button" :disabled="!loaded || actionBusy" @click="openCreate">添加观察</button>
       </div>
@@ -152,6 +180,14 @@ defineExpose({ refresh })
         </div>
 
         <Teleport to="body">
+          <WatchlistImportDialog
+            v-if="showImporter"
+            :existing-codes="existingCodes"
+            :busy="importing"
+            :error="mutationError"
+            @submit="handleImport"
+            @cancel="closeImporter"
+          />
           <WatchlistEditor
             v-if="showEditor"
             :key="editingItem?.id || 'new'"
@@ -200,7 +236,7 @@ defineExpose({ refresh })
       </template>
     </template>
 
-    <dl class="watchlist-stamp" :class="{ 'is-degraded': dataStatus !== '数据完整' }" aria-label="观察池数据日期、关键时点与状态">
+    <dl class="watchlist-stamp data-footnote-stamp" :class="{ 'is-degraded': dataStatus !== '数据完整' }" aria-label="观察池数据日期、关键时点与状态">
       <div><dt>列表时点</dt><dd class="mono">{{ compactTime(timestamp) }}</dd></div>
       <div><dt>区间数据日期</dt><dd class="mono">{{ zoneDates.length ? zoneDates.join(' / ') : '—' }}</dd></div>
       <div><dt>算法版本</dt><dd class="mono">{{ algorithmVersions.length ? algorithmVersions.join(' / ') : '—' }}</dd></div>
@@ -214,7 +250,7 @@ defineExpose({ refresh })
 .watchlist-intro { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; padding: 4px 2px 2px; }
 .watchlist-intro h1 { margin: 0; font-size: clamp(24px, 2.2vw, 30px); line-height: 1.25; }
 .watchlist-intro > div > p:last-child { max-width: 800px; margin: 7px 0 0; color: var(--text-2); }
-.watchlist-intro__actions { display: grid; flex: 0 0 auto; grid-template-columns: repeat(2, max-content); gap: 8px; }
+.watchlist-intro__actions { display: grid; flex: 0 0 auto; grid-template-columns: repeat(3, max-content); gap: 8px; }
 .watchlist-stamp { display: grid; min-width: 520px; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px 14px; margin: 0; padding: 9px 11px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
 .watchlist-stamp.is-degraded { border-color: var(--warning); }
 .watchlist-stamp div { min-width: 0; }
@@ -226,6 +262,7 @@ defineExpose({ refresh })
 .watchlist-alert, .watchlist-feedback { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 11px 14px; border: 1px solid var(--danger); border-radius: var(--radius); background: var(--surface); }
 .watchlist-alert.is-warning { border-color: var(--warning); }
 .watchlist-alert > div, .watchlist-feedback { display: grid; }
+.watchlist-alert.is-warning > div { display: flex; min-width: 0; gap: 8px; overflow-x: auto; white-space: nowrap; }
 .watchlist-alert span, .watchlist-feedback span { color: var(--text-2); }
 .watchlist-feedback { border-color: var(--info); }
 .watchlist-feedback.is-error { border-color: var(--danger); }
@@ -241,7 +278,7 @@ defineExpose({ refresh })
 @keyframes watchlist-pulse { from { opacity: .5; } to { opacity: .82; } }
 @media (max-width: 1100px) {
   .watchlist-intro { align-items: stretch; flex-direction: column; gap: 12px; }
-  .watchlist-intro__actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .watchlist-intro__actions { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .watchlist-stamp { min-width: 0; }
 }
 @media (max-width: 900px) {

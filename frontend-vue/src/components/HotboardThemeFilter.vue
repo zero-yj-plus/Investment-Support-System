@@ -54,7 +54,6 @@ const maxCount = computed(() => Math.max(1, ...themes.value.map((item) => item.c
         @click="emit('update:modelValue', theme.name)"
       ><span>{{ theme.name }}</span><strong class="mono">{{ theme.count }}</strong></button>
     </div>
-    <p class="hotboard-source-note">题材按接口 `reason_type` 可复核计数；这是同花顺公开池独立口径，不与驾驶舱主涨停池数字互相回填。</p>
   </section>
 </template>
 
@@ -69,10 +68,8 @@ const maxCount = computed(() => Math.max(1, ...themes.value.map((item) => item.c
 .hotboard-theme-button:hover { border-color: var(--border-strong); color: var(--text); }
 .hotboard-theme-button.is-active { border-color: var(--accent); background: var(--accent-dim); color: var(--accent); }
 .hotboard-theme-button strong { color: inherit; }
-.hotboard-source-note { margin: 0; padding: 0 16px 14px; color: var(--text-3); font-size: 13px; }
 @media (max-width: 720px) {
   .hotboard-section-heading { align-items: flex-start; }
   .hotboard-theme-list { padding-inline: 12px; }
-  .hotboard-source-note { padding-inline: 12px; }
 }
 </style>

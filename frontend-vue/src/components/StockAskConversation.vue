@@ -73,7 +73,6 @@ function updateCodeInput(event: Event) {
         <span class="stock-ask-conversation__mark" aria-hidden="true">问</span>
         <h3>{{ selectedCode ? '围绕当前标的提出一个明确问题' : '先选择一只股票' }}</h3>
         <p v-if="selectedCode">服务端先核验实时行情、确定性诊断、风险闸和建议留痕，再输出当前动作、失效条件与依据。</p>
-        <p v-else>本页只做单只 A 股的盘中问股，不提供自由问答、持仓判断或产业链挖掘。</p>
       </div>
       <StockAskMessage
         v-for="message in messages"

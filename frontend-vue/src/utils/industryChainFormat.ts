@@ -62,7 +62,7 @@ export function summarizeIndustryChain(content: string): IndustryChainSummary {
     sourceCoverage: quoteLine(source, '来源覆盖') || '未报告',
     gapSummary: quoteLine(source, '页首缺口') || '接口未单列页首缺口；不代表证据完整',
     trueEmpty: /(?:TDX|公开)?\s*板块目录未匹配|未取得可验证的(?:\s*TDX|\s*公开板块)?\s*成分关系/.test(source),
-    deterministicFallback: /当前模型不可用|诚实骨架|模型深度研究未通过证据边界/.test(source),
+    deterministicFallback: /产业链研究未完成|当前模型不可用|诚实骨架|模型深度研究未通过证据边界/.test(source),
     companies: extractIndustryCompanies(source),
   }
 }

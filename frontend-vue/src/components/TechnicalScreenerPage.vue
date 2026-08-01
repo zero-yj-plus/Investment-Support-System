@@ -242,7 +242,7 @@ defineExpose({ refresh })
       @close="closeLibrary"
       @commit="commitSignals"
     />
-    <dl class="technical-screener-stamp" aria-label="技术面选股数据日期与缓存状态">
+    <dl class="technical-screener-stamp data-footnote-stamp" aria-label="技术面选股数据日期与缓存状态">
       <div><dt>数据日期</dt><dd class="mono">{{ status?.data_date || '—' }}</dd></div>
       <div><dt>缓存状态</dt><dd><DataStatus :state="quality" :label="cacheLabel" /></dd></div>
       <div><dt>算法版本</dt><dd class="mono">{{ status?.algorithm_ver || catalog?.algorithm_ver || '—' }}</dd></div>

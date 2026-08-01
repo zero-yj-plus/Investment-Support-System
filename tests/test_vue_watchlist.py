@@ -26,6 +26,7 @@ def test_vue_watchlist_route_is_reachable_and_uses_only_real_contracts() -> None
         "`/watchlist/${encodeURIComponent(existingId)}`",
         "`/watchlist/${encodeURIComponent(id)}`",
         "postJson<WatchlistMutationResponse>('/watchlist/recalculate'",
+        "postJson<WatchlistImportResponse>('/watchlist/import'",
     ):
         assert endpoint in composable
     for unrelated in ("/reports/", "/recommendations", "/screen", "/market/flow", "/cockpit"):
@@ -83,6 +84,7 @@ def test_vue_watchlist_cleans_lifecycle_and_prevents_duplicate_actions() -> None
         "saveController?.abort()",
         "deleteController?.abort()",
         "recalculateController?.abort()",
+        "importController?.abort()",
     ):
         assert controller in composable
     assert "let alive = false" in composable
@@ -93,6 +95,7 @@ def test_vue_watchlist_cleans_lifecycle_and_prevents_duplicate_actions() -> None
     assert "if (saving.value || verifying.value) return false" in composable
     assert "if (!id || deletingId.value) return false" in composable
     assert "if (recalculating.value) return" in composable
+    assert "if (importing.value || !candidates.length) return false" in composable
     assert "onBeforeUnmount(() => emit('refreshState', false))" in page
     for source in (page, row, editor):
         assert '<button' in source
@@ -141,12 +144,35 @@ def test_vue_watchlist_places_actions_in_title_bar_without_summary_panel() -> No
 
     assert '<div class="watchlist-intro__actions">' in header
     assert "添加观察" in header
+    assert "批量导入" in header
     assert "重算双周期区间" in header
-    assert header.index("重算双周期区间") < header.index("添加观察")
-    assert "grid-template-columns: repeat(2, max-content)" in page
+    assert header.index("重算双周期区间") < header.index("批量导入") < header.index("添加观察")
+    assert "grid-template-columns: repeat(3, max-content)" in page
     assert "watchlist-summary" not in page
     assert "当前确定性结论" not in page
     assert "服务端 A 级" not in page
+
+
+def test_vue_watchlist_import_previews_supported_txt_and_never_uploads_raw_file() -> None:
+    page = _read("src/components/WatchlistPage.vue")
+    dialog = _read("src/components/WatchlistImportDialog.vue")
+    parser = _read("src/utils/watchlistImport.ts")
+    composable = _read("src/composables/useWatchlist.ts")
+
+    assert "<WatchlistImportDialog" in page
+    assert 'accept=".txt,text/plain"' in dialog
+    assert "东方财富" in dialog and "同花顺" in dialog
+    assert "追加导入" in dialog and "不会清空或覆盖" in dialog
+    assert "role=\"alert\"" in dialog and "role=\"status\"" in dialog
+    assert "showModal()" in dialog and "fileInput.value?.focus()" in dialog
+    assert "TextDecoder('utf-8', { fatal: true })" in parser
+    assert "TextDecoder('gb18030', { fatal: true })" in parser
+    assert "A_SHARE_CODE_RE" in parser
+    assert "观察池已存在" in parser and "文件内代码重复" in parser
+    assert "MAX_IMPORT_ROWS = 200" in parser and "MAX_IMPORT_BYTES = 2 * 1024 * 1024" in parser
+    assert "file.arrayBuffer()" in parser
+    assert "FormData" not in dialog + parser + composable
+    assert "{ items: candidates }" in composable
 
 
 def test_vue_watchlist_ui_audit_has_real_fixture_and_required_states() -> None:
@@ -165,12 +191,14 @@ def test_vue_watchlist_ui_audit_has_real_fixture_and_required_states() -> None:
     for screenshot in (
         "watchlist-loading-375.png",
         "watchlist-empty-1440.png",
+        "watchlist-import-preview-1440.png",
         "watchlist-add-modal-1440.png",
         "watchlist-partial-failure-1440.png",
     ):
         assert screenshot in audit
     assert "watchlistLoadingStateComplete" in audit
     assert "watchlistEmptyStateComplete" in audit
+    assert "watchlistImportStateComplete" in audit
     assert "watchlistModalStateComplete" in audit
     assert "saveVisible" in audit
     assert "watchlistFailureStateComplete" in audit

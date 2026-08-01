@@ -324,10 +324,19 @@ def test_interactive_model_timeouts_are_bounded_but_report_budget_is_preserved(
     client.config.hermes_timeout = 300
 
     assert client._timeout_budget("chat:free", None) == 120
+    assert client._timeout_budget("chat:company", None) == 300
+    assert client._timeout_budget("chat:chain-governed-explanation", None) == 300
     assert client._timeout_budget("cockpit:narrative", None) == 60
     assert client._timeout_budget("diagnosis:stock", None) == 90
     assert client._timeout_budget("report:evening", None) == 300
     assert client._timeout_budget("chat:free", 25) == 25
+    assert client._retry_after_timeout("chat:company") is False
+    assert client._retry_after_timeout("chat:chain-governed-explanation") is False
+    assert client._retry_after_timeout("chat:free") is True
+    assert client._max_tokens_budget("chat:free", None) == 100
+    assert client._max_tokens_budget("chat:company", None) == 20_000
+    assert client._max_tokens_budget("chat:chain-governed-explanation", None) == 16_000
+    assert client._max_tokens_budget("chat:chain-governed-explanation", 12_000) == 12_000
 
 
 @pytest.mark.asyncio

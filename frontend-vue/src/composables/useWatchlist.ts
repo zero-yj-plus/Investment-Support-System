@@ -2,6 +2,8 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ApiError, deleteJson, getJson, postJson, putJson } from '../services/api'
 import type {
   VerifiedWatchlistIdentity,
+  WatchlistImportItem,
+  WatchlistImportResponse,
   WatchlistInput,
   WatchlistItem,
   WatchlistMutationResponse,
@@ -14,12 +16,19 @@ function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback
 }
 
+function importCount(value: unknown, label: string): number {
+  const parsed = Number(value)
+  if (!Number.isInteger(parsed) || parsed < 0) throw new ApiError(`批量导入响应缺少有效的${label}`)
+  return parsed
+}
+
 export function useWatchlist() {
   const items = ref<WatchlistItem[]>([])
   const loading = ref(true)
   const refreshing = ref(false)
   const verifying = ref(false)
   const saving = ref(false)
+  const importing = ref(false)
   const deletingId = ref('')
   const recalculating = ref(false)
   const loaded = ref(false)
@@ -33,13 +42,14 @@ export function useWatchlist() {
   let listController: AbortController | null = null
   let verifyController: AbortController | null = null
   let saveController: AbortController | null = null
+  let importController: AbortController | null = null
   let deleteController: AbortController | null = null
   let recalculateController: AbortController | null = null
   let refreshTimer: ReturnType<typeof setInterval> | null = null
   let alive = false
 
   const actionBusy = computed(() => (
-    verifying.value || saving.value || Boolean(deletingId.value) || recalculating.value
+    verifying.value || saving.value || importing.value || Boolean(deletingId.value) || recalculating.value
   ))
 
   async function loadItems(background = false) {
@@ -169,6 +179,38 @@ export function useWatchlist() {
     }
   }
 
+  async function importItems(candidates: WatchlistImportItem[]): Promise<boolean> {
+    if (importing.value || !candidates.length) return false
+    importController?.abort()
+    const controller = new AbortController()
+    importController = controller
+    importing.value = true
+    mutationError.value = ''
+    feedback.value = ''
+    try {
+      const result = await postJson<WatchlistImportResponse>('/watchlist/import', { items: candidates }, controller.signal)
+      if (!alive || controller !== importController) return false
+      if (result.ok === false) throw new ApiError(result.error || '服务端拒绝批量导入')
+      const added = importCount(result.added_count, '新增计数')
+      const duplicates = importCount(result.duplicate_count, '重复计数')
+      const invalid = importCount(result.invalid_count, '无效计数')
+      feedback.value = `批量导入完成：新增 ${added} 条`
+      if (duplicates || invalid) feedback.value += `，服务端另跳过重复 ${duplicates} 条、无效 ${invalid} 条`
+      feedback.value += result.zone_status === 'queued'
+        ? '；双周期区间已排队计算，尚未完成。'
+        : '。'
+      await loadItems(true)
+      return true
+    } catch (caught) {
+      if (!alive || controller !== importController || (caught instanceof DOMException && caught.name === 'AbortError')) return false
+      mutationError.value = errorMessage(caught, '观察池批量导入失败')
+      return false
+    } finally {
+      if (controller === importController) importController = null
+      if (alive) importing.value = false
+    }
+  }
+
   async function recalculate() {
     if (recalculating.value) return
     recalculateController?.abort()
@@ -211,6 +253,7 @@ export function useWatchlist() {
     listController?.abort()
     verifyController?.abort()
     saveController?.abort()
+    importController?.abort()
     deleteController?.abort()
     recalculateController?.abort()
     if (refreshTimer) clearInterval(refreshTimer)
@@ -223,6 +266,7 @@ export function useWatchlist() {
     refreshing,
     verifying,
     saving,
+    importing,
     deletingId,
     recalculating,
     loaded,
@@ -233,8 +277,10 @@ export function useWatchlist() {
     mutationError,
     feedback,
     actionBusy,
+    clearMutationError: () => { mutationError.value = '' },
     refresh: () => loadItems(false),
     saveItem,
+    importItems,
     deleteItem,
     recalculate,
   }

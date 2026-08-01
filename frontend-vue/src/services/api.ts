@@ -1,4 +1,5 @@
 const API_BASE = '/api'
+const EVENT_STREAM_IDLE_TIMEOUT_MS = 240_000
 
 export class ApiError extends Error {
   constructor(
@@ -111,7 +112,10 @@ export async function postEventStream(
       return await Promise.race([
         reader.read(),
         new Promise<never>((_, reject) => {
-          timer = setTimeout(() => reject(new ApiError('长时间无响应，已停止本次生成')), 90_000)
+          timer = setTimeout(
+            () => reject(new ApiError('数据流连续 240 秒无响应，已停止当前页面等待')),
+            EVENT_STREAM_IDLE_TIMEOUT_MS,
+          )
         }),
       ])
     } finally {
