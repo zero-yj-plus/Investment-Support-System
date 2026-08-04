@@ -418,6 +418,7 @@ FastAPI `/api`，不依赖旧前端。旧版默认不可访问，仅配置开启
 | 文件 / 目录 | 说明 |
 | --- | --- |
 | `src/App.vue` | 决策工作台应用壳、Hash 页面切换、导航和主题。 |
+| `public/product-mark.svg`、`public/favicon.ico` | 所有客户共用的产品标记与浏览器 favicon；不随 `client.brand` 变化。 |
 | `src/components/` | 决策总览卡片、盘前定格快照、安全 Markdown 报告、章节目录和共享图标/状态组件。 |
 | `src/components/CloseReview*.vue`、`CloseAdviceReview.vue`、`CloseRecommendationReview.vue` | 今日复盘的收盘结论、持仓建议对账、推荐留痕和正式报告工作区。 |
 | `src/components/Hotboard*.vue` | 涨停题材结论、题材筛选和响应式涨停股明细。 |
@@ -483,6 +484,7 @@ FastAPI `/api`，不依赖旧前端。旧版默认不可访问，仅配置开启
 | `docs/API_CONTRACT.md` | 前后端唯一接口事实来源；详细记录字段、枚举、降级语义、模拟执行和运维契约。 |
 | `docs/MCP_READ_ONLY_CAPABILITIES.md` | MCP 工具目录、只读边界、默认禁用写能力和诚实降级。 |
 | `docs/审计流程.md` | 部署、时区、任务、数据真实性、前端、安全和仓库卫生的完整 SOP。 |
+| `docs/design-assets/shared-product-mark/` | 白标共享产品标记的生成探索稿、确定性 SVG/PNG/ICO 候选和小尺寸验收图；正式接入前需由用户选定方向。 |
 | `examples/data/.gitkeep` | 保留空示例数据目录。 |
 
 ## 11. 测试目录 `tests/`

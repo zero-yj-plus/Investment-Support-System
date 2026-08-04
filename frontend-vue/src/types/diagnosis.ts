@@ -14,6 +14,12 @@ export interface DiagnosisQuote {
   open?: number | null
   high?: number | null
   low?: number | null
+  volume?: number | null
+  total_mv?: number | null
+  float_mv?: number | null
+  high_52w?: number | null
+  low_52w?: number | null
+  quote_note?: string | null
   as_of?: string | null
   source?: string | null
   stale?: boolean
@@ -144,6 +150,16 @@ export interface DiagnosisResponse {
   decision_generated_at?: string | null
   analysis_pipeline?: DiagnosisPipeline
   technical_analysis?: DiagnosisTechnical
+  deep_signal?: {
+    action?: string | null
+    confidence?: number | null
+    conviction?: string | null
+    signal_score?: number | null
+    complete?: boolean
+    overextended?: boolean
+    reasons?: string[]
+    rule_version?: string
+  }
   risk_decision?: DiagnosisRiskDecision
   trade_plan?: DiagnosisTradePlan
   market_quote?: DiagnosisQuote
@@ -153,6 +169,7 @@ export interface DiagnosisResponse {
   decision_market_evidence_quality?: DiagnosisEvidenceQuality
   evidence?: DiagnosisEvidence[]
   deterministic_signal?: {
+    action?: string | null
     signal_score?: number | null
     coverage?: number | null
     complete?: boolean

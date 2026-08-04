@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title desc">
+  <title id="title">精准工具产品标记候选</title>
+  <desc id="desc">四个工具导向角围绕琥珀色智能火花聚焦</desc>
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="#111A27"/>
+  <path d="M12 12h14v6h-5l8 8-4 4-8-8v5h-5ZM52 12H38v6h5l-8 8 4 4 8-8v5h5ZM12 52h14v-6h-5l8-8-4-4-8 8v-5h-5ZM52 52H38v-6h5l-8-8 4-4 8 8v-5h5Z" fill="#F7F9FC"/>
+  <path d="M32 23c1.5 5 4 7.5 9 9-5 1.5-7.5 4-9 9-1.5-5-4-7.5-9-9 5-1.5 7.5-4 9-9Z" fill="#F2AD45"/>
+</svg>

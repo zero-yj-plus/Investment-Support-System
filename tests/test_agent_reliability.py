@@ -199,6 +199,7 @@ class _FakeStream:
 class _FakeClient:
     lines: list[str] = []
     post_count = 0
+    payloads: list[dict] = []
 
     def __init__(self, *_args, **_kwargs):
         pass
@@ -211,6 +212,7 @@ class _FakeClient:
 
     def stream(self, *_args, **_kwargs):
         type(self).post_count += 1
+        type(self).payloads.append(dict(_kwargs.get("json") or {}))
         return _FakeStream(_FakeResponse(list(type(self).lines)))
 
 
@@ -336,7 +338,37 @@ def test_interactive_model_timeouts_are_bounded_but_report_budget_is_preserved(
     assert client._max_tokens_budget("chat:free", None) == 100
     assert client._max_tokens_budget("chat:company", None) == 20_000
     assert client._max_tokens_budget("chat:chain-governed-explanation", None) == 16_000
+    assert client._max_tokens_budget("report:morning", None) == 100
     assert client._max_tokens_budget("chat:chain-governed-explanation", 12_000) == 12_000
+
+
+@pytest.mark.asyncio
+async def test_deepseek_daily_reports_use_low_thinking_without_affecting_chat(
+    monkeypatch, tmp_path: Path,
+) -> None:
+    client = _direct_client(tmp_path)
+    client.config.hermes_model = "deepseek-v4-flash"
+    _FakeClient.post_count = 0
+    _FakeClient.payloads = []
+    _FakeClient.lines = [
+        'data: {"choices":[{"delta":{"content":"ok"},"finish_reason":null}]}',
+        'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}',
+        "data: [DONE]",
+    ]
+    monkeypatch.setattr("hermes_trader.agent.hermes_client.httpx.AsyncClient", _FakeClient)
+
+    assert await client.chat(
+        [{"role": "user", "content": "report"}], purpose="report:morning"
+    ) == "ok"
+    assert await client.chat(
+        [{"role": "user", "content": "chat"}], purpose="chat:free"
+    ) == "ok"
+
+    assert _FakeClient.payloads[0]["thinking"] == {"type": "enabled"}
+    assert _FakeClient.payloads[0]["reasoning_effort"] == "low"
+    assert _FakeClient.payloads[0]["max_tokens"] == 24_000
+    assert "thinking" not in _FakeClient.payloads[1]
+    assert "reasoning_effort" not in _FakeClient.payloads[1]
 
 
 @pytest.mark.asyncio

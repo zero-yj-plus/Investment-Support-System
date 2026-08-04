@@ -25,7 +25,6 @@ const emit = defineEmits<{
 }>()
 
 const activeNavigation = computed(() => findActiveNavigation(props.currentPath, props.currentTab))
-const brandMark = computed(() => Array.from(props.brand.trim())[0]?.toUpperCase() || 'H')
 const openGroupId = ref<string | null>(activeNavigation.value?.group.id || 'today')
 const sidebarRoot = ref<HTMLElement | null>(null)
 
@@ -68,7 +67,7 @@ defineExpose({ focusFirstItem })
     aria-label="主导航"
   >
     <a class="brand" href="#/today?tab=decision" :aria-label="`返回 ${brand} 决策总览`" @click="emit('closeMenu')">
-      <span class="brand__mark" aria-hidden="true">{{ brandMark }}</span>
+      <img class="brand__mark" src="/product-mark.svg" alt="" width="34" height="34" aria-hidden="true" draggable="false" />
       <span class="brand__copy"><strong>{{ brand }}</strong><span>{{ brandSub }}</span></span>
     </a>
 

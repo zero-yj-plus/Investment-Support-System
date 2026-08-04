@@ -2,14 +2,16 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { getJson } from '../services/api'
 import type { SentimentEvent, SentimentEventsResponse } from '../types/sentimentEvents'
 
+let sentimentSessionSnapshot: SentimentEventsResponse | null = null
+
 function errorMessage(error: unknown) {
   if (error instanceof DOMException && error.name === 'AbortError') return '请求已取消'
   return error instanceof Error ? error.message : '舆情事件读取失败'
 }
 
 export function useSentimentEvents() {
-  const data = ref<SentimentEventsResponse | null>(null)
-  const loading = ref(true)
+  const data = ref<SentimentEventsResponse | null>(sentimentSessionSnapshot)
+  const loading = ref(!sentimentSessionSnapshot)
   const refreshing = ref(false)
   const error = ref('')
   const refreshNotice = ref('')
@@ -32,6 +34,7 @@ export function useSentimentEvents() {
       if (!alive || controller !== eventController) return
       if (payload.ok === false) throw new Error(payload.error || payload.missing?.[0] || '舆情事件接口暂不可用')
       data.value = payload
+      sentimentSessionSnapshot = payload
       error.value = ''
       refreshNotice.value = ''
     } catch (caught) {
@@ -56,7 +59,7 @@ export function useSentimentEvents() {
 
   onMounted(() => {
     alive = true
-    void refresh()
+    void refresh({ background: Boolean(sentimentSessionSnapshot) })
     refreshTimer = setInterval(() => {
       if (document.visibilityState === 'visible') void refresh({ background: true })
     }, 30_000)

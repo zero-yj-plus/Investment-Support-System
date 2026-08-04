@@ -10,7 +10,7 @@ import pytest
 from fastapi.responses import JSONResponse
 
 from hermes_trader.api import routes
-from hermes_trader.analysis import recommend
+from hermes_trader.analysis import engine as engine_mod, recommend
 from hermes_trader.analysis.advice_proposal import proposal_ledger_for
 from hermes_trader.knowledge.store import Store
 
@@ -382,7 +382,7 @@ async def test_holding_question_does_not_translate_market_entry_veto_into_forced
 
     async def explain(_message, card, *, history):
         received.update(card)
-        yield "持仓补充解释"
+        yield ""
 
     monkeypatch.setattr(routes, "_governed_and_record_diagnosis", fake_card)
     state = SimpleNamespace(
@@ -395,10 +395,487 @@ async def test_holding_question_does_not_translate_market_entry_veto_into_forced
     ])
 
     assert "已有仓位可以条件性持有，但当前不加仓" in answer
-    assert "当前动作：**持有（不加仓）**" in answer
+    assert "### 现在怎么做" not in answer
     assert "当前动作：**回避**" not in answer
     assert "有效跌破 10.63" in answer
     assert received["action"] == "持有（不加仓）"
+
+
+@pytest.mark.asyncio
+async def test_stock_chat_emits_only_one_complete_model_answer(monkeypatch) -> None:
+    async def fake_card(_state, _code, *, source="问股"):
+        return {
+            "code": "000001", "name": "平安银行", "action": "观望",
+            "signal_action": "买入", "market_quote": {"price": 10.85},
+            "trade_plan": {
+                "entry_trigger": "放量站稳 10.87",
+                "stop": "有效跌破 10.63",
+            },
+        }
+
+    model_answer = (
+        "## 平安银行（000001）·最近交易日分析\n\n"
+        "当前先观望，放量站稳 10.87 后才确认转强；有效跌破 10.63 则转入防守。\n\n"
+        "### 结构与量价\n目前更适合等待市场确认，而不是提前猜方向。"
+        "趋势、量价和承接需要放在同一个框架里观察。\n\n"
+        "### 下一交易日推演\n强于预期时等待确认，正常震荡时保持耐心，弱于预期时优先控制风险。"
+    )
+
+    async def explain(_message, _card, *, history):
+        assert history == []
+        yield model_answer[:80]
+        yield model_answer[80:]
+
+    monkeypatch.setattr(routes, "_governed_and_record_diagnosis", fake_card)
+    monkeypatch.setattr(
+        routes, "build_market_context", lambda: {"market_session": "non_trading"},
+    )
+    state = SimpleNamespace(
+        engine=SimpleNamespace(governed_stock_explanation_stream=explain),
+    )
+    answer = "".join([
+        chunk async for chunk in routes._governed_stock_chat_stream(
+            state, "000001", "明天怎么看？",
+        )
+    ])
+
+    assert answer == model_answer
+    assert "### 现在怎么做" not in answer
+    assert "### 为什么" not in answer
+    assert "针对你这句话的补充" not in answer
+
+
+@pytest.mark.asyncio
+async def test_stock_chat_discards_partial_model_answer(monkeypatch) -> None:
+    async def fake_card(_state, _code, *, source="问股"):
+        return {
+            "code": "000001", "name": "平安银行", "action": "观望",
+            "signal_action": "观望", "market_quote": {"price": 10.85},
+            "trade_plan": {
+                "entry_trigger": "放量站稳 10.87",
+                "stop": "有效跌破 10.63",
+            },
+            "missing": ["集合竞价暂无专用源"],
+        }
+
+    async def explain(_message, _card, *, history):
+        yield "这是一段不应展示的半截模型正文"
+        raise RuntimeError("stream interrupted")
+
+    monkeypatch.setattr(routes, "_governed_and_record_diagnosis", fake_card)
+    state = SimpleNamespace(
+        engine=SimpleNamespace(governed_stock_explanation_stream=explain),
+    )
+    answer = "".join([
+        chunk async for chunk in routes._governed_stock_chat_stream(
+            state, "000001", "明天怎么看？",
+        )
+    ])
+
+    assert "这是一段不应展示的半截模型正文" not in answer
+    assert "次日不做无条件猜涨跌" in answer
+    assert "模型未返回可采信的完整终态" in answer
+    assert "集合竞价暂无专用源" in answer
+    assert "不是深度成稿失败原因" in answer
+
+
+@pytest.mark.asyncio
+async def test_engine_stock_answer_uses_unified_packet_and_complete_generation(
+    monkeypatch,
+) -> None:
+    captured = {}
+    content = (
+        "## 平安银行（000001）·最近交易日分析\n\n"
+        "当前结论是观望。只有放量站稳 10.87 后，结构才得到确认；"
+        "有效跌破 10.63 后应转入防守。\n\n"
+        "### 结构与量价\n"
+        + "趋势、动量与成交量需要互相确认，单一信号不足以形成交易依据。" * 12
+        + "\n\n### 市场与板块背景\n"
+        + "个股强弱需要结合所属行业和全市场风险偏好判断，不能脱离环境追价。" * 8
+        + "\n\n### 下一交易日三种情景\n"
+        + "强于预期时等待有效确认，正常震荡时继续观察，弱于预期时优先防守。" * 5
+        + "\n\n### 执行边界\n条件没有满足前不提前下注，失效后不再为原判断寻找理由。"
+    )
+
+    class FakeHermes:
+        async def chat(self, messages, **kwargs):
+            captured["messages"] = messages
+            captured["kwargs"] = kwargs
+            return content
+
+    engine = engine_mod.Engine.__new__(engine_mod.Engine)
+    engine.store = SimpleNamespace(knowledge_digest=lambda: "")
+    engine.hermes = FakeHermes()
+    monkeypatch.setattr(
+        engine_mod.market, "market_sectors",
+        lambda: {"sectors": [{"name": "银行", "change_pct": 0.5}]},
+    )
+    monkeypatch.setattr(engine_mod.senti, "compute_today", lambda _store: {"score": 60})
+    monkeypatch.setattr(engine_mod.market, "market_overview", lambda: {"total_amount": 1})
+    monkeypatch.setattr(
+        engine_mod.stock, "stock_detail",
+        lambda _code: pytest.fail("深度成稿不得再次抓取 stock_detail"),
+    )
+    card = {
+        "code": "000001", "name": "平安银行", "action": "观望",
+        "signal_action": "买入", "direct_answer": "当前先观望",
+        "answer_stage": "最近交易日回答",
+        "market_quote": {"price": 10.85, "name": "平安银行"},
+        "trade_plan": {
+            "entry_trigger": "放量站稳 10.87",
+            "stop": "有效跌破 10.63",
+        },
+        "technical_analysis": {
+            "structure": "震荡偏强",
+            "metrics": {"ma20": 10.2, "ma60": 9.8},
+        },
+        "board": {"industry": "银行"},
+    }
+
+    answer = "".join([
+        chunk async for chunk in engine.governed_stock_explanation_stream(
+            "明天怎么看？", card, history=[],
+        )
+    ])
+
+    assert answer == content
+    system_prompt = captured["messages"][0]["content"]
+    assert "统一分析资料包" in system_prompt
+    assert "800—1300 个中文字符" in system_prompt
+    assert "不再重新抓一次 stock_detail" not in system_prompt
+    assert "450 个中文字" not in system_prompt
+    assert "max_tokens" not in captured["kwargs"]
+
+
+@pytest.mark.asyncio
+async def test_engine_short_answer_is_soft_and_rewritten_once(monkeypatch) -> None:
+    short = (
+        "## 平安银行（000001）\n\n当前观望。放量站稳 10.87 才转强，"
+        "有效跌破 10.63 则转入防守。"
+    )
+    rewritten = (
+        short
+        + "\n\n### 结构与量价\n"
+        + "趋势、动量和量能需要互相确认，不能用单一指标替代完整判断。" * 14
+        + "\n\n### 市场与板块背景\n"
+        + "个股所处环境会影响信号成功率，板块联动和市场风险偏好需要同步观察。" * 8
+        + "\n\n### 下一交易日三种情景\n"
+        + "强于预期等待确认，正常震荡保持观察，弱于预期优先控制风险。" * 5
+    )
+    calls = []
+
+    class FakeHermes:
+        async def chat(self, messages, **kwargs):
+            calls.append((messages, kwargs))
+            return short if len(calls) == 1 else rewritten
+
+    engine = engine_mod.Engine.__new__(engine_mod.Engine)
+    engine.store = SimpleNamespace(knowledge_digest=lambda: "")
+    engine.hermes = FakeHermes()
+    monkeypatch.setattr(engine_mod.market, "market_sectors", lambda: {"sectors": []})
+    monkeypatch.setattr(engine_mod.senti, "compute_today", lambda _store: {})
+    monkeypatch.setattr(engine_mod.market, "market_overview", lambda: {})
+    card = {
+        "code": "000001", "name": "平安银行", "action": "观望",
+        "direct_answer": "当前先观望",
+        "market_quote": {"code": "000001", "name": "平安银行", "price": 10.85},
+        "trade_plan": {
+            "entry_trigger": "放量站稳 10.87",
+            "stop": "有效跌破 10.63",
+        },
+    }
+
+    answer = "".join([
+        chunk async for chunk in engine.governed_stock_explanation_stream(
+            "为什么？", card, history=[],
+        )
+    ])
+
+    assert answer == rewritten
+    assert len(calls) == 2
+    assert calls[1][1]["purpose"] == "chat:stock-governed-explanation-rewrite"
+    assert "answer_too_short" in calls[1][0][-1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_engine_keeps_safe_short_answer_when_rewrite_fails(monkeypatch) -> None:
+    short = "## 平安银行（000001）\n\n现有结构仍需等待确认，暂时不追价。"
+    calls = 0
+
+    class FakeHermes:
+        async def chat(self, messages, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return short
+            raise RuntimeError("rewrite unavailable")
+
+    engine = engine_mod.Engine.__new__(engine_mod.Engine)
+    engine.store = SimpleNamespace(knowledge_digest=lambda: "")
+    engine.hermes = FakeHermes()
+    monkeypatch.setattr(engine_mod.market, "market_sectors", lambda: {"sectors": []})
+    monkeypatch.setattr(engine_mod.senti, "compute_today", lambda _store: {})
+    monkeypatch.setattr(engine_mod.market, "market_overview", lambda: {})
+    card = {
+        "code": "000001", "name": "平安银行", "action": "观望",
+        "direct_answer": "当前结论是观望，不提前追价。",
+        "market_quote": {"code": "000001", "name": "平安银行", "price": 10.85},
+        "trade_plan": {
+            "entry_trigger": "放量站稳 10.87",
+            "stop": "有效跌破 10.63",
+        },
+        "missing": ["集合竞价暂无专用源"],
+    }
+
+    answer = "".join([
+        chunk async for chunk in engine.governed_stock_explanation_stream(
+            "为什么？", card, history=[],
+        )
+    ])
+
+    assert calls == 2
+    assert "当前结论是观望，不提前追价" in answer
+    assert "放量站稳 10.87" in answer
+    assert "有效跌破 10.63" in answer
+    assert card.get("_explanation_failure_reason") is None
+
+
+@pytest.mark.asyncio
+async def test_engine_blocks_conflicting_or_unsupported_price_answer(monkeypatch) -> None:
+    unsafe = (
+        "## 平安银行（000001）\n\n当前虽然冻结为观望，但现在买入，"
+        "并把目标价设为 99.99 元。"
+    )
+
+    class FakeHermes:
+        async def chat(self, messages, **kwargs):
+            return unsafe
+
+    engine = engine_mod.Engine.__new__(engine_mod.Engine)
+    engine.store = SimpleNamespace(knowledge_digest=lambda: "")
+    engine.hermes = FakeHermes()
+    monkeypatch.setattr(engine_mod.market, "market_sectors", lambda: {"sectors": []})
+    monkeypatch.setattr(engine_mod.senti, "compute_today", lambda _store: {})
+    monkeypatch.setattr(engine_mod.market, "market_overview", lambda: {})
+    card = {
+        "code": "000001", "name": "平安银行", "action": "观望",
+        "direct_answer": "当前观望",
+        "market_quote": {"code": "000001", "name": "平安银行", "price": 10.85},
+        "trade_plan": {
+            "entry_trigger": "放量站稳 10.87",
+            "stop": "有效跌破 10.63",
+        },
+    }
+
+    answer = "".join([
+        chunk async for chunk in engine.governed_stock_explanation_stream(
+            "为什么？", card, history=[],
+        )
+    ])
+
+    assert answer == ""
+    assert card["_explanation_failure_reason"] == "safety_validation_failed"
+
+
+def test_single_stock_section_prices_remain_bound_to_the_selected_stock() -> None:
+    packet = {
+        "subject": {"code": "002416", "name": "爱施德"},
+        "frozen_decision": {
+            "final_action": "观望",
+            "entry_condition": "回踩 MA20 9.12 企稳，或突破 20日高点 10.08",
+            "invalidation_condition": "有效跌破 MA20 9.12",
+        },
+        "quote": {
+            "code": "002416", "name": "爱施德", "price": 10.01,
+            "high": 10.08, "low": 9.95, "prev_close": 9.96,
+        },
+        "technical_analysis": {
+            "metrics": {"ma20": 9.12},
+            "levels": {"resistance": 10.08},
+        },
+    }
+    content = (
+        "## 爱施德（002416）·最近交易日分析\n\n当前结论为观望。\n\n"
+        "### 结构与量价\n回踩 MA20 9.12 企稳后才观察转强。\n\n"
+        "### 执行边界\n突破 20日高点 10.08 才确认；有效跌破 MA20 9.12 则失效。"
+    )
+
+    review = engine_mod._review_stock_explanation(content, packet)
+
+    assert review["ok"] is True
+    assert "unsupported_price_claim" not in review["hard_errors"]
+
+
+@pytest.mark.asyncio
+async def test_engine_rewrites_cached_partial_when_model_finishes_by_length(
+    monkeypatch,
+) -> None:
+    partial = "## 贵州茅台（600519）\n\n当前观望，趋势结构仍需确认。"
+    repaired = (
+        "## 贵州茅台（600519）·盘中分析\n\n当前结论是观望。"
+        "回踩 MA20 1274.40 附近企稳后才观察强化，"
+        "放量突破 20日高点 1363.35 才确认转强；"
+        "有效跌破 MA20 1274.40 则转入防守。"
+    )
+    calls = []
+
+    class FakeHermes:
+        async def chat_stream(self, messages, **kwargs):
+            calls.append((messages, kwargs))
+            meta = kwargs["meta"]
+            if len(calls) == 1:
+                meta["finish_reason"] = "length"
+                yield partial
+                raise RuntimeError("Hermes Agent 运行未完成（length）")
+            meta["finish_reason"] = "stop"
+            yield repaired
+
+    engine = engine_mod.Engine.__new__(engine_mod.Engine)
+    engine.store = SimpleNamespace(knowledge_digest=lambda: "")
+    engine.hermes = FakeHermes()
+    monkeypatch.setattr(engine_mod.market, "market_sectors", lambda: {"sectors": []})
+    monkeypatch.setattr(engine_mod.senti, "compute_today", lambda _store: {})
+    monkeypatch.setattr(engine_mod.market, "market_overview", lambda: {})
+    card = {
+        "code": "600519", "name": "贵州茅台", "action": "观望",
+        "direct_answer": "当前结论是观望。",
+        "market_quote": {
+            "code": "600519", "name": "贵州茅台", "price": 1351.0,
+            "high": 1363.35, "low": 1340.0,
+        },
+        "technical_analysis": {"metrics": {"ma20": 1274.40}},
+        "trade_plan": {
+            "entry_trigger": "回踩 MA20 1274.40 附近企稳，或放量突破 20日高点 1363.35",
+            "stop": "有效跌破 MA20 1274.40",
+        },
+    }
+
+    answer = "".join([
+        chunk async for chunk in engine.governed_stock_explanation_stream(
+            "明天的关键预期是什么？", card, history=[],
+        )
+    ])
+
+    assert repaired in answer
+    assert len(calls) == 2
+    assert calls[0][1]["purpose"] == "chat:stock-governed-explanation"
+    assert calls[1][1]["purpose"] == "chat:stock-governed-explanation-rewrite"
+    assert "max_tokens" not in calls[0][1]
+    assert "max_tokens" not in calls[1][1]
+    assert partial in calls[1][0][-2]["content"]
+    assert card.get("_explanation_failure_reason") is None
+
+
+@pytest.mark.asyncio
+async def test_engine_accepts_complete_missing_stop_after_full_validation(
+    monkeypatch,
+) -> None:
+    content = (
+        "## 贵州茅台（600519）次日关键预期\n\n"
+        "当前动作维持观望，只有等待确认后才调整判断；若结构失效则转入防守。\n\n"
+        "### 结构与量价\n"
+        + "趋势、动量和成交变化需要相互验证，单一信号不能替代完整判断。" * 16
+        + "\n\n### 市场与板块背景\n"
+        + "个股强弱仍需放在板块联动和市场风险偏好中观察，不能脱离环境追价。" * 10
+        + "\n\n### 下一交易日三种情景\n"
+        + "强于预期时等待确认，正常震荡时保持耐心，弱于预期时优先控制风险。" * 8
+        + "\n\n### 执行边界\n只有等待确认后才考虑调整；若结构失效，当前判断随即作废。"
+    )
+
+    class FakeHermes:
+        async def chat_stream(self, messages, **kwargs):
+            yield content
+            raise RuntimeError("Hermes Agent 未返回可采信的完整终态")
+
+    engine = engine_mod.Engine.__new__(engine_mod.Engine)
+    engine.store = SimpleNamespace(knowledge_digest=lambda: "")
+    engine.hermes = FakeHermes()
+    monkeypatch.setattr(engine_mod.market, "market_sectors", lambda: {"sectors": []})
+    monkeypatch.setattr(engine_mod.senti, "compute_today", lambda _store: {})
+    monkeypatch.setattr(engine_mod.market, "market_overview", lambda: {})
+    card = {
+        "code": "600519", "name": "贵州茅台", "action": "观望",
+        "direct_answer": "当前观望",
+        "market_quote": {"code": "600519", "name": "贵州茅台", "price": 1351.0},
+        "trade_plan": {"entry_trigger": "等待确认", "stop": "结构失效"},
+        "missing": ["基础财务"],
+    }
+
+    answer = "".join([
+        chunk async for chunk in engine.governed_stock_explanation_stream(
+            "明天的关键预期是什么？", card, history=[],
+        )
+    ])
+
+    assert answer == content
+    assert card.get("_explanation_failure_reason") is None
+
+
+@pytest.mark.asyncio
+async def test_engine_rejects_short_missing_stop_after_rewrite_still_incomplete(
+    monkeypatch,
+) -> None:
+    calls = 0
+
+    class FakeHermes:
+        async def chat_stream(self, messages, **kwargs):
+            nonlocal calls
+            calls += 1
+            yield "## 贵州茅台（600519）\n\n正文看似完成，但上游没有终态。"
+            raise RuntimeError("Hermes Agent 未返回可采信的完整终态")
+
+    engine = engine_mod.Engine.__new__(engine_mod.Engine)
+    engine.store = SimpleNamespace(knowledge_digest=lambda: "")
+    engine.hermes = FakeHermes()
+    monkeypatch.setattr(engine_mod.market, "market_sectors", lambda: {"sectors": []})
+    monkeypatch.setattr(engine_mod.senti, "compute_today", lambda _store: {})
+    monkeypatch.setattr(engine_mod.market, "market_overview", lambda: {})
+    card = {
+        "code": "600519", "name": "贵州茅台", "action": "观望",
+        "direct_answer": "当前观望",
+        "market_quote": {"code": "600519", "name": "贵州茅台", "price": 1351.0},
+        "trade_plan": {"entry_trigger": "等待确认", "stop": "结构失效"},
+        "missing": ["基础财务"],
+    }
+
+    answer = "".join([
+        chunk async for chunk in engine.governed_stock_explanation_stream(
+            "为什么？", card, history=[],
+        )
+    ])
+
+    assert calls == 2
+    assert answer == ""
+    assert card["_explanation_failure_reason"] == "model_missing_stop"
+
+
+@pytest.mark.asyncio
+async def test_stock_chat_displays_exact_missing_stop_reason(monkeypatch) -> None:
+    async def fake_card(_state, _code, *, source="问股"):
+        return {
+            "code": "600519", "name": "贵州茅台", "action": "观望",
+            "signal_action": "观望", "market_quote": {"price": 1351.0},
+            "trade_plan": {"entry_trigger": "等待确认", "stop": "结构失效"},
+            "missing": ["基础财务"],
+        }
+
+    async def explain(_message, card, *, history):
+        card["_explanation_failure_reason"] = "model_missing_stop"
+        yield ""
+
+    monkeypatch.setattr(routes, "_governed_and_record_diagnosis", fake_card)
+    state = SimpleNamespace(
+        engine=SimpleNamespace(governed_stock_explanation_stream=explain),
+    )
+    answer = "".join([
+        chunk async for chunk in routes._governed_stock_chat_stream(
+            state, "600519", "为什么？",
+        )
+    ])
+
+    assert "上游未提供标准的 stop 终态" in answer
+    assert "基础财务" in answer
+    assert "不是深度成稿失败原因" in answer
 
 
 @pytest.mark.asyncio

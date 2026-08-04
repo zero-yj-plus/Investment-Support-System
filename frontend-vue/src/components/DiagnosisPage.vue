@@ -100,8 +100,7 @@ defineExpose({ refresh })
     </template>
 
     <footer class="page-footer diagnosis-footer">
-      <span>价格单位为元；涨跌幅与换手率为百分数；成交额与资金净额为元。</span>
-      <span>风险、动作、仓位上限与价格条件均由服务端返回，前端不重算。</span>
+      <span>仅作决策支持；价格、涨跌幅、动作、仓位上限与价格条件均按服务端口径展示，前端不重算。</span>
     </footer>
 
     <dl class="diagnosis-stamp data-footnote-stamp" :class="{ 'is-stale': diagnosis?.analysis_pipeline?.quote_stale }" aria-label="诊断标的、数据时点与质量">

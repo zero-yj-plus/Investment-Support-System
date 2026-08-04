@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import timedelta
+
 from hermes_trader.data import news, news_mapping
 
 
@@ -252,7 +254,8 @@ def test_a_share_news_endpoint_contract_keeps_feed_and_mapping_metadata(monkeypa
         "summary": {"state": "complete", "mapped": 1, "candidates": 0, "total": 1},
     })
 
-    payload = news.a_share_news.__wrapped__(40)
+    monkeypatch.setattr(news, "_A_SHARE_LAST_GOOD_PATH", None)
+    payload = news._refresh_a_share_news.__wrapped__(40)
 
     assert payload["sources_live"] == 4
     assert payload["fetched_at"] == "2026-07-13T22:58:50+08:00"
@@ -264,3 +267,41 @@ def test_a_share_news_endpoint_contract_keeps_feed_and_mapping_metadata(monkeypa
     assert payload["pipeline"]["source_state"] == "degraded"
     assert payload["pipeline"]["entity_mapping_state"] == "complete"
     assert payload["pipeline"]["validation_state"] in {"disabled", "waiting", "mixed", "empty"}
+    assert payload["snapshot"]["status"] == "live"
+    assert payload["snapshot"]["served_from_snapshot"] is False
+
+
+def test_a_share_news_serves_full_snapshot_and_refreshes_in_background(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(news, "_A_SHARE_LAST_GOOD_PATH", str(tmp_path / "a-share-page-last-good.json"))
+    saved_at = (news.now_cn() - timedelta(seconds=90)).isoformat(timespec="seconds")
+    payload = {
+        "ok": True,
+        "fetched_at": "2026-07-13T22:58:50+08:00",
+        "items": [{"event_id": "event-1", "title": "真实事件"}],
+        "pipeline": {"source_state": "complete"},
+    }
+    assert news._save_a_share_last_good(payload, saved_at=saved_at) == saved_at
+    started: list[int] = []
+    monkeypatch.setattr(news, "_start_a_share_refresh", lambda limit: started.append(limit) or True)
+
+    result = news.a_share_news(40)
+
+    assert result["items"] == payload["items"]
+    assert result["snapshot"]["served_from_snapshot"] is True
+    assert result["snapshot"]["status"] == "stale"
+    assert result["snapshot"]["saved_at"] == saved_at
+    assert result["snapshot"]["age_seconds"] >= 90
+    assert result["snapshot"]["refreshing"] is True
+    assert started == [40]
+
+
+def test_a_share_news_snapshot_never_replaces_real_items_with_empty_payload(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(news, "_A_SHARE_LAST_GOOD_PATH", str(tmp_path / "a-share-page-last-good.json"))
+    good = {"ok": True, "items": [{"event_id": "event-1", "title": "真实事件"}]}
+    assert news._save_a_share_last_good(good)
+    assert news._save_a_share_last_good({"ok": True, "items": []}) is None
+
+    loaded = news._load_a_share_last_good()
+
+    assert loaded is not None
+    assert loaded[0]["items"] == good["items"]

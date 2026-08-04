@@ -27,36 +27,40 @@ const modelState = computed(() => {
 <template>
   <section class="panel diagnosis-health" aria-labelledby="diagnosis-health-title">
     <header class="section-heading">
-      <div><p class="eyebrow">DATA GOVERNANCE</p><h2 id="diagnosis-health-title">数据健康、版本与治理</h2></div>
+      <div><h2 id="diagnosis-health-title">数据质量与审计</h2></div>
       <span>{{ missing.length ? `${missing.length} 条缺口或降级说明` : '接口未声明数据缺口' }}</span>
     </header>
-    <div class="diagnosis-health__grid">
-      <article><strong>数据时点</strong><span>{{ card.analysis_pipeline?.data_as_of || card.decision_generated_at || '未返回' }}<template v-if="card.analysis_pipeline?.quote_stale"> · 已标记陈旧</template></span></article>
-      <article><strong>规则权威</strong><span>{{ card.deterministic_signal?.rule_version || card.analysis_pipeline?.rule_version || '版本未返回' }}；浏览器不重算动作、仓位或价位。</span></article>
-      <article><strong>模型边界</strong><span>{{ modelState }}</span></article>
-      <article><strong>建议留痕</strong><span>{{ adviceState }}</span></article>
-    </div>
-    <details v-if="missing.length" class="diagnosis-health__details">
-      <summary>查看全部缺失与降级说明</summary>
-      <ul><li v-for="item in missing" :key="item">{{ item }}</li></ul>
+    <details class="diagnosis-health__audit">
+      <summary>展开规则、模型、留痕与全部缺口</summary>
+      <div class="diagnosis-health__grid">
+        <article><strong>数据时点</strong><span>{{ card.analysis_pipeline?.data_as_of || card.decision_generated_at || '未返回' }}<template v-if="card.analysis_pipeline?.quote_stale"> · 已标记陈旧</template></span></article>
+        <article><strong>规则权威</strong><span>{{ card.deterministic_signal?.rule_version || card.analysis_pipeline?.rule_version || '版本未返回' }}；浏览器不重算动作、仓位或价位。</span></article>
+        <article><strong>模型边界</strong><span>{{ modelState }}</span></article>
+        <article><strong>建议留痕</strong><span>{{ adviceState }}</span></article>
+      </div>
+      <section v-if="missing.length" class="diagnosis-health__details" aria-label="全部缺失与降级说明">
+        <strong>全部缺失与降级说明</strong>
+        <ul><li v-for="item in missing" :key="item">{{ item }}</li></ul>
+      </section>
+      <footer>
+        <span>本页仅提供决策支持和本地模拟语义，不连接券商真实下单。</span>
+        <span>服务端文本按普通 Vue 文本节点展示。</span>
+      </footer>
     </details>
-    <footer>
-      <span>本页仅提供决策支持和本地模拟语义，不连接券商真实下单。</span>
-      <span>不注入 Markdown 或原始 HTML；服务端文本按普通 Vue 文本节点展示。</span>
-    </footer>
   </section>
 </template>
 
 <style scoped>
 .diagnosis-health { min-width: 0; overflow: hidden; }
 .section-heading > span { color: var(--text-3); font-size: 12px; }
+.diagnosis-health__audit > summary { min-height: 44px; padding: 11px 14px; border-top: 1px solid var(--border); color: var(--text-2); font-size: 13px; font-weight: 700; cursor: pointer; }
 .diagnosis-health__grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .diagnosis-health__grid article { display: grid; min-width: 0; gap: 3px; padding: 12px 14px; border-right: 1px solid var(--border); }
 .diagnosis-health__grid article:last-child { border-right: 0; }
 .diagnosis-health__grid strong { font-size: 13px; }
 .diagnosis-health__grid span { color: var(--text-3); font-size: 12px; }
-.diagnosis-health__details summary { min-height: 44px; padding: 11px 14px; border-top: 1px solid var(--border); color: var(--warning); font-size: 13px; cursor: pointer; }
-.diagnosis-health__details ul { margin: 0; padding: 0 30px 14px 36px; color: var(--text-3); font-size: 12px; }
+.diagnosis-health__details { padding: 10px 14px 0; border-top: 1px solid var(--border); color: var(--warning); font-size: 12px; }
+.diagnosis-health__details ul { margin: 6px 0 0; padding: 0 16px 12px 22px; color: var(--text-3); }
 .diagnosis-health footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 5px 16px; padding: 10px 14px; border-top: 1px solid var(--border); color: var(--text-3); font-size: 12px; }
 @media (max-width: 1000px) {
   .diagnosis-health__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }

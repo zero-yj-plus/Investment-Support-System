@@ -198,6 +198,9 @@ def test_vue_decision_overview_has_responsive_and_accessible_shell() -> None:
     assert ".topbar__center" in styles
     assert "min-height: 56px" in styles
     assert ".clock { display: flex; flex-direction: row" in styles
+    assert "theme === 'dark' ? '日间模式' : '夜间模式'" in app
+    assert "theme === 'dark' ? '切换到日间模式' : '切换到夜间模式'" in app
+    assert ".theme-button { display: inline-flex" in styles
 
 
 def test_vue_shell_uses_configured_client_brand_instead_of_hardcoded_customer_name() -> None:
@@ -212,7 +215,14 @@ def test_vue_shell_uses_configured_client_brand_instead_of_hardcoded_customer_na
     assert ':brand-sub="brandSubtitle"' in app
     assert "document.title = `${title} · ${brand}`" in app
     assert "<strong>{{ brand }}</strong><span>{{ brandSub }}</span>" in sidebar
-    assert "{{ brandMark }}" in sidebar
+    assert 'src="/product-mark.svg"' in sidebar
+    assert 'alt=""' in sidebar
+    assert 'width="34" height="34"' in sidebar
+    assert "brandMark" not in sidebar
+    assert '<link rel="icon" type="image/svg+xml" href="/product-mark.svg" />' in index
+    assert '<link rel="icon" type="image/x-icon" href="/favicon.ico" />' in index
+    assert (VUE_ROOT / "public/product-mark.svg").is_file()
+    assert (VUE_ROOT / "public/favicon.ico").is_file()
     assert "brand?: string" in types
     assert "brand_sub?: string" in types
     assert "W.U.D.I." not in app
@@ -389,7 +399,7 @@ def test_vue_premarket_report_uses_locked_report_and_live_verification_contracts
     assert "clearInterval(refreshTimer)" in composable
     assert "removeEventListener('visibilitychange'" in composable
     assert "readWithWatchdog" in api
-    assert "90_000" in api
+    assert "240_000" in api
     assert "reader.cancel()" in api
     assert "force_resend: true" in composable
     assert "resend_id: crypto.randomUUID()" in composable
@@ -642,6 +652,10 @@ def test_vue_hotboard_cleans_lifecycle_and_uses_native_safe_interactions() -> No
     assert ':href="diagnosisHref(stock.code)"' in table
     assert 'tabindex="0"' in table
     assert 'aria-sort' in table
+    assert ':aria-sort="ariaSort(\'limit_up_type\')"' in table
+    assert "@click=\"sortBy('limit_up_type')\"" in table
+    assert "String(leftValue).localeCompare(String(rightValue), 'zh-CN')" in table
+    assert "key === 'limit_up_type' ? '按名称倒序'" in table
     assert '<th scope="col">回封</th>' not in table
     assert 'v-if="stock.is_again" class="hotboard-again">回封</span>' in table
     assert "white-space: nowrap" in table

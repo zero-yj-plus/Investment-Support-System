@@ -2302,10 +2302,118 @@ def _stock_chat_stage_label(context: dict | None) -> str:
     }.get(session, "个股回答")
 
 
+def _deterministic_stock_chat_fallback(
+    card: dict,
+    direct: str,
+    stage_label: str,
+    failure_reason: str = "model_unavailable",
+) -> str:
+    """模型深度成稿不可用时，返回一段自然语言安全说明而非字段卡片。"""
+    quote = card.get("market_quote") or {}
+    technical = card.get("technical_analysis") or {}
+    plan = card.get("trade_plan") or {}
+    name = card.get("name") or quote.get("name") or card.get("code") or "个股"
+    code = str(card.get("code") or "").strip()
+    title = f"## {name}（{code}）·{stage_label}" if code else f"## {name}·{stage_label}"
+
+    snapshot: list[str] = []
+    price = _finite_number(quote.get("price"))
+    change = _finite_number(quote.get("change_pct"))
+    if price is not None:
+        snapshot.append(f"现价 {price:.2f} 元")
+    if change is not None:
+        snapshot.append(f"最近涨跌幅 {change:+.2f}%")
+
+    structure = str(technical.get("structure") or "").strip()
+    reasons = [
+        str(item).strip() for item in (technical.get("reasons") or [])
+        if str(item).strip()
+    ][:3]
+    structure_parts = []
+    if structure:
+        structure_parts.append(f"可复算结构暂定为“{structure}”")
+    if reasons:
+        structure_parts.append("主要依据是" + "、".join(reasons))
+    if snapshot:
+        structure_parts.append("；".join(snapshot))
+
+    risk = card.get("risk_decision") or {}
+    risk_reasons = [
+        str(item).strip() for item in (risk.get("reasons") or [])
+        if str(item).strip()
+    ][:2]
+    risk_text = (
+        "当前风控还提示" + "；".join(risk_reasons) + "。"
+        if risk_reasons else ""
+    )
+    entry = str(plan.get("entry_trigger") or "价格与量能形成有效确认").strip()
+    stop = str(plan.get("stop") or "关键价格证据补齐后再设失效条件").strip()
+
+    missing = [str(item).strip() for item in (card.get("missing") or []) if str(item).strip()]
+    reason_text = {
+        "model_unavailable": "模型服务本轮不可用",
+        "model_incomplete": "模型未返回可采信的完整终态",
+        "model_length": "模型正文达到输出长度上限，且未形成完整终态",
+        "model_length_after_rewrite": "模型正文及自动修订稿均达到输出长度上限",
+        "model_missing_stop": "模型返回了正文，但上游未提供标准的 stop 终态",
+        "model_stream_interrupted": "模型已生成部分正文，但传输在完整终态前中断",
+        "model_content_filter": "模型正文被上游内容策略终止",
+        "model_nonstop_terminal": "模型以非 stop 状态结束，本轮正文不可采信",
+        "safety_validation_failed": "模型正文与冻结动作或价格证据存在冲突",
+        "output_too_large": "模型正文异常超出问股展示上限",
+        "model_empty": "模型本轮未返回正文",
+    }.get(failure_reason, "模型深度成稿本轮未完成")
+    paragraphs = [
+        title,
+        "",
+        f"**{direct}**",
+    ]
+    if structure_parts:
+        paragraphs.extend(["", "。".join(structure_parts).rstrip("。") + "。" + risk_text])
+    paragraphs.extend([
+        "",
+        f"接下来不需要预判单边走势：若出现{entry}，原判断才得到强化；"
+        f"若{stop}，当前结构即被证伪，应转入防守。",
+        "",
+        f"> 深度成稿未采用：{reason_text}。以上仅保留已核验的确定性结论。",
+    ])
+    if missing:
+        paragraphs.extend([
+            "",
+            "> 数据边界：本轮仍缺少"
+            + "、".join(missing[:3])
+            + "；这些数据只限制对应维度，不是深度成稿失败原因。",
+        ])
+    return "\n".join(paragraphs)
+
+
+def _stock_model_answer_is_displayable(answer: str, card: dict) -> bool:
+    """扩展实现只做安全兜底；篇幅和措辞不再作为整篇回退条件。"""
+    text = str(answer or "").strip()
+    action = str(card.get("action") or "").strip()
+    if not text or "针对你这句话的补充" in text or "### 现在怎么做" in text:
+        return False
+    conservative = action in {"观望", "回避", "持有", "持有（不加仓）", "减仓", "止损", "清仓"}
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or not re.search(r"买入|建仓|加仓|低吸|介入|试仓|抄底|进攻仓", line):
+            continue
+        if re.search(r"不|禁止|暂停|避免|回避|观望|休息|不得|取消|无|只看", line):
+            continue
+        if action == "持有（不加仓）" and "加仓" in line:
+            return False
+        if conservative and re.search(
+            r"立即买入|直接买入|现在买入|马上买入|果断买入|直接下单|无条件买入|满仓|重仓",
+            line,
+        ):
+            return False
+    return True
+
+
 async def _governed_stock_chat_stream(
     st, code: str, message: str = "", history: list[dict] | None = None,
 ):
-    """个股问答先输出已治理直答，再让模型在冻结结论边界内补充。"""
+    """个股问答只输出一份已治理完整成稿，失败时回退自然语言安全说明。"""
     try:
         card = await _governed_and_record_diagnosis(st, code)
     except Exception:  # noqa: BLE001
@@ -2319,9 +2427,6 @@ async def _governed_stock_chat_stream(
         )
         return
     direct = _stock_question_answer(message, card)
-    quote = card.get("market_quote") or {}
-    evidence = card.get("evidence") or []
-    plan = card.get("trade_plan") or {}
     holding_question = any(
         word in str(message or "")
         for word in ("继续持有", "能持有", "要不要拿", "能拿")
@@ -2332,77 +2437,62 @@ async def _governed_stock_chat_stream(
         and card.get("action") in {"观望", "回避"}
     )
     display_action = "持有（不加仓）" if holding_only_action else (card.get("action") or "观望")
-    px = _finite_number(quote.get("price"))
-    chg = _finite_number(quote.get("change_pct"))
-    snapshot = []
-    if px is not None:
-        snapshot.append(f"现价 {px:.2f}")
-    if chg is not None:
-        snapshot.append(f"涨跌幅 {chg:+.2f}%")
-    authorization = ""
-    if card.get("signal_action") in {"买入", "加仓"} and card.get("action") != card.get("signal_action"):
-        risk = card.get("risk_decision") or {}
-        risk_reasons = "；".join(str(item) for item in (risk.get("reasons") or [])[:2])
-        authorization = (
-            "- 风控语义：盘口信号偏强，但当前只是不授权新仓/加仓，"
-            "不等于这只股票不存在或必须立刻清仓。"
-            + (f" 原因：{risk_reasons}" if risk_reasons else "")
-        )
     try:
         market_context = await asyncio.to_thread(build_market_context)
     except Exception:  # noqa: BLE001
         log.warning("个股问答无法取得交易阶段，使用中性标题 code=%s", code)
         market_context = {}
     stage_label = _stock_chat_stage_label(market_context)
-    lines = [
-        f"## {card.get('name') or quote.get('name') or code}（{code}）·{stage_label}",
-        "",
-        f"**直接回答：{direct}**",
-        "",
-        "### 现在怎么做",
-        f"- 当前动作：**{display_action}**"
-        + (f"（{'、'.join(snapshot)}）" if snapshot else ""),
-        f"- 强化条件：{plan.get('entry_trigger') or '价格锚点不足'}",
-        f"- 失效/离场条件：{plan.get('stop') or '价格锚点不足'}",
-    ]
-    if authorization:
-        lines.append(authorization)
-    lines.extend(["", "### 为什么"])
-    for row in evidence[:6]:
-        if isinstance(row, dict):
-            lines.append(
-                f"- {row.get('finding') or '—'}（{row.get('source') or '来源未标注'}）"
-            )
-    if not evidence:
-        lines.append("- 当前只有基础行情，未取得足够可复算证据。")
-    yield "\n".join(lines)
+    explanation_card = dict(card)
+    explanation_card.setdefault("code", code)
+    explanation_card["action"] = display_action
+    explanation_card["direct_answer"] = direct
+    explanation_card["answer_stage"] = stage_label
+    if holding_only_action:
+        # 只调整这一轮问答的表达上下文；原始诊断卡和 RiskGate 回执
+        # 保持不变，避免“不授权加仓”被扩写成“已有仓位必须退出”。
+        explanation_card["summary"] = direct
 
-    # 常规快答先输出，然后才让模型回答用户的自由问法。模型收到的
-    # action/entry/stop 已冻结，只能解释，不能改写。
+    # 深度模型先在服务端完成并通过校验，之后才作为唯一正文下发。
+    # 若上游中途失败，已收集的半截内容会被丢弃，不进入会话历史。
     explain = getattr(st.engine, "governed_stock_explanation_stream", None)
+    failure_reason = "model_unavailable"
     if callable(explain) and message:
+        parts: list[str] = []
+        total = 0
         try:
-            explanation_card = card
-            if holding_only_action:
-                # 只调整这一轮问答的表达上下文；原始诊断卡和
-                # RiskGate 回执保持不变。模型因此不会再把「不加仓」
-                # 扩写成「不建议继续持有」。
-                explanation_card = dict(card)
-                explanation_card["action"] = display_action
-                explanation_card["summary"] = direct
-            emitted = False
             async for delta in explain(message, explanation_card, history=history or []):
                 text = str(delta or "")
                 if not text:
                     continue
-                if not emitted:
-                    emitted = True
-                    yield "\n\n### 针对你这句话的补充\n"
-                yield text
-        except Exception:  # noqa: BLE001 — 补充解释失败不覆盖已返回的快答
-            # 确定性直答已经完整返回；模型补充是可选增强。这里记 warning
-            # 而不是 ERROR/Traceback，避免监控把“增强未连”误报成问股失败。
-            log.warning("盘中问股模型补充未返回，保留确定性直答 code=%s", code)
+                total += len(text)
+                if total > 12_000:
+                    parts = []
+                    failure_reason = "output_too_large"
+                    break
+                parts.append(text)
+        except Exception:  # noqa: BLE001 — 半截模型正文必须丢弃
+            parts = []
+            failure_reason = "model_incomplete"
+            log.warning("盘中问股深度成稿未返回，使用确定性回退 code=%s", code)
+        answer = "".join(parts).strip()
+        if _stock_model_answer_is_displayable(answer, explanation_card):
+            yield answer
+            return
+        if answer:
+            failure_reason = "safety_validation_failed"
+            log.warning("盘中问股成稿未保留冻结边界，使用确定性回退 code=%s", code)
+        else:
+            failure_reason = str(
+                explanation_card.get("_explanation_failure_reason") or failure_reason
+            )
+
+    yield _deterministic_stock_chat_fallback(
+        explanation_card,
+        direct,
+        stage_label,
+        failure_reason=failure_reason,
+    )
 
 
 async def _governed_position_chat_stream(

@@ -248,7 +248,7 @@ async def test_manual_push_accepts_only_passed_validation_receipt() -> None:
 
     response = await push_report("morning", request)
 
-    assert response == {"ok": True}
+    assert response == {"ok": True, "resent": False}
     assert request.target.calls == 1
     assert request.store.marked is True
 

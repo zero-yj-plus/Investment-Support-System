@@ -203,8 +203,51 @@ class _Hermes:
         yield self.content
 
 
+class _LengthThenStopHermes:
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    async def chat_stream(self, *_args, **kwargs):
+        self.calls.append(kwargs)
+        meta = kwargs["meta"]
+        if len(self.calls) == 1:
+            meta["finish_reason"] = "length"
+            yield "这是一份必须丢弃的截断稿"
+            raise RuntimeError("Hermes Agent 运行未完成（length）")
+        meta["finish_reason"] = "stop"
+        yield "# 完整日报\n\n风险闸未额外阻断，仅保留观察。"
+
+
 async def _collect(stream) -> list[dict]:
     return [event async for event in stream]
+
+
+@pytest.mark.asyncio
+async def test_report_length_falls_back_once_and_discards_truncated_draft(
+    monkeypatch, tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    hermes = _LengthThenStopHermes()
+    engine = Engine(_Config(), store, hermes)
+    monkeypatch.setattr(
+        engine, "_context_for_report",
+        lambda _rtype: _async_value({"今日日期": "2026-07-13"}),
+    )
+    monkeypatch.setattr(engine_module, "is_trade_day", lambda: False)
+    monkeypatch.setattr(
+        engine_module,
+        "validate_report_finalization",
+        lambda *_args, **_kwargs: {"ok": True, "status": "passed"},
+    )
+
+    events = await _collect(engine.generate_report_stream("morning"))
+    report = store.get_report("morning", "2026-07-13")
+
+    assert [call["thinking_mode"] for call in hermes.calls] == ["enabled", "disabled"]
+    assert report is not None
+    assert "完整日报" in report["content_md"]
+    assert "必须丢弃的截断稿" not in report["content_md"]
+    assert events[-1]["done"] is True
 
 
 @pytest.mark.asyncio

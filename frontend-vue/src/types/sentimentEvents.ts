@@ -103,6 +103,13 @@ export interface SentimentEventsResponse {
   sources_live?: number | null
   missing?: string[]
   items?: SentimentEvent[]
+  snapshot?: {
+    served_from_snapshot?: boolean
+    status?: 'live' | 'fresh' | 'stale' | string
+    saved_at?: string | null
+    age_seconds?: number | null
+    refreshing?: boolean
+  }
   mapping?: {
     state?: string
     mapped?: number | null

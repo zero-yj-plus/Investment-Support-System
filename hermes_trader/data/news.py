@@ -4,8 +4,10 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 import json
+import logging
 import os
 from pathlib import Path
+import threading
 
 from . import tencent_source as tc
 from . import cls_news_source as cls_news
@@ -32,15 +34,22 @@ _NEWS_TIMEOUT = 7
 NEWS_FEED_REFRESH_SECONDS = 30
 _CLS_LAST_GOOD_PATH: str | None = None
 _CN_LAST_GOOD_PATH: str | None = None
+_A_SHARE_LAST_GOOD_PATH: str | None = None
 _CN_LAST_GOOD_MAX_AGE = timedelta(hours=6)
+_A_SHARE_LAST_GOOD_MAX_AGE = timedelta(hours=6)
+_A_SHARE_SNAPSHOT_SCHEMA = "a-share-news-page-snapshot-v1"
+_A_SHARE_REFRESH_LOCK = threading.Lock()
+_A_SHARE_REFRESHING = False
+log = logging.getLogger("hermes.news")
 
 
 def init(data_dir: str | Path) -> None:
     """配置客户隔离的快讯 last-good 快照路径。"""
-    global _CLS_LAST_GOOD_PATH, _CN_LAST_GOOD_PATH  # noqa: PLW0603
+    global _CLS_LAST_GOOD_PATH, _CN_LAST_GOOD_PATH, _A_SHARE_LAST_GOOD_PATH  # noqa: PLW0603
     news_dir = Path(data_dir) / "news"
     _CLS_LAST_GOOD_PATH = str(news_dir / "cls-last-good.json")
     _CN_LAST_GOOD_PATH = str(news_dir / "cn-last-good.json")
+    _A_SHARE_LAST_GOOD_PATH = str(news_dir / "a-share-page-last-good.json")
 
 
 def _save_cn_last_good(payload: dict) -> None:
@@ -80,6 +89,76 @@ def _load_cn_last_good() -> dict | None:
         return payload
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         return None
+
+
+def _save_a_share_last_good(payload: dict, *, saved_at: str | None = None) -> str | None:
+    """原子保存非空完整页面响应；失败或空结果不得覆盖最近成功快照。"""
+    if not _A_SHARE_LAST_GOOD_PATH or payload.get("ok") is False or not payload.get("items"):
+        return None
+    stamp = saved_at or now_cn().isoformat(timespec="seconds")
+    envelope = {
+        "schema": _A_SHARE_SNAPSHOT_SCHEMA,
+        "saved_at": stamp,
+        "payload": payload,
+    }
+    path = Path(_A_SHARE_LAST_GOOD_PATH)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    try:
+        tmp.write_text(
+            json.dumps(envelope, ensure_ascii=False, separators=(",", ":")),
+            encoding="utf-8",
+        )
+        os.chmod(tmp, 0o600)
+        tmp.replace(path)
+        os.chmod(path, 0o600)
+        return stamp
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def _load_a_share_last_good() -> tuple[dict, str, float] | None:
+    """读取仍在六小时保护窗内的完整页面快照，并返回载荷、保存时点与年龄。"""
+    if not _A_SHARE_LAST_GOOD_PATH:
+        return None
+    try:
+        envelope = json.loads(Path(_A_SHARE_LAST_GOOD_PATH).read_text(encoding="utf-8"))
+        if not isinstance(envelope, dict) or envelope.get("schema") != _A_SHARE_SNAPSHOT_SCHEMA:
+            return None
+        payload = envelope.get("payload")
+        if not isinstance(payload, dict) or payload.get("ok") is False:
+            return None
+        if not isinstance(payload.get("items"), list) or not payload["items"]:
+            return None
+        saved_at = str(envelope.get("saved_at") or "")
+        stamp = datetime.fromisoformat(saved_at)
+        if stamp.tzinfo is None or stamp.utcoffset() is None:
+            return None
+        age = (now_cn().astimezone(stamp.tzinfo) - stamp).total_seconds()
+        if age < 0 or age > _A_SHARE_LAST_GOOD_MAX_AGE.total_seconds():
+            return None
+        return dict(payload), saved_at, age
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return None
+
+
+def _with_a_share_snapshot(
+    payload: dict, *, served_from_snapshot: bool, saved_at: str, age_seconds: float,
+    refreshing: bool,
+) -> dict:
+    out = dict(payload)
+    age = max(0, round(age_seconds))
+    out["snapshot"] = {
+        "served_from_snapshot": served_from_snapshot,
+        "status": (
+            "live" if not served_from_snapshot
+            else ("fresh" if age <= NEWS_FEED_REFRESH_SECONDS else "stale")
+        ),
+        "saved_at": saved_at,
+        "age_seconds": age,
+        "refreshing": refreshing,
+    }
+    return out
 
 # 新闻发布方、接入方式与证据层级是三个不同维度，不再用一个“来源”字段混在一起。
 # tier_1 只表示客户授权数据通道；tier_2 表示公开采集端，不等于官方直连或独立信源。
@@ -545,9 +624,8 @@ def cn_news_aggregated(limit: int = 40) -> dict:
     return out
 
 
-@ttl_cache(NEWS_FEED_REFRESH_SECONDS)
-def a_share_news(limit: int = 40) -> dict:
-    """专用 A 股事件映射：新闻聚合与映射分层，避免拖慢其它多市场消费者。"""
+def _build_a_share_news(limit: int = 40) -> dict:
+    """真实构建 A 股新闻页面响应；调用方负责缓存、快照与后台刷新。"""
     from .news_mapping import map_news_items  # noqa: PLC0415
 
     bounded = max(1, min(int(limit), 80))
@@ -601,6 +679,74 @@ def a_share_news(limit: int = 40) -> dict:
             "validation_state": validation_state,
         },
     }
+
+
+@ttl_cache(NEWS_FEED_REFRESH_SECONDS)
+def _refresh_a_share_news(limit: int = 40) -> dict:
+    """单飞刷新完整响应并落客户隔离快照；30 秒内复用同一真实结果。"""
+    payload = _build_a_share_news(limit)
+    saved_at = None
+    try:
+        saved_at = _save_a_share_last_good(payload)
+    except OSError as exc:
+        log.warning("舆情事件完整快照保存失败，本轮真实结果仍返回: %s", str(exc)[:180])
+    stamp = saved_at or now_cn().isoformat(timespec="seconds")
+    return _with_a_share_snapshot(
+        payload,
+        served_from_snapshot=False,
+        saved_at=stamp,
+        age_seconds=0,
+        refreshing=False,
+    )
+
+
+def _background_refresh_a_share_news(limit: int) -> None:
+    global _A_SHARE_REFRESHING  # noqa: PLW0603
+    try:
+        _refresh_a_share_news(limit)
+    except Exception as exc:  # noqa: BLE001 -- 后台失败必须保留已有完整快照
+        log.warning("舆情事件后台刷新失败，继续沿用最近完整快照: %s", str(exc)[:180])
+    finally:
+        with _A_SHARE_REFRESH_LOCK:
+            _A_SHARE_REFRESHING = False
+
+
+def _start_a_share_refresh(limit: int) -> bool:
+    """最多启动一个后台刷新线程；True 表示已有或刚启动刷新。"""
+    global _A_SHARE_REFRESHING  # noqa: PLW0603
+    with _A_SHARE_REFRESH_LOCK:
+        if _A_SHARE_REFRESHING:
+            return True
+        _A_SHARE_REFRESHING = True
+    try:
+        threading.Thread(
+            target=_background_refresh_a_share_news,
+            args=(limit,),
+            name="a-share-news-refresh",
+            daemon=True,
+        ).start()
+        return True
+    except RuntimeError:
+        with _A_SHARE_REFRESH_LOCK:
+            _A_SHARE_REFRESHING = False
+        return False
+
+
+def a_share_news(limit: int = 40) -> dict:
+    """快照优先返回完整舆情页面；过期后单飞后台刷新，无快照时才同步冷加载。"""
+    bounded = max(1, min(int(limit), 80))
+    cached = _load_a_share_last_good()
+    if cached is None:
+        return _refresh_a_share_news(bounded)
+    payload, saved_at, age_seconds = cached
+    refreshing = age_seconds > NEWS_FEED_REFRESH_SECONDS and _start_a_share_refresh(bounded)
+    return _with_a_share_snapshot(
+        payload,
+        served_from_snapshot=True,
+        saved_at=saved_at,
+        age_seconds=age_seconds,
+        refreshing=refreshing,
+    )
 
 
 @ttl_cache(600)

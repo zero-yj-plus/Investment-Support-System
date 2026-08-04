@@ -49,6 +49,11 @@ def test_vue_sentiment_events_preserves_missing_empty_degraded_and_units() -> No
 def test_vue_sentiment_events_cleans_request_timer_and_visibility_listener() -> None:
     source = _read("src/composables/useSentimentEvents.ts")
 
+    assert "let sentimentSessionSnapshot: SentimentEventsResponse | null = null" in source
+    assert "ref<SentimentEventsResponse | null>(sentimentSessionSnapshot)" in source
+    assert "const loading = ref(!sentimentSessionSnapshot)" in source
+    assert "sentimentSessionSnapshot = payload" in source
+    assert "refresh({ background: Boolean(sentimentSessionSnapshot) })" in source
     assert "let eventController: AbortController | null = null" in source
     assert "eventController?.abort()" in source
     assert "if (!alive || controller !== eventController) return" in source
@@ -93,6 +98,11 @@ def test_vue_sentiment_events_responsive_contract_and_audit_scenarios() -> None:
     assert "@media (max-width: 900px)" in feed + card
     assert "grid-template-columns: minmax(0, 1fr)" in page + feed + card
     assert "min-height: 44px" in feed + card
+    assert "最近抓取 / 页面快照" in page
+    assert "陈旧快照" in page
+    assert "后台更新中" in page
+    assert "data.value?.snapshot?.status === 'stale'" in page
+    assert ".sentiment-snapshot-state.is-stale" in page
     assert "@media (prefers-reduced-motion: reduce)" in page
     assert "name: 'sentiment', hash: '#/today?tab=news'" in audit
     for scenario in ("sentiment-loading-375", "sentiment-empty-1440", "sentiment-partial-failure-1440"):

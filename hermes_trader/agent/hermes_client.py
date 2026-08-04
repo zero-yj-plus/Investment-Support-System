@@ -130,6 +130,29 @@ class HermesClient:
             return max(configured, 16_000)
         return configured
 
+    def _deepseek_report_controls(
+        self,
+        purpose: str,
+        model: str,
+        thinking_mode: str | None = None,
+    ) -> dict:
+        """DeepSeek 日报默认低强度思考；显式回退时可切换为非思考。"""
+        if not purpose.startswith("report:") or not str(model).startswith("deepseek-"):
+            return {}
+        try:
+            host = (urlsplit(self.base_url).hostname or "").lower()
+        except Exception:
+            return {}
+        if host != "api.deepseek.com":
+            return {}
+        mode = str(thinking_mode or "enabled").strip().lower()
+        if mode not in {"enabled", "disabled"}:
+            mode = "enabled"
+        controls = {"thinking": {"type": mode}}
+        if mode == "enabled":
+            controls["reasoning_effort"] = "low"
+        return controls
+
     def _is_local_gateway(self) -> bool:
         # A user-selected localhost OpenAI-compatible provider is a direct
         # model connection, not implicitly a Hermes Agent gateway.
@@ -493,6 +516,7 @@ class HermesClient:
         purpose: str = "unspecified",
         client_request_id: str | None = None,
         timeout_sec: float | None = None,
+        thinking_mode: str | None = None,
     ) -> AsyncIterator[str]:
         """流式对话，逐段 yield 文本增量。
 
@@ -502,8 +526,14 @@ class HermesClient:
         """
         if temperature is None:
             temperature = getattr(self.config, "hermes_temperature", 0.4)
+        explicit_max_tokens = max_tokens
         max_tokens = self._max_tokens_budget(purpose, max_tokens)
         selected_model = model or self.config.hermes_model
+        report_controls = self._deepseek_report_controls(
+            purpose, selected_model, thinking_mode
+        )
+        if report_controls and explicit_max_tokens is None:
+            max_tokens = max(max_tokens, 24_000)
         payload = {
             "model": selected_model,
             "messages": messages,
@@ -511,6 +541,7 @@ class HermesClient:
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
+        payload.update(report_controls)
         timeout_budget = self._timeout_budget(purpose, timeout_sec)
         timeout = httpx.Timeout(timeout_budget, connect=min(15.0, timeout_budget))
 

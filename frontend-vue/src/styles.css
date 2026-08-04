@@ -73,7 +73,7 @@ a { color: inherit; }
 .app-shell.sidebar-collapsed { --sidebar-current-width: 64px; }
 .sidebar { position: sticky; top: 0; z-index: 30; display: flex; flex-direction: column; width: var(--sidebar-current-width); height: 100dvh; overflow: hidden; border-right: 1px solid var(--border); background: var(--surface); transition: width var(--ease); }
 .brand { display: flex; min-height: 72px; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--border); color: inherit; text-decoration: none; }
-.brand__mark { display: grid; width: 34px; height: 34px; place-items: center; border: 1px solid var(--accent); border-radius: 7px; color: var(--accent); font: 700 20px/1 "SFMono-Regular", Consolas, monospace; }
+.brand__mark { display: block; width: 34px; height: 34px; flex: 0 0 34px; object-fit: contain; }
 .brand__copy { display: flex; min-width: 0; flex-direction: column; white-space: nowrap; }
 .brand strong { font-size: 16px; letter-spacing: .12em; }
 .brand__copy > span { color: var(--text-3); font-size: 13px; }
@@ -127,6 +127,7 @@ a { color: inherit; }
 .market-session.is-closed { color:var(--text-2); background:var(--surface-2); }
 .icon-button, .refresh-button { min-width: 44px; min-height: 44px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); cursor: pointer; transition: background var(--ease), border-color var(--ease), color var(--ease); }
 .icon-button { display: grid; place-items: center; padding: 0; }
+.theme-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 0 12px; white-space: nowrap; }
 .refresh-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 0 13px; }
 .icon-button:hover, .refresh-button:hover { border-color: var(--border-strong); background: var(--surface-2); }
 .refresh-button:disabled { cursor: wait; opacity: .62; }
@@ -453,6 +454,8 @@ h1, h2, h3, p { overflow-wrap: anywhere; }
   .clock-desktop { display:none; }
   .clock-mobile { display:inline; }
   .market-session { min-height:28px; padding:3px 7px; font-size:13px; }
+  .theme-button { width: 44px; padding: 0; }
+  .theme-button__label { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
   .refresh-button span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); }
   .refresh-button { width: 44px; padding: 0; }
   main { padding: 12px 12px calc(26px + env(safe-area-inset-bottom)); }

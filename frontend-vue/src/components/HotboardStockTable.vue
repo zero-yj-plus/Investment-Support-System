@@ -2,7 +2,8 @@
 import { computed, ref } from 'vue'
 import type { HotboardStock } from '../types/hotboard'
 
-type SortKey = 'price' | 'boardCount' | 'suc_rate_pct' | 'seal_amount'
+type SortKey = 'price' | 'boardCount' | 'limit_up_type' | 'suc_rate_pct' | 'seal_amount'
+type SortValue = number | string
 
 const props = defineProps<{ stocks: HotboardStock[]; theme: string }>()
 const sortKey = ref<SortKey | null>(null)
@@ -33,8 +34,10 @@ function boardTone(stock: HotboardStock): string {
   return 'is-first'
 }
 
-function numericValue(stock: HotboardStock, key: SortKey): number | null {
-  return key === 'boardCount' ? boardCount(stock) : finite(stock[key])
+function sortValue(stock: HotboardStock, key: SortKey): SortValue | null {
+  if (key === 'boardCount') return boardCount(stock)
+  if (key === 'limit_up_type') return String(stock.limit_up_type || '').trim() || null
+  return finite(stock[key])
 }
 
 function fallbackOrder(left: HotboardStock, right: HotboardStock): number {
@@ -46,13 +49,16 @@ const visibleStocks = computed(() => {
   const rows = props.stocks.filter((stock) => !props.theme || splitThemes(stock.reason_type).includes(props.theme))
   return [...rows].sort((left, right) => {
     if (!sortKey.value) return fallbackOrder(left, right)
-    const leftValue = numericValue(left, sortKey.value)
-    const rightValue = numericValue(right, sortKey.value)
+    const leftValue = sortValue(left, sortKey.value)
+    const rightValue = sortValue(right, sortKey.value)
     if (leftValue == null && rightValue == null) return fallbackOrder(left, right)
     if (leftValue == null) return 1
     if (rightValue == null) return -1
     const direction = sortDirection.value === 'ascending' ? 1 : -1
-    return direction * (leftValue - rightValue) || fallbackOrder(left, right)
+    const comparison = typeof leftValue === 'number' && typeof rightValue === 'number'
+      ? leftValue - rightValue
+      : String(leftValue).localeCompare(String(rightValue), 'zh-CN')
+    return direction * comparison || fallbackOrder(left, right)
   })
 })
 
@@ -69,7 +75,7 @@ function ariaSort(key: SortKey): 'none' | 'ascending' | 'descending' {
 }
 
 function sortLabel(key: SortKey, label: string): string {
-  if (sortKey.value !== key) return `${label}排序，当前未排序；首次点击按从高到低`
+  if (sortKey.value !== key) return `${label}排序，当前未排序；首次点击${key === 'limit_up_type' ? '按名称倒序' : '按从高到低'}`
   return `${label}排序，当前${sortDirection.value === 'descending' ? '降序' : '升序'}`
 }
 
@@ -113,7 +119,7 @@ function diagnosisHref(code: string | undefined): string {
             <th scope="col" :aria-sort="ariaSort('price')"><button type="button" class="hotboard-sort-button" :class="{ 'is-active': sortKey === 'price' }" :aria-label="sortLabel('price', '现价')" @click="sortBy('price')">现价 <span class="hotboard-sort-icon" aria-hidden="true">{{ sortKey === 'price' ? sortDirection === 'descending' ? '↓' : '↑' : '↕' }}</span></button></th>
             <th scope="col">涨幅</th>
             <th scope="col" :aria-sort="ariaSort('boardCount')"><button type="button" class="hotboard-sort-button" :class="{ 'is-active': sortKey === 'boardCount' }" :aria-label="sortLabel('boardCount', '几天几板')" @click="sortBy('boardCount')">几天几板 <span class="hotboard-sort-icon" aria-hidden="true">{{ sortKey === 'boardCount' ? sortDirection === 'descending' ? '↓' : '↑' : '↕' }}</span></button></th>
-            <th scope="col">板型</th>
+            <th scope="col" :aria-sort="ariaSort('limit_up_type')"><button type="button" class="hotboard-sort-button" :class="{ 'is-active': sortKey === 'limit_up_type' }" :aria-label="sortLabel('limit_up_type', '板型')" @click="sortBy('limit_up_type')">板型 <span class="hotboard-sort-icon" aria-hidden="true">{{ sortKey === 'limit_up_type' ? sortDirection === 'descending' ? '↓' : '↑' : '↕' }}</span></button></th>
             <th scope="col" :aria-sort="ariaSort('suc_rate_pct')"><button type="button" class="hotboard-sort-button" :class="{ 'is-active': sortKey === 'suc_rate_pct' }" :aria-label="sortLabel('suc_rate_pct', '封板率')" @click="sortBy('suc_rate_pct')">封板率 <span class="hotboard-sort-icon" aria-hidden="true">{{ sortKey === 'suc_rate_pct' ? sortDirection === 'descending' ? '↓' : '↑' : '↕' }}</span></button></th>
             <th scope="col">首封</th>
             <th scope="col" :aria-sort="ariaSort('seal_amount')"><button type="button" class="hotboard-sort-button" :class="{ 'is-active': sortKey === 'seal_amount' }" :aria-label="sortLabel('seal_amount', '封单额')" @click="sortBy('seal_amount')">封单额 <span class="hotboard-sort-icon" aria-hidden="true">{{ sortKey === 'seal_amount' ? sortDirection === 'descending' ? '↓' : '↑' : '↕' }}</span></button></th>

@@ -9,12 +9,28 @@ const { data, events, loading, refreshing, error, refreshNotice, refresh } = use
 watch(refreshing, (value) => emit('refreshState', value), { immediate: true })
 
 const pipelineStates = computed(() => Object.values(data.value?.pipeline || {}).filter(Boolean))
+function compactTimestamp(value?: string | null) {
+  return value ? value.replace('T', ' ').replace(/(?:Z|[+-]\d{2}:\d{2})$/, '') : '时间缺失'
+}
+
+const snapshotLabel = computed(() => {
+  const snapshot = data.value?.snapshot
+  if (!snapshot) return '未声明快照状态'
+  const parsedAge = Number(snapshot.age_seconds)
+  const age = Math.max(0, Number.isFinite(parsedAge) ? parsedAge : 0)
+  const ageLabel = age < 60 ? `${Math.round(age)} 秒前` : age < 3600 ? `${Math.round(age / 60)} 分钟前` : `${Math.round(age / 3600)} 小时前`
+  const updating = refreshing.value || snapshot.refreshing
+  if (!snapshot.served_from_snapshot) return `本次实时读取 · ${compactTimestamp(snapshot.saved_at)}`
+  const state = snapshot.status === 'stale' ? '陈旧快照' : '最近快照'
+  return `${state} · ${compactTimestamp(snapshot.saved_at)} · ${ageLabel}${updating ? ' · 后台更新中' : ''}`
+})
 const notes = computed(() => {
   const derived = []
   if (data.value?.pipeline?.source_state === 'unavailable') derived.push('新闻采集链暂不可用')
   if (data.value?.pipeline?.entity_mapping_state === 'unavailable') derived.push('A 股映射底座暂不可用')
   if (data.value?.observation?.enabled === false) derived.push('盘面观察闭环未启用')
   if (data.value?.pipeline?.market_observation_state === 'unavailable') derived.push('盘面观察链暂不可用')
+  if (data.value?.snapshot?.status === 'stale') derived.push('页面正在展示陈旧快照，后台刷新完成后自动替换')
   return [...new Set([
     ...(data.value?.missing || []),
     ...(data.value?.mapping?.missing || []),
@@ -24,12 +40,13 @@ const notes = computed(() => {
 })
 const unavailable = computed(() => data.value?.pipeline?.source_state === 'unavailable')
 const degraded = computed(() => notes.value.length > 0 || pipelineStates.value.some((state) => ['degraded', 'unavailable'].includes(String(state))))
-const stale = computed(() => notes.value.some((note) => /沿用|last.?good|快照|陈旧/i.test(note)) || Boolean(refreshNotice.value))
+const stale = computed(() => data.value?.snapshot?.status === 'stale' || notes.value.some((note) => /沿用|last.?good|快照|陈旧/i.test(note)) || Boolean(refreshNotice.value))
 const trueEmpty = computed(() => !loading.value && !error.value && !unavailable.value && events.value.length === 0)
 const statusLabel = computed(() => {
   if (error.value && !events.value.length) return '暂不可用'
   if (unavailable.value && !events.value.length) return '采集链不可用'
   if (stale.value) return '沿用数据'
+  if (data.value?.snapshot?.served_from_snapshot) return '快照可用'
   if (degraded.value) return '部分覆盖'
   if (trueEmpty.value) return '真实空结果'
   if (events.value.length) return '数据可用'
@@ -86,7 +103,7 @@ defineExpose({ refresh })
 
     <dl class="sentiment-page__stamp data-footnote-stamp" :class="{ 'is-stale': stale, 'is-degraded': degraded }" aria-label="舆情事件数据日期、抓取时点、状态与覆盖说明">
       <div><dt>最新事件</dt><dd class="mono">{{ data?.latest_event_time || '—' }}<span v-if="!data?.latest_event_time" class="sr-only">数据缺失</span></dd></div>
-      <div><dt>最近抓取</dt><dd class="mono">{{ data?.fetched_at || data?.cn_fetched_at || '—' }}<span v-if="!data?.fetched_at && !data?.cn_fetched_at" class="sr-only">数据缺失</span></dd></div>
+      <div><dt>最近抓取 / 页面快照</dt><dd class="mono"><span>{{ data?.fetched_at || data?.cn_fetched_at || '—' }}</span><span class="sentiment-snapshot-state" :class="{ 'is-stale': data?.snapshot?.status === 'stale' }">{{ snapshotLabel }}</span><span v-if="!data?.fetched_at && !data?.cn_fetched_at" class="sr-only">数据缺失</span></dd></div>
       <div><dt>数据状态</dt><dd>{{ statusLabel }}</dd></div>
       <div class="sentiment-page__coverage"><dt>覆盖说明</dt><dd>{{ notes.length ? notes.join('；') : (data ? '接口未声明覆盖缺口' : '—') }}</dd></div>
     </dl>
@@ -104,6 +121,8 @@ defineExpose({ refresh })
 .sentiment-page__stamp div { min-width: 0; }
 .sentiment-page__stamp dt { color: var(--text-3); font-size: 12px; }
 .sentiment-page__stamp dd { margin: 1px 0 0; font-size: 13px; font-weight: 700; overflow-wrap: anywhere; }
+.sentiment-snapshot-state { display: block; margin-top: 2px; color: var(--text-3); font-family: inherit; font-size: 12px; font-weight: 600; }
+.sentiment-snapshot-state.is-stale { color: var(--danger); }
 .sentiment-page__coverage { display: grid; grid-column: 1 / -1; grid-template-columns: auto minmax(0, 1fr); gap: 8px; padding-top: 5px; border-top: 1px solid var(--border); }
 .sentiment-page__coverage dd { color: var(--text-2); font-weight: 500; }
 .sentiment-loading { display: grid; gap: 12px; }

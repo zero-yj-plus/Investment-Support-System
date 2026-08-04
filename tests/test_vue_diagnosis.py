@@ -108,6 +108,35 @@ def test_vue_diagnosis_uses_safe_text_and_native_interaction_semantics() -> None
     assert "min-height: 44px" in combined
 
 
+def test_vue_diagnosis_surfaces_governed_action_and_compacts_secondary_data() -> None:
+    search = _read("src/components/DiagnosisSearch.vue")
+    decision = _read("src/components/DiagnosisDecision.vue")
+    evidence = _read("src/components/DiagnosisEvidence.vue")
+    health = _read("src/components/DiagnosisDataHealth.vue")
+    types = _read("src/types/diagnosis.ts")
+
+    for phrase in (
+        "结构信号",
+        "服务端治理后",
+        "关键行情证据不完整",
+        "等待触发",
+        "结论失效",
+        "不代表低风险或可以买入",
+    ):
+        assert phrase in decision
+    assert "cap.value == null" in decision
+    assert "新增仓位上限 ${formatNumber(cap.value, 2)}%" in decision
+    assert "当前动作不增加新风险；未提供值不可按 0% 解读" not in decision
+    assert "deep_signal?:" in types
+    assert "六维诊断依据" in evidence
+    assert "repeat(4, minmax(0, 1fr))" in evidence
+    assert "repeat(3, minmax(0, 1fr))" in evidence
+    assert "diagnosis-health__audit" in health
+    assert "展开规则、模型、留痕与全部缺口" in health
+    assert "diagnosis-search__controls" in search
+    assert "grid-template-columns: minmax(360px, 1fr) auto" in search
+
+
 def test_vue_diagnosis_has_responsive_and_reduced_motion_rules() -> None:
     page = _read("src/components/DiagnosisPage.vue")
     decision = _read("src/components/DiagnosisDecision.vue")

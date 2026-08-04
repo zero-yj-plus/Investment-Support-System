@@ -377,8 +377,9 @@ watch([routePath, routeTab], async () => {
         </div>
         <div class="topbar__actions">
           <DataStatus :state="quality" :label="connectionLabel" :title="`最近成功连接：${successTime}`" />
-          <button class="icon-button theme-button" type="button" :aria-label="theme === 'dark' ? '切换到浅色主题' : '切换到深色主题'" @click="toggleTheme">
+          <button class="icon-button theme-button" type="button" :aria-label="theme === 'dark' ? '切换到日间模式' : '切换到夜间模式'" @click="toggleTheme">
             <AppIcon :name="theme === 'dark' ? 'sun' : 'moon'" :size="19" />
+            <span class="theme-button__label">{{ theme === 'dark' ? '日间模式' : '夜间模式' }}</span>
           </button>
           <button class="refresh-button" type="button" :disabled="pageRefreshing" @click="refreshCurrentPage">
             <AppIcon name="refresh" :size="17" :class="{ spinning: pageRefreshing }" />

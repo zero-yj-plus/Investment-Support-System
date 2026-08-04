@@ -536,6 +536,8 @@ code 为 6 位数字（自动识别沪深）。
 - `mode`: `free`(自由问答) | `stock`(盘中问股，需 code) | `position`(持仓诊断，后端自动读取已保存持仓) | `chain`(产业链挖掘，需 industry) | `company`(单公司深研，需 code) | `restructuring`(重组拆解，code 可选)
 - 后端自动注入对应实时数据上下文（个股盘口/板块/资金/市场情绪），再调 Hermes。
 
+`stock` 模式先冻结确定性诊断、RiskGate 动作、强化条件和失效条件，再把同一诊断快照中的技术结构、量价、资金、板块、财务及市场背景组成统一分析资料包。模型只负责生成一份约 800—1300 个中文字符的自然语言深度成稿，无权修改冻结动作、价位或缺失语义。问股不另设低于连接配置的 `max_tokens`，使用模型连接的统一预算（默认 8000）；服务端缓存生成增量并读取真实 `finish_reason`。收到可信 `stop` 终态后执行分级校验：与冻结动作冲突、出现资料包外关键数字/越界价格仍是硬拦截；篇幅偏短、未原样复述动作或执行边界属于软质量问题，自动补写一次，补写不可用时保留安全首稿并用自然语言补齐冻结边界。若首稿因 `length` 截断，已生成正文不会直接展示或丢失，而是作为上下文重写一次完整终稿；上游已返回正文但遗漏标准 `stop` 时，正文也必须经过同一套篇幅、冻结边界、数字来源和价格安全校验，完整且安全才允许展示。再次截断、真实流中断，或缺 `stop` 正文在补写后仍不完整，才回退确定性说明并显示准确原因。回退原因与数据缺口分开显示，数据缺口只限制对应分析维度。响应不再拼接“固定治理卡 + 针对问题补充”两段正文。
+
 `company` 模式把行情、板块、龙虎榜、财务、市场资金、市场总览和情绪拆成独立并行有界请求；任一增强源超时只降级对应维度。模型正文完成治理后，服务端固定追加行情/估值、最近报告期财务、确定性技术结构、官方公告与互动问答附录。长篇 `chain` 请求使用至少 16000 token、`company` 使用至少 20000 token 的专用生成预算，模型请求单次上限为 300 秒。长篇请求发生模型读取超时后不重放整次请求，避免总等待翻倍。调用方显式传入 `max_tokens` 时仍以显式值为准。
 
 Vue 正式产业链/公司研究页不再直接持有本接口的长 SSE：它们使用下述持久化后台任务接口，页面只轮询短状态请求。`POST /api/chat` 的 `chain` / `company` 仍为兼容调用方保留。
@@ -857,6 +859,37 @@ body `{"template_id":"d_xxx"}` 或 `{"prompt_template":"..."}`，加 `{"target_t
 后端按 target_type 注入个股/题材真实数据 → 调 Hermes 流式。SSE 同 /api/chat（含 `stage` 阶段事件 / delta / done / error）；阶段文案为 `采集数据…` → `Hermes 生成中…`（见 §5）。
 
 ## 14. 多市场新闻 news
+
+### GET /api/news/a-share
+返回真实财经快讯、确定性 A 股实体映射和可选的追加式盘面观察。完整响应采用
+stale-while-revalidate：存在六小时内的非空最近成功快照时先返回快照；超过 30 秒后只启动一个
+后台刷新，不阻塞当前 GET。没有有效快照时才同步执行真实冷采集。空结果、失败结果和示例数据不得
+覆盖最近成功快照。
+
+```json
+{
+  "ok": true,
+  "fetched_at": "2026-08-01T16:24:51+08:00",
+  "items": [{"event_id": "...", "title": "...", "a_share": {"state": "mapped"}}],
+  "pipeline": {
+    "source_state": "degraded",
+    "entity_mapping_state": "complete",
+    "market_observation_state": "disabled"
+  },
+  "snapshot": {
+    "served_from_snapshot": true,
+    "status": "fresh",
+    "saved_at": "2026-08-01T16:24:52+08:00",
+    "age_seconds": 12,
+    "refreshing": false
+  }
+}
+```
+
+`snapshot.status`：`live` 表示本次同步真实构建；`fresh` 表示 30 秒内完整快照；`stale` 表示超过
+30 秒、页面应明确标为沿用数据。`refreshing=true` 表示后台刷新已启动或正在进行。服务端快照按客户
+`data_dir/news/a-share-page-last-good.json` 隔离；前端还可在当前浏览器会话内保留最近成功响应，重进
+页面时先显示再刷新。
 
 ### GET /api/news/multi
 ```json

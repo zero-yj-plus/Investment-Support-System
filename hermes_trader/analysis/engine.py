@@ -33,6 +33,7 @@ from ..analysis import diagnosis as diagnosis_mod
 from ..analysis import industry_chain as industry_chain_mod
 from ..analysis.claim_validator import validate_report_finalization
 from ..analysis.methodology import load_methodology
+from ..analysis import report_eval
 from ..analysis.report_lineage import build_lineage, report_ref
 
 log = logging.getLogger("hermes.engine")
@@ -69,6 +70,198 @@ _COMPANY_SECTION_EIGHT_RE = re.compile(
 )
 _FREE_STOCK_CODE_RE = re.compile(r"(?<!\d)(\d{6})(?!\d)")
 _A_SHARE_CODE_PREFIXES = ("0", "3", "4", "6", "8", "9")
+_STOCK_DEEP_ANSWER_TARGET_MIN = 600
+
+
+def _stock_validation_text(content: str, packet: dict) -> str:
+    """仅为价格校验给每个章节补单股身份，不改变最终展示正文。"""
+    subject = packet.get("subject") or {}
+    code = str(subject.get("code") or "").strip()
+    name = str(subject.get("name") or "").strip()
+    identity = "".join(filter(None, [name, f"（{code}）" if code else ""]))
+    if not identity:
+        return str(content or "")
+    lines: list[str] = []
+    for raw in str(content or "").splitlines():
+        line = raw
+        if re.match(r"^\s*#{1,6}\s+", line) and code not in line and name not in line:
+            line = f"{line} · {identity}"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def _stock_action_conflict(content: str, final_action: str) -> bool:
+    """只拦截与冻结动作正面冲突的无条件指令，不拦条件化情景推演。"""
+    conservative = final_action in {
+        "观望", "回避", "持有", "持有（不加仓）", "减仓", "止损", "清仓",
+    }
+    for raw in str(content or "").splitlines():
+        line = raw.strip()
+        if not line or not _RISK_INCREASING_RE.search(line):
+            continue
+        if _NEGATED_ACTION_RE.search(line):
+            continue
+        if final_action == "持有（不加仓）" and "加仓" in line:
+            return True
+        if conservative and _DIRECT_ORDER_RE.search(line):
+            return True
+    return False
+
+
+def _review_stock_explanation(content: str, packet: dict) -> dict:
+    """区分安全硬错误与可补写的质量问题。"""
+    text = str(content or "").strip()
+    visible = re.sub(r"[#>*_`\-\s]", "", text)
+    decision = packet.get("frozen_decision") or {}
+    action = str(decision.get("final_action") or "").strip()
+    action_terms = ["持有", "不加仓"] if action == "持有（不加仓）" else [action]
+    boundary_numbers = set(re.findall(
+        r"(?<!\d)\d+(?:\.\d+)?(?!\d)",
+        " ".join(str(decision.get(key) or "") for key in (
+            "entry_condition", "invalidation_condition",
+        )),
+    ))
+    numeric_eval = report_eval.evaluate(text, packet)
+    price_validation = validate_report_finalization(
+        _stock_validation_text(text, packet), packet, finish_reason="stop"
+    )
+
+    hard_errors: list[str] = []
+    if not text:
+        hard_errors.append("model_empty")
+    if numeric_eval.get("suspect_count"):
+        hard_errors.append("unsupported_numeric_claim")
+    if price_validation.get("ok") is not True:
+        hard_errors.append("unsupported_price_claim")
+    if _stock_action_conflict(text, action):
+        hard_errors.append("frozen_action_conflict")
+
+    soft_issues: list[str] = []
+    if len(visible) < _STOCK_DEEP_ANSWER_TARGET_MIN:
+        soft_issues.append("answer_too_short")
+    if any(term and term not in text for term in action_terms):
+        soft_issues.append("frozen_action_not_explicit")
+    if any(number not in text for number in boundary_numbers):
+        soft_issues.append("execution_boundary_incomplete")
+    if "针对你这句话的补充" in text or "### 现在怎么做" in text:
+        soft_issues.append("legacy_two_part_format")
+    return {
+        "ok": not hard_errors,
+        "hard_errors": list(dict.fromkeys(hard_errors)),
+        "soft_issues": list(dict.fromkeys(soft_issues)),
+        "visible_length": len(visible),
+        "numeric_suspects": numeric_eval.get("suspects") or [],
+        "price_errors": price_validation.get("errors") or [],
+    }
+
+
+def _complete_stock_explanation(content: str, packet: dict, review: dict) -> str:
+    """补齐模型遗漏的冻结边界；只写自然语言，不恢复字段卡片。"""
+    text = str(content or "").strip()
+    text = text.replace("### 针对你这句话的补充", "")
+    text = text.replace("### 现在怎么做", "### 执行边界")
+    decision = packet.get("frozen_decision") or {}
+    issues = set(review.get("soft_issues") or [])
+    direct = str(decision.get("direct_answer") or "").strip()
+    if "frozen_action_not_explicit" in issues and direct:
+        lines = text.splitlines()
+        insert_at = 1 if lines and re.match(r"^\s*#{1,6}\s+", lines[0]) else 0
+        lines[insert_at:insert_at] = ["", f"**{direct}**", ""]
+        text = "\n".join(lines).strip()
+    if "execution_boundary_incomplete" in issues:
+        entry = str(decision.get("entry_condition") or "").strip()
+        stop = str(decision.get("invalidation_condition") or "").strip()
+        boundary_parts = []
+        if entry:
+            boundary_parts.append(f"只有出现{entry}，原判断才得到强化")
+        if stop:
+            boundary_parts.append(f"若{stop}，当前判断即失效并转入防守")
+        if boundary_parts:
+            text += "\n\n### 执行边界\n" + "；".join(boundary_parts) + "。"
+    return text.strip()
+
+
+def _stock_stream_failure_code(
+    exc: Exception,
+    *,
+    finish_reason: str = "",
+    has_partial: bool = False,
+) -> str:
+    """把模型流失败归为可展示的稳定原因，不泄露上游异常正文。"""
+    finish = str(finish_reason or "").strip().lower()
+    if finish == "length":
+        return "model_length"
+    if finish == "content_filter":
+        return "model_content_filter"
+    if finish and finish != "stop":
+        return "model_nonstop_terminal"
+    message = str(exc or "")
+    if has_partial and any(token in message for token in ("完整终态", "stop 终态")):
+        return "model_missing_stop"
+    if has_partial:
+        return "model_stream_interrupted"
+    return "model_unavailable"
+
+
+async def _collect_stock_model_answer(
+    hermes,
+    messages: list[dict],
+    *,
+    purpose: str,
+) -> dict:
+    """缓存模型增量并保留 finish_reason；不显式覆盖连接级 token 预算。"""
+    stream = getattr(hermes, "chat_stream", None)
+    if not callable(stream):
+        try:
+            text = str(await hermes.chat(messages, purpose=purpose) or "").strip()
+        except Exception as exc:  # noqa: BLE001 - 返回稳定分类，详情由调用方记录
+            return {
+                "text": "",
+                "status": _stock_stream_failure_code(exc),
+                "finish_reason": "",
+                "error_type": type(exc).__name__,
+            }
+        return {
+            "text": text,
+            "status": "stop" if text else "model_empty",
+            "finish_reason": "stop" if text else "",
+            "error_type": "",
+        }
+
+    meta: dict = {}
+    parts: list[str] = []
+    try:
+        async for delta in stream(messages, purpose=purpose, meta=meta):
+            text = str(delta or "")
+            if text:
+                parts.append(text)
+    except Exception as exc:  # noqa: BLE001 - 部分正文留给 length 修订，不直接展示
+        content = "".join(parts).strip()
+        finish_reason = str(meta.get("finish_reason") or "")
+        return {
+            "text": content,
+            "status": _stock_stream_failure_code(
+                exc,
+                finish_reason=finish_reason,
+                has_partial=bool(content),
+            ),
+            "finish_reason": finish_reason,
+            "error_type": type(exc).__name__,
+        }
+    content = "".join(parts).strip()
+    return {
+        "text": content,
+        "status": "stop" if content else "model_empty",
+        "finish_reason": str(meta.get("finish_reason") or "stop"),
+        "error_type": "",
+    }
+
+
+def _stock_model_result_is_reviewable(result: dict) -> bool:
+    """标准 stop 或有正文但缺 stop 的兼容结果，均须进入同一质量闸。"""
+    return bool(str(result.get("text") or "").strip()) and str(
+        result.get("status") or ""
+    ) in {"stop", "model_missing_stop"}
 
 
 def _normalized_stock_reference(value: object) -> str:
@@ -1409,14 +1602,35 @@ class Engine:
         stream_meta: dict = {}
         try:
             async for delta in self.hermes.chat_stream(
-                messages, meta=stream_meta, purpose=f"report:{rtype}"
+                messages,
+                meta=stream_meta,
+                purpose=f"report:{rtype}",
+                thinking_mode="enabled",
             ):
                 parts.append(delta)
         except Exception:  # noqa: BLE001 — 上游异常可含密钥/URL/路径
-            # 报告依赖 AI 改写、无降级版本（不同于诊断卡有安全兜底）。
-            log.exception("报告 AI 生成流异常 [%s]", rtype)
-            yield _safe_stream_error("report_generation_failed")
-            return
+            if stream_meta.get("finish_reason") != "length":
+                # 报告依赖 AI 改写、无降级版本（不同于诊断卡有安全兜底）。
+                log.exception("报告 AI 生成流异常 [%s]", rtype)
+                yield _safe_stream_error("report_generation_failed")
+                return
+            # DeepSeek 思考模式若仍耗尽 24K 预算，截断稿绝不能与重试正文拼接。
+            # 丢弃本次全部增量，以非思考模式只回退一次；第二次仍失败则按原契约报错。
+            log.warning("报告思考模式输出超限 [%s]，丢弃截断稿并回退非思考模式", rtype)
+            parts = []
+            stream_meta = {}
+            try:
+                async for delta in self.hermes.chat_stream(
+                    messages,
+                    meta=stream_meta,
+                    purpose=f"report:{rtype}",
+                    thinking_mode="disabled",
+                ):
+                    parts.append(delta)
+            except Exception:  # noqa: BLE001 — 详情只写服务端日志
+                log.exception("报告 AI 非思考回退仍失败 [%s]", rtype)
+                yield _safe_stream_error("report_generation_failed")
+                return
         content = "".join(parts).strip()
         if not content:
             yield {"error": "Hermes 返回为空，报告未保存"}
@@ -2436,34 +2650,91 @@ class Engine:
     async def governed_stock_explanation_stream(
         self, message: str, card: dict, *, history: list[dict] | None = None,
     ) -> AsyncIterator[str]:
-        """在冻结的确定性结论边界内回答用户的具体问题。
+        """把冻结事实组织成一份完整问股成稿，校验通过后才交给前端。
 
-        该通道不向模型开放 action/仓位/价位改写权；确定性快答已先向
-        前端输出，因此模型或增强源慢/失败也不会让问股变成空白页。
+        该通道不向模型开放 action/仓位/价位改写权。模型只负责把
+        确定性结论、技术结构和市场背景写成自然语言；任何半截输出、
+        过短成稿、遗漏执行边界或出现未注入的关键数字都会被丢弃，
+        由路由层回退到简洁的确定性说明。
         """
         code = str(card.get("code") or "").strip()
         if len(code) != 6 or not code.isdigit():
             return
-        context = await self.chat_context("stock", code=code)
-        frozen = {
-            "code": code,
-            "name": card.get("name") or (card.get("market_quote") or {}).get("name"),
-            "final_action": card.get("action"),
-            "signal_action": card.get("signal_action"),
-            "entry_condition": (card.get("trade_plan") or {}).get("entry_trigger"),
-            "invalidation_condition": (card.get("trade_plan") or {}).get("stop"),
-            "summary": card.get("summary"),
+
+        # 个股趋势、动量、量价、资金和关键位已经由诊断卡按同一快照
+        # 确定性计算。这里仅补市场/板块背景，不再重新抓一次 stock_detail，
+        # 避免固定卡与模型解释落在两个不同数据时点上。
+        board = card.get("board") or {}
+        industry_name = str(board.get("industry") or "").strip()
+        sectors, sentiment, overview = await asyncio.gather(
+            _bounded_thread_call(market.market_sectors, timeout=3.0, default={}),
+            _bounded_thread_call(senti.compute_today, self.store, timeout=3.0, default={}),
+            _bounded_thread_call(market.market_overview, timeout=3.0, default={}),
+        )
+        related_sectors = [
+            sector
+            for sector in (
+                sectors.get("sectors", []) if isinstance(sectors, dict) else []
+            )
+            if isinstance(sector, dict)
+            and industry_name
+            and industry_name in str(sector.get("name") or "")
+        ][:5]
+        quote = dict(card.get("market_quote") or {})
+        quote.setdefault("code", code)
+        quote.setdefault("name", card.get("name") or "")
+        packet = {
+            "question": str(message or "")[:3000],
+            "subject": {
+                "code": code,
+                "name": card.get("name") or (card.get("market_quote") or {}).get("name"),
+                "answer_stage": card.get("answer_stage"),
+                "data_as_of": card.get("decision_generated_at")
+                or (card.get("analysis_pipeline") or {}).get("data_as_of"),
+            },
+            "frozen_decision": {
+                "direct_answer": card.get("direct_answer"),
+                "final_action": card.get("action"),
+                "signal_action": card.get("signal_action"),
+                "entry_condition": (card.get("trade_plan") or {}).get("entry_trigger"),
+                "invalidation_condition": (card.get("trade_plan") or {}).get("stop"),
+                "risk_decision": card.get("risk_decision") or {},
+                "summary": card.get("summary"),
+            },
+            "quote": quote,
+            "technical_analysis": card.get("technical_analysis") or {},
+            "board": board,
+            "flow": card.get("flow") or "本轮未取得个股资金增强",
+            "financial": card.get("financial") or "本轮未取得基础财务增强",
             "evidence": card.get("evidence") or [],
+            "evidence_quality": card.get("market_evidence_quality")
+            or card.get("decision_market_evidence_quality")
+            or {},
+            "missing": card.get("missing") or [],
+            "related_sector_performance": related_sectors
+            or "本轮未匹配到所属板块的当日增强",
+            "market_sentiment": sentiment,
+            "market_overview": overview,
         }
         system = (
             prompts.system_prompt(self.store.knowledge_digest())
-            + "\n\n【盘中问股·已治理解释】"
-            "用户的问题必须直接回答，不要重复一张治理卡，不要讲系统内部流程。"
-            "下方冻结结论中的 final_action、entry_condition、invalidation_condition 是确定性风控结果，"
-            "你只能解释，不得改写，不得再生成任何新价位、新仓位或无条件买卖建议。"
-            "只引用注入数据；某维度缺失就写暂不可用，不要把增强源缺失说成股票不存在。"
-            "输出不超过 450 个中文字，最多 6 个要点，先回答用户这句话，再给原因和条件。"
-            + prompts._inject({"冻结结论": frozen, "实时盘面与增强数据": context})
+            + "\n\n【问股最终成稿·最高优先级】\n"
+            "你是最终成稿编辑，只输出一份完整、连贯、可直接展示给用户的 Markdown 回答。"
+            "不要输出 JSON，不要解释系统流程，不要先列治理卡，也不要出现“针对你这句话的补充”。\n"
+            "frozen_decision 中的 direct_answer、final_action、entry_condition、"
+            "invalidation_condition 是服务端冻结事实：必须保持语义一致并在正文中明确出现，"
+            "不得改写为相反动作，不得新增价位、仓位或无条件买卖建议。\n"
+            "回答目标为约 800—1300 个中文字符。深度来自趋势位置、动量、量价、资金、"
+            "板块联动、市场情绪和基础财务的交叉判断，不是把所有字段逐项抄一遍；"
+            "只展开数据状态为可用的维度，缺失信息集中在结尾一句说明。\n"
+            "推荐结构：标题；开头用一个自然段直接回答用户问题；“结构与量价”、"
+            "“市场与板块背景”、“下一交易日三种情景”、“执行边界”四段。"
+            "三种情景必须分别说明看到什么、判断如何变化、怎么做。"
+            "相同价格最多重复两次，避免把结论、条件和证据反复复述。"
+            "不要使用阿拉伯数字给段落编号。\n"
+            "所有事实和数字只能来自下方统一分析资料包；若确定性技术结构已经完整，"
+            "不得笼统声称“只有基础行情”或“没有可复算证据”。"
+            + prompts._inject({"统一分析资料包": packet})
         )
         recent = [
             {"role": row.get("role"), "content": str(row.get("content") or "")[:1200]}
@@ -2473,16 +2744,151 @@ class Engine:
         messages = [{"role": "system", "content": system}, *recent, {
             "role": "user", "content": str(message or "")[:3000],
         }]
-        sent = 0
-        async for delta in self.hermes.chat_stream(
-            messages, purpose="chat:stock-governed-explanation"
-        ):
-            text = str(delta or "")
-            if not text or sent >= 2200:
-                continue
-            part = text[:2200 - sent]
-            sent += len(part)
-            yield part
+        # 缓存流式增量并读取真实 finish_reason；不再用 2600 覆盖连接配置的
+        # token 预算。length 截断会消费一次修订机会，把已生成正文交给
+        # 模型重写为完整终态；上游若返回了正文但漏掉标准 stop，则允许
+        # 正文进入同一质量与安全闸，绝不绕过完整性校验直接展示。
+        initial = await _collect_stock_model_answer(
+            self.hermes,
+            messages,
+            purpose="chat:stock-governed-explanation",
+        )
+        content = str(initial.get("text") or "").strip()
+        candidate_status = str(initial.get("status") or "model_unavailable")
+        repair_used = False
+        if not _stock_model_result_is_reviewable(initial):
+            reason_code = candidate_status
+            if reason_code == "model_length" and content:
+                repair_used = True
+                truncated_messages = [
+                    *messages,
+                    {"role": "assistant", "content": content[:16000]},
+                    {
+                        "role": "user",
+                        "content": (
+                            "上份成稿因输出长度截断。请基于已有内容重新输出一份完整终稿，"
+                            "压缩重复表述但保留深度分析、冻结动作和执行边界；"
+                            "不要续写半句，不要解释截断原因。"
+                        ),
+                    },
+                ]
+                repaired = await _collect_stock_model_answer(
+                    self.hermes,
+                    truncated_messages,
+                    purpose="chat:stock-governed-explanation-rewrite",
+                )
+                if _stock_model_result_is_reviewable(repaired):
+                    content = str(repaired.get("text") or "").strip()
+                    candidate_status = str(repaired.get("status") or "stop")
+                else:
+                    repaired_status = str(
+                        repaired.get("status") or "model_unavailable"
+                    )
+                    card["_explanation_failure_reason"] = (
+                        "model_length_after_rewrite"
+                        if repaired_status == "model_length"
+                        else repaired_status
+                    )
+                    log.warning(
+                        "问股截断稿修订未完成 code=%s status=%s finish_reason=%s error=%s",
+                        code,
+                        repaired_status,
+                        repaired.get("finish_reason") or "missing",
+                        repaired.get("error_type") or "none",
+                    )
+                    return
+            else:
+                card["_explanation_failure_reason"] = reason_code
+                log.warning(
+                    "问股深度成稿终态不可用 code=%s status=%s finish_reason=%s partial_chars=%s error=%s",
+                    code,
+                    reason_code,
+                    initial.get("finish_reason") or "missing",
+                    len(content),
+                    initial.get("error_type") or "none",
+                )
+                return
+        elif candidate_status == "model_missing_stop":
+            log.info(
+                "问股成稿缺少标准 stop，转入完整质量闸 code=%s chars=%s",
+                code,
+                len(content),
+            )
+
+        review = _review_stock_explanation(content, packet)
+        if (review["hard_errors"] or review["soft_issues"]) and not repair_used:
+            issue_text = "、".join(review["hard_errors"] + review["soft_issues"])
+            rewrite_messages = [
+                *messages,
+                {"role": "assistant", "content": content[:12000]},
+                {
+                    "role": "user",
+                    "content": (
+                        "请修订并重新输出一份完整成稿，不要解释修订过程。"
+                        f"本轮检查发现：{issue_text}。"
+                        "保留原回答中有依据的分析，补足深度与冻结执行边界；"
+                        "删除未被资料包支持的数字、无条件动作和旧版两段式标题。"
+                    ),
+                },
+            ]
+            rewritten_result = await _collect_stock_model_answer(
+                self.hermes,
+                rewrite_messages,
+                purpose="chat:stock-governed-explanation-rewrite",
+            )
+            if not _stock_model_result_is_reviewable(rewritten_result):
+                log.warning(
+                    "问股深度成稿补写未完成 code=%s status=%s finish_reason=%s",
+                    code,
+                    rewritten_result.get("status") or "model_unavailable",
+                    rewritten_result.get("finish_reason") or "missing",
+                )
+                if not review["ok"]:
+                    # 首稿已触发安全硬闸；即使修订调用同时失败，最终未采用
+                    # 的决定性原因仍是正文不安全，不能误报成“数据不足”。
+                    card["_explanation_failure_reason"] = "safety_validation_failed"
+                    return
+            else:
+                rewritten = str(rewritten_result.get("text") or "").strip()
+                rewritten_review = _review_stock_explanation(rewritten, packet)
+                rewritten_status = str(rewritten_result.get("status") or "stop")
+                if rewritten_review["ok"] and (
+                    rewritten_status == "stop" or not rewritten_review["soft_issues"]
+                ):
+                    content = rewritten
+                    review = rewritten_review
+                    candidate_status = rewritten_status
+                elif not review["ok"]:
+                    card["_explanation_failure_reason"] = "safety_validation_failed"
+                    log.warning(
+                        "问股深度成稿安全校验失败 code=%s errors=%s",
+                        code,
+                        rewritten_review["hard_errors"],
+                    )
+                    return
+
+        content = _complete_stock_explanation(content, packet, review)
+        final_review = _review_stock_explanation(content, packet)
+        if candidate_status == "model_missing_stop" and final_review["soft_issues"]:
+            card["_explanation_failure_reason"] = "model_missing_stop"
+            log.warning(
+                "问股缺 stop 兼容稿完整性不足 code=%s issues=%s",
+                code,
+                final_review["soft_issues"],
+            )
+            return
+        if not final_review["ok"]:
+            card["_explanation_failure_reason"] = "safety_validation_failed"
+            log.warning(
+                "问股深度成稿最终安全校验失败 code=%s errors=%s numeric=%s price=%s",
+                code,
+                final_review["hard_errors"],
+                final_review["numeric_suspects"],
+                final_review["price_errors"],
+            )
+            return
+        card.pop("_explanation_failure_reason", None)
+        yield content
 
     async def chat_stream(
         self, mode: str, message: str, code: str = "", industry: str = "",
