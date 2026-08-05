@@ -107,7 +107,6 @@ const settingsSection = computed<SettingsSection>(() => (
 const activeNavigation = computed(() => findActiveNavigation(routePath.value, routeTab.value))
 const pageTitle = computed(() => activeNavigation.value?.child.label || (routePath.value === 'settings' ? settingsSectionTitles[settingsSection.value] : '页面迁移中'))
 const brandName = computed(() => data.shell?.client?.brand?.trim() || 'Hermes Trader')
-const brandSubtitle = computed(() => data.shell?.client?.brand_sub?.trim() || 'TRADING COPILOT')
 const pageRefreshing = computed(() => isHotboard.value || isHoldings.value || isWatchlist.value || isTiming.value || isMainlineResearch.value || isSentimentEvents.value || isTomorrowStrategy.value || isCapitalTracking.value || isStockAsk.value || isDiagnosis.value || isForecastMining.value || isIndustryChain.value || isCompanyResearch.value || isScreener.value || isTechnicalScreener.value || isReportCenter.value || isKnowledge.value || isSettings.value
   ? reportRefreshing.value
   : refreshing.value || reportRefreshing.value)
@@ -345,7 +344,6 @@ watch([routePath, routeTab], async () => {
       :connection-label="connectionLabel"
       :theme="theme"
       :brand="brandName"
-      :brand-sub="brandSubtitle"
       @close-menu="closeMenu()"
       @toggle-theme="toggleTheme"
       @toggle-collapsed="toggleSidebarCollapsed"

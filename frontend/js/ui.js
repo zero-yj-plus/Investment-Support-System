@@ -301,7 +301,7 @@ export function dataStamp(ts, missing, options = {}) {
   // 新响应已把同一批说明放进 notes 时，不再重复追加兼容字段。
   const legacyNotes = qualityAware && notes.length ? [] : legacyMisses;
   const labels = {
-    live: '实时', complete: '决策可用', degraded: '增强项缺失', accumulating: '样本积累',
+    live: '实时', complete: '决策可用', degraded: '主要数据可用', accumulating: '样本积累',
     delayed: meta.delay_text || '延迟', stale: '已过期',
     fallback: meta.fallback_label || '备用源', missing: '暂不可用', asof: '更新于',
   };

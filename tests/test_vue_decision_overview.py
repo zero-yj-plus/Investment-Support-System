@@ -210,11 +210,12 @@ def test_vue_shell_uses_configured_client_brand_instead_of_hardcoded_customer_na
     index = _read("index.html")
 
     assert "data.shell?.client?.brand?.trim() || 'Hermes Trader'" in app
-    assert "data.shell?.client?.brand_sub?.trim() || 'TRADING COPILOT'" in app
     assert ':brand="brandName"' in app
-    assert ':brand-sub="brandSubtitle"' in app
+    assert "brandSubtitle" not in app
+    assert ':brand-sub=' not in app
     assert "document.title = `${title} · ${brand}`" in app
-    assert "<strong>{{ brand }}</strong><span>{{ brandSub }}</span>" in sidebar
+    assert '<span class="brand__copy"><strong>{{ brand }}</strong></span>' in sidebar
+    assert "brandSub" not in sidebar
     assert 'src="/product-mark.svg"' in sidebar
     assert 'alt=""' in sidebar
     assert 'width="34" height="34"' in sidebar

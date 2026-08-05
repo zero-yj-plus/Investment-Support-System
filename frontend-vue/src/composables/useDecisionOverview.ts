@@ -119,7 +119,7 @@ export function useDecisionOverview() {
 
   const connectionLabel = computed(() => ({
     complete: '决策可用',
-    degraded: '增强项缺失',
+    degraded: '主要数据可用',
     partial: '部分覆盖',
     missing: loading.value ? '正在连接' : '暂不可用',
   })[quality.value])

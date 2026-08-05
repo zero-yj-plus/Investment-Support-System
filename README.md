@@ -83,15 +83,3 @@ uv run --with pytest --with pytest-asyncio \
 ```
 
 文件完整性使用 `RELEASE_FILES.sha256` 校验；压缩包校验值见同目录的 `.sha256` 文件。
-
-
-
-$env:TQ_BRIDGE_API_KEY='11111111'
-.\.venv\Scripts\python.exe .\scripts\tq_tdx_bridge.py
-
-
-
-
-npm --prefix .\frontend-vue run build
-
-.\.venv\Scripts\python.exe -m hermes_trader --config .\config.yaml

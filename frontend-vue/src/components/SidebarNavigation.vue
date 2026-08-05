@@ -14,7 +14,6 @@ const props = defineProps<{
   connectionLabel: string
   theme: 'dark' | 'light'
   brand: string
-  brandSub: string
 }>()
 
 const emit = defineEmits<{
@@ -68,7 +67,7 @@ defineExpose({ focusFirstItem })
   >
     <a class="brand" href="#/today?tab=decision" :aria-label="`返回 ${brand} 决策总览`" @click="emit('closeMenu')">
       <img class="brand__mark" src="/product-mark.svg" alt="" width="34" height="34" aria-hidden="true" draggable="false" />
-      <span class="brand__copy"><strong>{{ brand }}</strong><span>{{ brandSub }}</span></span>
+      <span class="brand__copy"><strong>{{ brand }}</strong></span>
     </a>
 
     <nav class="side-nav" aria-label="交易工作台">

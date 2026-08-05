@@ -307,7 +307,7 @@ def test_structured_quality_states_do_not_turn_source_notes_into_missing_badges(
     assert "(!value && !explicit)" in ui
     assert "[meta.freshness, meta.data_state, meta.state]" in ui
     assert "complete: '决策可用'" in ui
-    assert "degraded: '增强项缺失'" in ui
+    assert "degraded: '主要数据可用'" in ui
     assert "missing: '暂不可用'" in ui
     assert "qualityAware && notes.length ? [] : legacyMisses" in ui
     assert "accumulating: '样本积累'" in ui

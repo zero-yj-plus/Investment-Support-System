@@ -405,7 +405,7 @@ def _with_quality(
     elif state == "complete":
         out["state_label"] = "决策可用"
     elif state == "degraded":
-        out["state_label"] = "增强项缺失"
+        out["state_label"] = "主要数据可用"
     elif state == "missing":
         out["state_label"] = "暂不可用"
     return out

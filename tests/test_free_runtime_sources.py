@@ -31,7 +31,7 @@ def test_market_quality_separates_source_notes_from_decision_availability() -> N
         degraded_factors=["大盘主力净流入"],
     )
     assert enhanced["data_state"] == "degraded"
-    assert enhanced["state_label"] == "增强项缺失"
+    assert enhanced["state_label"] == "主要数据可用"
 
     unavailable = market._with_quality(
         {"missing": ["上游未返回排名"]},
