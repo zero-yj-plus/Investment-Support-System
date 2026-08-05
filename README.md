@@ -28,6 +28,20 @@ chmod 600 config.yaml .env
 
 默认访问地址：`http://127.0.0.1:18869`。
 
+### Windows 部署包
+
+Windows 部署包已包含 `frontend-vue/dist/`，目标机不需要安装 Node.js 或运行 npm。
+使用 64 位 Python 3.10+，在 PowerShell 中依次运行：
+
+```powershell
+.\install.ps1
+.\start.ps1
+```
+
+如使用本机通达信 TQ HTTP 服务，先在 `.env` 中配置桥接密钥和地址，再在独立
+PowerShell 窗口运行 `.\start-tdx-bridge.ps1`。服务启动后运行 `.\check.ps1`
+检查首页、核心 API 和已配置的本地桥。
+
 ### 客户品牌配置
 
 ```yaml

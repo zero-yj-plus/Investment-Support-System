@@ -148,6 +148,10 @@ flowchart LR
 | `requirements-dev.txt` | 复用生产依赖并加入 pytest、pytest-asyncio。 |
 | `pytest.ini` | 测试目录、严格 asyncio 模式和 `cloud` 标记。 |
 | `run.sh` | Bash 启动器：载入 `.env`，优先 `.venv/bin/python`，否则用 `uv`，再启动模块。 |
+| `install.ps1` | Windows 部署安装器：检查 64 位 Python 3.10+、创建 `.venv`、安装生产依赖并保留已有配置。 |
+| `start.ps1` | Windows 主服务前台启动器：安全载入 `.env`，使用部署目录 `.venv` 启动应用。 |
+| `start-tdx-bridge.ps1` | Windows 本地 TQ/TDX 只读桥前台启动器；要求桥接密钥且不把密钥写入命令行。 |
+| `check.ps1` | Windows 基础部署检查：验证必需文件、首页、核心 API 及已配置的本地桥。 |
 | `RELEASE_FILES.sha256` | 交付文件完整性清单，用于发现缺失或篡改。 |
 
 ## 7. 后端 `hermes_trader/`
