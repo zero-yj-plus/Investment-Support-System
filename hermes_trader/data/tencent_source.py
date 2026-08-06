@@ -192,8 +192,7 @@ def _parse_daily_kline_payload(
     return [by_date[day] for day in sorted(by_date)]
 
 
-@ttl_cache(300, fail_seconds=30)
-def stock_daily_bars(code: str, days: int = 120, *, adjust: str = "qfq") -> list[dict]:
+def _stock_daily_bars_uncached(code: str, days: int = 120, *, adjust: str = "qfq") -> list[dict]:
     """纯 urllib/JSON 的腾讯 A 股日 K，不导入 AkShare/JavaScript/V8。
 
     失败返回空列表，交由调用方显式降级；绝不将调整口径或缺失值
@@ -237,6 +236,17 @@ def stock_daily_bars(code: str, days: int = 120, *, adjust: str = "qfq") -> list
         )
         log.info("腾讯个股日K(%s) 失败: %s", symbol, str(exc)[:120])
         return []
+
+
+@ttl_cache(300, fail_seconds=30)
+def stock_daily_bars(code: str, days: int = 120, *, adjust: str = "qfq") -> list[dict]:
+    """带短 TTL 的交互查询入口。"""
+    return _stock_daily_bars_uncached(code, days, adjust=adjust)
+
+
+def stock_daily_bars_uncached(code: str, days: int = 120, *, adjust: str = "qfq") -> list[dict]:
+    """批处理降级入口；结果不留在进程级 TTL 缓存，避免全市场刷新撑高内存。"""
+    return _stock_daily_bars_uncached(code, days, adjust=adjust)
 
 
 def _fetch(

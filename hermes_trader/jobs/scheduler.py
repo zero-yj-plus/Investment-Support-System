@@ -305,6 +305,16 @@ def build_scheduler(config, engine) -> AsyncIOScheduler:
 
     # 全市场技术信号只在盘后后台预计算。普通筛选请求严格只读 SQLite，禁止页面 GET
     # 触发约 5500 只股票的历史 K 线 N+1。
+    technical_refresh_config = (
+        config.section("technical_signal_refresh") if hasattr(config, "section") else {}
+    )
+    try:
+        technical_refresh_workers = max(
+            1, min(int(technical_refresh_config.get("workers", 4)), 12)
+        )
+    except (TypeError, ValueError):
+        technical_refresh_workers = 4
+
     async def _technical_signal_refresh() -> None:
         if config.trading_days_only and not await asyncio.to_thread(is_trade_day):
             return
@@ -315,7 +325,9 @@ def build_scheduler(config, engine) -> AsyncIOScheduler:
         try:
             from ..analysis import technical_screener  # noqa: PLC0415
 
-            result = await asyncio.to_thread(technical_screener.refresh_all)
+            result = await asyncio.to_thread(
+                technical_screener.refresh_all, workers=technical_refresh_workers,
+            )
             final = now_cn().strftime("%Y-%m-%d %H:%M:%S")
             state = str(result.get("state") or "missing")
             if store:
@@ -335,12 +347,13 @@ def build_scheduler(config, engine) -> AsyncIOScheduler:
                     last_duration_ms=_elapsed_ms(started), last_error=str(exc)[:300],
                 )
 
-    scheduler.add_job(
-        _technical_signal_refresh,
-        CronTrigger(day_of_week="mon-fri", hour=16, minute=10, timezone=config.timezone),
-        id="technical_signal_refresh", name="全市场技术信号·盘后预计算",
-        replace_existing=True, misfire_grace_time=1800, coalesce=True, max_instances=1,
-    )
+    if technical_refresh_config.get("enabled", True):
+        scheduler.add_job(
+            _technical_signal_refresh,
+            CronTrigger(day_of_week="mon-fri", hour=16, minute=10, timezone=config.timezone),
+            id="technical_signal_refresh", name="全市场技术信号·盘后预计算",
+            replace_existing=True, misfire_grace_time=1800, coalesce=True, max_instances=1,
+        )
 
     # 业绩预告掘金每日推送（config `forecast_mining.push_enabled` 门控，off-by-default → 未配置
     # 的客户零影响）。默认 20:30：预告公告集中在晚间落库，晚推能带上当晚新增；时点可 config 改。

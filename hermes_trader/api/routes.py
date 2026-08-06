@@ -4866,18 +4866,20 @@ async def technical_screen_refresh(request: Request):
             body = {}
     except Exception:
         body = {}
-    current = await asyncio.to_thread(technical_screener_mod.status, include_counts=False)
-    if current.get("state") == "running":
+    if technical_screener_mod.refresh_running():
         return JSONResponse({"ok": False, "state": "running", "error_code": "refresh_already_running"}, status_code=409)
     try:
+        app_state = _state(request)
+        refresh_config = app_state.config.section("technical_signal_refresh")
+        default_workers = refresh_config.get("workers", 4)
         limit = body.get("max_symbols")
         limit = None if limit in (None, "") else max(1, min(int(limit), 6000))
-        workers = max(1, min(int(body.get("workers") or 6), 12))
+        workers = max(1, min(int(body.get("workers") or default_workers), 12))
     except (TypeError, ValueError):
         return JSONResponse({"ok": False, "state": "invalid", "error": "刷新参数不合法"}, status_code=400)
 
     async def _run_refresh() -> None:
-        store = getattr(_state(request), "store", None)
+        store = getattr(app_state, "store", None)
         started = now_cn().strftime("%Y-%m-%d %H:%M:%S")
         if store:
             store.record_job("technical_signal_refresh", last_run=started, last_status="running", last_error=None)

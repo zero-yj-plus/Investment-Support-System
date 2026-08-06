@@ -1039,6 +1039,12 @@ python3 scripts/data_backup_restore.py restore --archive /abs/backup.tar.gz --re
 
 技术面选股使用客户 `data_dir/technical_screener.sqlite3` 中的前复权 K 线和确定性信号缓存。普通查询只读本地缓存，不触发逐股历史行情 N+1。盘后 16:10 的 `technical_signal_refresh` 系统任务以及用户显式刷新动作负责更新缓存。
 
+刷新链路直接读取 `TDX_LOCAL_DIR`（默认 `D:\tdx`）下的 `vipdoc/{sh,sz,bj}/lday/*.day`，不复制原始行情库，也不调用 TQ 的批量 K 线接口。`.day` 提供未复权 OHLC、成交量和成交额；个股仅通过本机 `tqcenter.get_divid_factors` 读取权息事件并在进程内计算前复权，指数保留未复权口径。因子能力不可用时不得把原始价格伪装成前复权，而是按单股降级到腾讯前复权日 K。成交量统一为股、成交额统一为元。
+
+业务端每批最多只保留 `workers * 2` 只股票的 K 线、DataFrame 和信号结果；腾讯批处理降级不进入进程 TTL 缓存。`TDX_TQ_CONNECTION_PATH` 可为同机多套业务指定不同的 TQ 连接标识，避免同名实例冲突。
+
+`config.yaml` 的 `technical_signal_refresh.enabled` 控制定时刷新是否启用，`workers` 控制计算并发，默认 `4`。对 4 GB 内存机器不建议调高；提高并发会线性增加同时驻留的 K 线、DataFrame 和信号结果。
+
 统一约束：
 
 - `algorithm_ver=local-signal-v1`，复权口径固定为 `qfq`；算法升级不得静默复用旧版本方案。
@@ -1053,7 +1059,7 @@ python3 scripts/data_backup_restore.py restore --archive /abs/backup.tar.gz --re
 
 ### GET /api/technical-screen/status
 
-返回 `state ∈ {missing,running,partial,ready}`、缓存股票数/K线数/信号数、`data_date`、复权方式、算法版本、`config_schema_version=2` 和后台刷新进度。无缓存必须返回 `missing`，不能显示为 0 只符合。
+返回 `state ∈ {missing,running,partial,ready}`、缓存股票数/K线数/信号数、`data_date`、复权方式、算法版本、`config_schema_version=2` 和后台刷新进度。无缓存必须返回 `missing`，不能显示为 0 只符合。进程重启时若发现上次刷新停留在 `running`，`refresh.state` 改为 `interrupted` 并返回 `refresh_interrupted_by_restart`；若已有上次成功缓存，顶层 `state` 仍为 `ready`，不会误报任务仍在运行。
 
 可选查询参数 `include_counts=false` 用于首屏摘要：仍返回精确缓存股票数、数据日期、缓存状态和刷新进度，但 `bars`、`signal_matches` 返回 `null`，避免冷启动时扫描数百万条记录。省略参数保持完整计数契约；前端在首屏可操作后异步补取完整计数。
 
@@ -1121,7 +1127,7 @@ python3 scripts/data_backup_restore.py restore --archive /abs/backup.tar.gz --re
 
 ### POST /api/technical-screen/refresh
 
-显式提交重型后台刷新，立即返回 HTTP `202` 和 `state=queued`。可选维护参数：`max_symbols`（1—6000）和 `workers`（1—12）；默认全市场、6 个有界工作线程。刷新同时缓存沪深300不复权基准日线，供“近N日跑赢大盘”按同日期对齐计算。已有刷新运行时返回 `409 refresh_already_running`。
+显式提交重型后台刷新，立即返回 HTTP `202` 和 `state=queued`。可选维护参数：`max_symbols`（1—6000）和 `workers`（1—12）；默认全市场、4 个有界工作线程。刷新同时缓存沪深300不复权基准日线，供“近N日跑赢大盘”按同日期对齐计算。已有刷新运行时返回 `409 refresh_already_running`。
 
 ### GET /api/technical-screen/history
 

@@ -245,6 +245,7 @@ flowchart LR
 | `data/stock.py` | 个股实时盘口、快速报价、分时、日 K、板块和资金的渐进式详情。 |
 | `data/free_source.py` | 免费数据兼容层；统一腾讯、TDX、AkShare/新浪/同花顺等常用能力。 |
 | `data/tdx_api_source.py` | 客户授权 TDX Data API v2.8 适配；代码表、行情、板块、资金和盘后研究。 |
+| `data/tdx_local_daily.py` | 直接解析本机 `vipdoc/*/lday/*.day`；仅用 TQ 读取本地权息事件并计算前复权，不调用 TQ K 线接口。 |
 | `data/tencent_source.py` | 腾讯 `qt.gtimg.cn` 行情适配；补实时、估值、港美股和指数。 |
 | `data/xverify.py` | TDX/腾讯/新浪跨源价格核对，输出高可信、单源、存疑或无数据。 |
 | `data/akshare_isolated.py` | 在子进程执行高风险 AkShare/MiniRacer 调用并维护熔断。 |
@@ -552,6 +553,7 @@ FastAPI `/api`，不依赖旧前端。旧版默认不可访问，仅配置开启
 | `test_source_contract.py` | 数据源目录与实际字段路由、海外中继缺口。 |
 | `test_stock_progressive_contract.py` | 个股分段加载、TDX 板块和并发槽释放。 |
 | `test_tdx_api_source.py` | TDX v2.8 代码、单位、盘口、分页和完整股票池。 |
+| `test_tdx_local_daily.py` | 本地 `.day` 二进制解析、盘中完成态过滤和权息前复权。 |
 | `test_tq_tdx_bridge.py` | 本地 TQ 兼容桥的鉴权、只读白名单、单位、分页、股票池、板块关系和显式不支持语义。 |
 | `test_trade_day_reconciliation.py` | 相邻交易日、回退和晚报目标日期。 |
 | `test_trading_calendar_gate.py` | 日历不可用时工作日未知、周末明确闭市。 |

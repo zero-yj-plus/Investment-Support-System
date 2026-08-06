@@ -72,5 +72,9 @@ news_event_observation:
 official_longhu:
   enabled: false
 
+technical_signal_refresh:
+  enabled: true
+  workers: 4
+
 knowledge:
   auto_summarize: false

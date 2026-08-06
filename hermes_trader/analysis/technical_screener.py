@@ -4,7 +4,7 @@
 """
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
 import hashlib
 import json
@@ -16,6 +16,7 @@ import time
 import uuid
 
 from ..data import free_source
+from ..data import tdx_local_daily
 from ..data import tencent_source
 from ..data.base import now_cn, ts_str
 from . import technical_signals
@@ -58,6 +59,22 @@ def init(data_dir: str | Path) -> None:
           created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value_json TEXT NOT NULL);
         """)
+        row = db.execute("SELECT value_json FROM meta WHERE key='refresh_state'").fetchone()
+        try:
+            refresh_state = json.loads(row[0]) if row else {}
+        except (TypeError, ValueError, json.JSONDecodeError):
+            refresh_state = {}
+        if refresh_state.get("state") == "running" and not _refresh_lock.locked():
+            refresh_state.update({
+                "state": "interrupted",
+                "finished_at": ts_str(),
+                "error_code": "refresh_interrupted_by_restart",
+                "error": "上次刷新随业务进程中断，已保留上次成功缓存",
+            })
+            db.execute(
+                "UPDATE meta SET value_json=? WHERE key='refresh_state'",
+                (_json(refresh_state),),
+            )
 
 
 def _connect() -> sqlite3.Connection:
@@ -101,7 +118,12 @@ def status(*, include_counts: bool = True) -> dict:
         matches = int(db.execute("SELECT COUNT(*) FROM signal_matches").fetchone()[0]) if include_counts else None
         last_date = db.execute("SELECT MAX(last_date) FROM stocks").fetchone()[0]
         benchmark_bars = int(db.execute("SELECT COUNT(*) FROM benchmark_bars WHERE benchmark='000300.SH'").fetchone()[0])
-    current = state.get("state") or ("ready" if stocks else "missing")
+    refresh_state = state.get("state")
+    current = (
+        refresh_state
+        if refresh_state in {"ready", "partial", "running"}
+        else ("ready" if stocks else "missing")
+    )
     return {
         "ok": current in {"ready", "partial", "running"}, "schema_version": SCHEMA_VERSION,
         "config_schema_version": CONFIG_SCHEMA_VERSION,
@@ -112,6 +134,11 @@ def status(*, include_counts: bool = True) -> dict:
         "level2_reason": "当前没有接入可核验的逐笔/Level-2 DDX 历史数据",
         "refresh": state,
     }
+
+
+def refresh_running() -> bool:
+    """只反映当前进程是否真的持有刷新锁，不受重启前遗留状态影响。"""
+    return _refresh_lock.locked()
 
 
 def catalog() -> dict:
@@ -174,24 +201,35 @@ def _store_stock(code: str, name: str, bars: list[dict], matches: list[dict]) ->
         db.commit()
 
 
-def _fetch_compute(item: tuple[str, str]) -> tuple[str, str, list[dict], list[dict], str | None]:
+def _fetch_compute(
+    item: tuple[str, str], bars: list[dict] | None = None,
+) -> tuple[str, str, list[dict], list[dict], str | None, str]:
     code, name = item
     try:
-        bars = free_source.daily_bars(code, 520)
+        source = "tdx_day"
+        if not bars or len(bars) < 20:
+            fallback = tencent_source.stock_daily_bars_uncached(code, 520, adjust="qfq")
+            if fallback:
+                bars = fallback
+                source = "tencent_fallback"
+        bars = bars or []
         if len(bars) < 20:
-            return code, name, bars, [], f"有效日K不足20根（{len(bars)}）"
+            return code, name, bars, [], f"有效日K不足20根（{len(bars)}）", source
         daily = technical_signals.normalized_frame(bars)
         matches = []
         for tf in ("D", "W", "M"):
             frame = technical_signals.resample_frame(daily, tf, include_partial=False)
             matches.extend(technical_signals.default_signal_matches(frame, tf, history_days=HISTORY_DAYS))
-        return code, name, bars, matches, None
+        return code, name, bars, matches, None, source
     except Exception as exc:  # noqa: BLE001 - 单股失败必须降级且继续
-        return code, name, [], [], str(exc)[:160]
+        return code, name, [], [], str(exc)[:160], source
 
 
 def _refresh_benchmark() -> int:
-    rows=tencent_source.stock_daily_bars("sh000300",520,adjust="none") or []
+    local = tdx_local_daily.daily_bars_batch(["000300.SH"], 520)
+    rows = local.get("000300") or []
+    if not rows:
+        rows = tencent_source.stock_daily_bars_uncached("sh000300", 520, adjust="none") or []
     clean=[]
     for row in rows:
         try: clean.append(("000300.SH",str(row.get("d") or row.get("date"))[:10],float(row.get("c",row.get("close"))),str(row.get("source") or "腾讯沪深300日K")))
@@ -202,7 +240,7 @@ def _refresh_benchmark() -> int:
     return len(clean)
 
 
-def refresh_all(*, max_symbols: int | None = None, workers: int = 6) -> dict:
+def refresh_all(*, max_symbols: int | None = None, workers: int = 4) -> dict:
     if not _refresh_lock.acquire(blocking=False):
         return {"ok": False, "state": "running", "error_code": "refresh_already_running"}
     started = time.monotonic(); started_at = ts_str()
@@ -213,19 +251,37 @@ def refresh_all(*, max_symbols: int | None = None, workers: int = 6) -> dict:
         items = sorted((str(code).zfill(6), str(name or "")) for code, name in universe.items())
         if max_symbols is not None:
             items = items[:max(1, int(max_symbols))]
-        succeeded = 0; failed = 0; samples = []
-        with ThreadPoolExecutor(max_workers=max(1, min(int(workers), 12))) as executor:
-            for index, (code, name, bars, matches, error) in enumerate(executor.map(_fetch_compute, items), 1):
-                if bars:
-                    _store_stock(code, name, bars, matches); succeeded += 1
-                else:
-                    failed += 1
-                if error and len(samples) < 20: samples.append({"code": code, "reason": error})
-                if index == 1 or index % 20 == 0 or index == len(items):
-                    _meta_set("refresh_state", {"state": "running", "started_at": started_at, "processed": index, "total": len(items), "succeeded": succeeded, "failed": failed})
+        succeeded = 0; failed = 0; processed = 0; samples = []
+        source_counts = {"tdx_day": 0, "tencent_fallback": 0}
+        worker_count = max(1, min(int(workers), 12))
+        max_pending = worker_count * 2
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            for offset in range(0, len(items), max_pending):
+                batch = items[offset : offset + max_pending]
+                try:
+                    local_bars = tdx_local_daily.daily_bars_batch(
+                        [code for code, _name in batch], 520,
+                    )
+                except Exception:  # noqa: BLE001 - 本地日线失败时逐股走无缓存降级
+                    local_bars = {}
+                futures = {
+                    executor.submit(_fetch_compute, item, local_bars.get(item[0])): item[0]
+                    for item in batch
+                }
+                for future in as_completed(futures):
+                    code, name, bars, matches, error, source = future.result()
+                    source_counts[source] = source_counts.get(source, 0) + 1
+                    if bars:
+                        _store_stock(code, name, bars, matches); succeeded += 1
+                    else:
+                        failed += 1
+                    processed += 1
+                    if error and len(samples) < 20: samples.append({"code": code, "reason": error})
+                    if processed == 1 or processed % 20 == 0 or processed == len(items):
+                        _meta_set("refresh_state", {"state": "running", "started_at": started_at, "processed": processed, "total": len(items), "succeeded": succeeded, "failed": failed, "source_counts": source_counts})
         expected = len(items); ratio = succeeded / expected if expected else 0
         state = "ready" if ratio >= .8 else ("partial" if succeeded else "missing")
-        result = {"ok": state == "ready", "state": state, "started_at": started_at, "finished_at": ts_str(), "processed": expected, "succeeded": succeeded, "failed": failed, "coverage_ratio": round(ratio, 4), "benchmark":"000300.SH","benchmark_bars":benchmark_bars,"failure_samples": samples, "duration_seconds": round(time.monotonic()-started, 2)}
+        result = {"ok": state == "ready", "state": state, "started_at": started_at, "finished_at": ts_str(), "processed": expected, "succeeded": succeeded, "failed": failed, "coverage_ratio": round(ratio, 4), "benchmark":"000300.SH","benchmark_bars":benchmark_bars,"source_counts":source_counts,"max_pending":max_pending,"failure_samples": samples, "duration_seconds": round(time.monotonic()-started, 2)}
         _meta_set("refresh_state", result)
         with _query_cache_lock: _query_cache.clear()
         return result

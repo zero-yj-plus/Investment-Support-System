@@ -24,6 +24,20 @@ def test_summary_status_skips_large_record_counts(tmp_path) -> None:
     assert summary["data_date"] is None
 
 
+def test_init_repairs_stale_running_refresh_state(tmp_path) -> None:
+    technical_screener.init(tmp_path)
+    technical_screener._meta_set("refresh_state", {
+        "state": "running", "started_at": "2026-08-05 16:10:00", "processed": 40,
+    })
+
+    technical_screener.init(tmp_path)
+    current = technical_screener.status(include_counts=False)
+
+    assert current["state"] == "missing"
+    assert current["refresh"]["state"] == "interrupted"
+    assert current["refresh"]["error_code"] == "refresh_interrupted_by_restart"
+
+
 def test_scheme_round_trip_preserves_algorithm_version(tmp_path) -> None:
     technical_screener.init(tmp_path)
     saved = technical_screener.save_scheme({
@@ -73,12 +87,25 @@ def test_refresh_builds_cache_and_supports_default_and_custom_params(tmp_path, m
         "adjustment": "qfq", "source": "测试前复权日K",
     } for i, stamp in enumerate(dates)]
     monkeypatch.setattr(technical_screener.free_source, "stock_universe", lambda: {"600001": "测试股份"})
-    monkeypatch.setattr(technical_screener.free_source, "daily_bars", lambda _code, _days: bars)
     benchmark = [{**row, "c": 100 + i * 0.1} for i, row in enumerate(bars)]
-    monkeypatch.setattr(technical_screener.tencent_source, "stock_daily_bars", lambda *_args, **_kwargs: benchmark)
+    monkeypatch.setattr(
+        technical_screener.tdx_local_daily,
+        "daily_bars_batch",
+        lambda codes, _days: {
+            str(code).split(".")[0]: (benchmark if str(code).startswith("000300") else bars)
+            for code in codes
+        },
+    )
+    monkeypatch.setattr(
+        technical_screener.tencent_source,
+        "stock_daily_bars_uncached",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("本地日线可用时不应访问腾讯")),
+    )
 
     refreshed = technical_screener.refresh_all(max_symbols=1, workers=1)
     assert refreshed["state"] == "ready"
+    assert refreshed["source_counts"] == {"tdx_day": 1, "tencent_fallback": 0}
+    assert refreshed["max_pending"] == 2
 
     default_result = technical_screener.screen({
         "universe": {"markets": ["MAIN"], "min_listing_days": 60},
@@ -113,6 +140,44 @@ def test_refresh_builds_cache_and_supports_default_and_custom_params(tmp_path, m
     })
     assert nested["matched"] == 1
     assert len(nested["stocks"][0]["matched_reasons"]) == 2
+
+
+def test_refresh_fallback_is_uncached_and_work_is_bounded(tmp_path, monkeypatch) -> None:
+    technical_screener.init(tmp_path)
+    dates = pd.bdate_range("2026-01-01", periods=30)
+    bars = [{
+        "d": stamp.date().isoformat(), "o": 10.0, "h": 10.5, "l": 9.8,
+        "c": 10.2, "v_shares": 100_000, "amount": 1_020_000,
+        "adjustment": "qfq", "source": "腾讯测试前复权日K",
+    } for stamp in dates]
+    universe = {f"60000{index}": f"测试{index}" for index in range(5)}
+    local_batches = []
+    fallback_codes = []
+
+    monkeypatch.setattr(technical_screener.free_source, "stock_universe", lambda: universe)
+
+    def fake_local(codes, _days):
+        local_batches.append(list(codes))
+        if list(codes) == ["000300.SH"]:
+            return {"000300": bars}
+        return {}
+
+    def fake_fallback(code, _days, **_kwargs):
+        fallback_codes.append(code)
+        return bars
+
+    monkeypatch.setattr(technical_screener.tdx_local_daily, "daily_bars_batch", fake_local)
+    monkeypatch.setattr(
+        technical_screener.tencent_source, "stock_daily_bars_uncached", fake_fallback,
+    )
+
+    refreshed = technical_screener.refresh_all(workers=2)
+
+    assert refreshed["state"] == "ready"
+    assert refreshed["max_pending"] == 4
+    assert refreshed["source_counts"] == {"tdx_day": 0, "tencent_fallback": 5}
+    assert [len(group) for group in local_batches] == [1, 4, 1]
+    assert sorted(fallback_codes) == sorted(universe)
 
 
 def test_v2_structure_requires_non_empty_satisfy_groups(tmp_path) -> None:
