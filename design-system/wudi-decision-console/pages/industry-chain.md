@@ -29,6 +29,7 @@
 
 - 页面拆为输入/状态、结论边界、研究正文、历史与治理组件；请求、SSE reader、超时和本地历史由 composable 管理。
 - 产业名称使用带可见 `label` 的原生 `<input>`，研究重点使用原生 `<textarea>`；研究、停止、重试、保存、历史切换使用原生 `<button>`；“板块与成员口径”内已验证股票代码使用真实 `<a>` 进入公司诊断。
+- 每条历史记录提供独立“删除”按钮；删除前确认不可撤销，同时删除服务端持久任务和浏览器本地副本。运行中的任务不可删除，必须先停止；删除成功或失败均在历史卡内反馈。
 - 所有可见交互目标至少 44×44px，`:focus-visible` 使用项目 3px 焦点环；错误使用 `role="alert"`，进度使用 `role="status"` 和 `aria-live="polite"`。
 - Markdown 必须经 `parseReportMarkdown()` 转为 Vue 文本节点；禁止 `v-html`、`innerHTML` 和运行时 HTML 注入。
 - 页面卸载时取消研究与保存请求、SSE reader、超时及监听；generation guard 阻止卸载后的响应更新状态。

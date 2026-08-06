@@ -35,4 +35,8 @@ export interface ResearchRunLatestResponse {
   error?: string
 }
 
+export interface ResearchRunDeleteResponse extends ResearchRunLatestResponse {
+  deleted_run_id: string
+}
+
 export const RESEARCH_ACTIVE_STATUSES: ResearchRunStatus[] = ['queued', 'running', 'canceling']

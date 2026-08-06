@@ -1,5 +1,5 @@
 export type CompanyResearchRunState = 'idle' | 'loading' | 'complete' | 'partial' | 'error'
-export type CompanyRequestKey = 'status' | 'disclosures' | 'interactions' | 'research' | 'knowledge'
+export type CompanyRequestKey = 'status' | 'disclosures' | 'interactions' | 'research' | 'knowledge' | 'delete'
 
 export interface CompanyHistoryEntry {
   id: string

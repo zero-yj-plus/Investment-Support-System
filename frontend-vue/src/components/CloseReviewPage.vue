@@ -66,8 +66,8 @@ defineExpose({ refresh })
     <div v-if="loading" class="close-review-loading" role="status" aria-live="polite">
       <span class="sr-only">今日复盘正在加载</span>
       <section class="panel skeleton-block close-loading__decision"></section>
-      <section class="close-evidence-grid"><span class="panel skeleton-block close-loading__evidence"></span><span class="panel skeleton-block close-loading__evidence"></span></section>
       <section class="panel skeleton-block close-loading__report"></section>
+      <section class="close-evidence-grid"><span class="panel skeleton-block close-loading__evidence"></span><span class="panel skeleton-block close-loading__evidence"></span></section>
     </div>
 
     <template v-else>
@@ -78,25 +78,6 @@ defineExpose({ refresh })
       <p v-if="actionNotice" class="report-action-notice close-page-notice" role="status">{{ actionNotice }}</p>
 
       <CloseReviewDecision :snapshot="report?.cockpit" />
-
-      <section id="review-evidence" class="close-evidence-section" aria-labelledby="review-evidence-title">
-        <div class="tail-section-heading">
-          <div><p class="eyebrow">结构化复盘证据</p><h2 id="review-evidence-title">判断是否兑现，先让真实记录说话</h2></div>
-          <p>持仓建议与推荐历史均不可改写；缺失、空记录和传输失败分别展示。</p>
-        </div>
-        <div class="close-evidence-grid">
-          <CloseAdviceReview :data="adviceReview" :error="adviceError" @retry="refresh" />
-          <CloseRecommendationReview
-            :stats="stats"
-            :recommendations="recommendations?.recommendations || []"
-            :stats-error="statsError"
-            :recommendation-error="recommendationError"
-            :verifying="verifying"
-            @verify="verifyRecommendations"
-            @retry="refresh"
-          />
-        </div>
-      </section>
 
       <div v-if="hasReport" class="report-layout close-report-layout">
         <details class="panel report-outline" open>
@@ -145,6 +126,25 @@ defineExpose({ refresh })
           <button type="button" class="primary-button" @click="generate"><AppIcon name="spark" :size="18" />生成正式复盘</button>
           <button type="button" class="secondary-button" @click="refresh"><AppIcon name="refresh" :size="18" />刷新状态</button>
           <a class="secondary-button" href="#/history?tab=reports">查看历史报告</a>
+        </div>
+      </section>
+
+      <section id="review-evidence" class="close-evidence-section" aria-labelledby="review-evidence-title">
+        <div class="tail-section-heading">
+          <div><p class="eyebrow">结构化复盘证据</p><h2 id="review-evidence-title">判断是否兑现，先让真实记录说话</h2></div>
+          <p>持仓建议与推荐历史均不可改写；缺失、空记录和传输失败分别展示。</p>
+        </div>
+        <div class="close-evidence-grid">
+          <CloseAdviceReview :data="adviceReview" :error="adviceError" @retry="refresh" />
+          <CloseRecommendationReview
+            :stats="stats"
+            :recommendations="recommendations?.recommendations || []"
+            :stats-error="statsError"
+            :recommendation-error="recommendationError"
+            :verifying="verifying"
+            @verify="verifyRecommendations"
+            @retry="refresh"
+          />
         </div>
       </section>
 

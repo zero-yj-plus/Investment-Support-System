@@ -59,8 +59,8 @@ defineExpose({ refresh })
     <div v-if="loading" class="tomorrow-loading" role="status" aria-live="polite">
       <span class="sr-only">次日策略正在加载</span>
       <section class="panel skeleton-block tomorrow-loading__summary"></section>
-      <div class="tomorrow-loading__evidence"><section class="panel skeleton-block"></section><section class="panel skeleton-block"></section></div>
       <section class="panel skeleton-block tomorrow-loading__report"></section>
+      <div class="tomorrow-loading__evidence"><section class="panel skeleton-block"></section><section class="panel skeleton-block"></section></div>
     </div>
 
     <template v-else>
@@ -71,17 +71,6 @@ defineExpose({ refresh })
       <div v-if="actionNotice" class="tomorrow-inline-alert is-notice" role="status"><strong>操作反馈</strong><span>{{ actionNotice }}</span></div>
 
       <TomorrowDecisionSummary :snapshot="report?.cockpit" />
-
-      <section class="tomorrow-evidence-section" aria-labelledby="tomorrow-evidence-title">
-        <header class="tomorrow-section-heading">
-          <div><p class="eyebrow">STRUCTURED EVIDENCE</p><h2 id="tomorrow-evidence-title">触发条件与依据健康</h2></div>
-          <p>两个接口独立请求；任一失败只降级对应模块。</p>
-        </header>
-        <div class="tomorrow-evidence-grid">
-          <TomorrowWatchlist :items="watchlist?.items" :error="watchlistError" :refreshing="refreshing" @retry="loadWatchlist" />
-          <TomorrowDataHealth :report="report" :watchlist="watchlist" :report-error="reportError" :watchlist-error="watchlistError" />
-        </div>
-      </section>
 
       <div v-if="hasReport" class="report-layout tomorrow-report-layout">
         <details class="panel report-outline" open>
@@ -125,6 +114,17 @@ defineExpose({ refresh })
         <div v-if="generating" class="tomorrow-generation" aria-live="polite">
           <strong>{{ generationStage || '生成中…' }}</strong><p v-if="generationPreview">{{ generationPreview }}</p>
           <button type="button" class="secondary-button" @click="stopGeneration">停止查看生成流</button>
+        </div>
+      </section>
+
+      <section class="tomorrow-evidence-section" aria-labelledby="tomorrow-evidence-title">
+        <header class="tomorrow-section-heading">
+          <div><p class="eyebrow">STRUCTURED EVIDENCE</p><h2 id="tomorrow-evidence-title">触发条件与依据健康</h2></div>
+          <p>两个接口独立请求；任一失败只降级对应模块。</p>
+        </header>
+        <div class="tomorrow-evidence-grid">
+          <TomorrowWatchlist :items="watchlist?.items" :error="watchlistError" :refreshing="refreshing" @retry="loadWatchlist" />
+          <TomorrowDataHealth :report="report" :watchlist="watchlist" :report-error="reportError" :watchlist-error="watchlistError" />
         </div>
       </section>
 

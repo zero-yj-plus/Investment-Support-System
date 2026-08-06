@@ -42,6 +42,12 @@ if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {
     throw '尚未安装项目虚拟环境，请先运行 .\install.ps1。'
 }
 
+$DependencyProbe = 'import importlib.util; required=("fastapi","uvicorn","yaml","apscheduler","pandas","httpx"); missing=[name for name in required if importlib.util.find_spec(name) is None]; print("关键依赖检查：" + ("全部就绪" if not missing else "缺少 " + ", ".join(missing))); raise SystemExit(0 if not missing else 1)'
+& $Python -c $DependencyProbe
+if ($LASTEXITCODE -ne 0) {
+    throw '项目虚拟环境缺少关键依赖，请先运行 .\install.ps1 完成安装，再运行 .\start.ps1。'
+}
+
 $ConfigPath = if ([System.IO.Path]::IsPathRooted($Config)) { $Config } else { Join-Path $ProjectRoot $Config }
 if (-not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) {
     throw "找不到配置文件：$ConfigPath。请先运行 .\install.ps1 并填写配置。"
@@ -64,4 +70,3 @@ if ($Port -gt 0) {
 Write-Host '正在前台启动 Hermes Trader；按 Ctrl+C 停止。'
 & $Python @Arguments
 exit $LASTEXITCODE
-

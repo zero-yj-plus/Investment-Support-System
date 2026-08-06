@@ -11,8 +11,9 @@ const inputRef = ref<InstanceType<typeof IndustryChainResearchForm> | null>(null
 const {
   industryInput, focusInput, currentIndustry, content, runState, stageText, stageSeconds,
   runError, fieldError, history, activeHistoryId, saving, saveError, saveMessage,
+  deletingHistoryId, historyError, historyMessage,
   running, summary, canSave, refreshing, startResearch, stopResearch,
-  selectHistory, saveToKnowledge, refresh: refreshLatest,
+  selectHistory, deleteHistory, saveToKnowledge, refresh: refreshLatest,
 } = useIndustryChain()
 
 watch(refreshing, (value) => emit('refreshState', value), { immediate: true })
@@ -97,7 +98,16 @@ defineExpose({ refresh })
       </section>
 
       <aside class="chain-sidebar" aria-label="产业链研究历史与数据治理">
-        <IndustryChainHistory :entries="history" :active-id="activeHistoryId" :disabled="running || saving" @select="selectHistory" />
+        <IndustryChainHistory
+          :entries="history"
+          :active-id="activeHistoryId"
+          :disabled="running || saving"
+          :deleting-id="deletingHistoryId"
+          :error="historyError"
+          :message="historyMessage"
+          @select="selectHistory"
+          @delete="deleteHistory"
+        />
         <section class="chain-governance panel" aria-labelledby="chain-governance-title">
           <header><p class="eyebrow">READING GUIDE</p><h2 id="chain-governance-title">阅读方法</h2></header>
           <dl>

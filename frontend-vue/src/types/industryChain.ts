@@ -32,4 +32,4 @@ export interface IndustryChainKnowledgeResponse {
   error?: string
 }
 
-export type IndustryChainRequestKey = 'research' | 'knowledge'
+export type IndustryChainRequestKey = 'research' | 'knowledge' | 'delete'

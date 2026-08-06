@@ -46,6 +46,7 @@ def test_vue_company_research_uses_only_the_real_page_contracts() -> None:
         "/interactions/management?code=${encodeURIComponent(code)}&limit=6",
         "postJson<ResearchRunResponse>('/research/runs'",
         "getJson<ResearchRunLatestResponse>('/research/runs/latest?kind=company'",
+        "deleteJson<ResearchRunDeleteResponse>(`/research/runs/${encodeURIComponent(entry.id)}`",
         "postJson<CompanyKnowledgeResponse>('/knowledge'",
     ):
         assert endpoint in composable
@@ -99,7 +100,7 @@ def test_vue_company_research_cleans_every_request_reader_and_timer_on_unmount()
 
     assert "controllers: Partial<Record<CompanyRequestKey, AbortController>>" in composable
     assert "const generations: Record<CompanyRequestKey, number>" in composable
-    for key in ("status", "disclosures", "interactions", "research", "knowledge"):
+    for key in ("status", "disclosures", "interactions", "research", "knowledge", "delete"):
         assert f"{key}: 0" in composable
     assert "alive && controllers[key] === controller" in composable
     assert "onBeforeUnmount(() =>" in composable
@@ -131,6 +132,10 @@ def test_vue_company_research_uses_safe_markdown_urls_and_native_semantics() -> 
     assert "parsed.protocol !== 'https:'" in formatter
     assert "parsed.username || parsed.password" in formatter
     assert 'role="button"' not in source
+    assert "window.confirm" in read(HISTORY)
+    assert "此操作不可撤销" in read(HISTORY)
+    assert 'class="company-history__delete"' in read(HISTORY)
+    assert '@delete="deleteHistory"' in read(PAGE)
 
 
 def test_vue_company_research_responsive_rules_contain_wide_content_and_keep_targets_large() -> None:
@@ -147,6 +152,7 @@ def test_vue_company_research_responsive_rules_contain_wide_content_and_keep_tar
     assert "min-height: 44px" in form
     assert "min-height: 44px" in evidence
     assert "min-height: 64px" in history
+    assert "min-height: 44px" in history
     assert ".report-table-wrap { max-width: 100%" in styles
     assert "overflow-x: auto" in styles
     assert "focus-visible" in styles

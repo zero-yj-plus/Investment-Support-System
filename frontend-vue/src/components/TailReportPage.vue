@@ -62,8 +62,8 @@ defineExpose({ refresh })
 
     <div v-if="loading" class="premarket-loading" aria-label="尾盘决策正在加载">
       <section class="panel skeleton-block tail-loading__gate"></section>
-      <section class="tail-evidence-grid"><span class="panel skeleton-block tail-loading__evidence"></span><span class="panel skeleton-block tail-loading__evidence"></span></section>
       <section class="panel skeleton-block premarket-loading__report"></section>
+      <section class="tail-evidence-grid"><span class="panel skeleton-block tail-loading__evidence"></span><span class="panel skeleton-block tail-loading__evidence"></span></section>
     </div>
 
     <template v-else>
@@ -72,24 +72,6 @@ defineExpose({ refresh })
       </div>
 
       <TailDecisionSnapshot :snapshot="report?.cockpit" />
-
-      <section class="tail-evidence-section" aria-labelledby="tail-evidence-title">
-        <div class="tail-section-heading">
-          <div><p class="eyebrow">执行前证据</p><h2 id="tail-evidence-title">只在真实计划与真实回验上做判断</h2></div>
-          <p>推荐历史不可改写；观察池区间由服务端确定性规则计算。</p>
-        </div>
-        <div class="tail-evidence-grid">
-          <TailTrackRecord
-            :stats="stats"
-            :recommendations="recommendations?.recommendations || []"
-            :stats-error="statsError"
-            :recommendation-error="recommendationError"
-            :verifying="verifying"
-            @verify="verifyRecommendations"
-          />
-          <TailWatchlist :items="watchlist?.items || []" :error="watchlistError" />
-        </div>
-      </section>
 
       <div v-if="hasReport" class="report-layout tail-report-layout">
         <details class="panel report-outline" open>
@@ -143,6 +125,24 @@ defineExpose({ refresh })
           <a class="secondary-button" href="#/history?tab=reports">查看历史报告</a>
         </div>
         <p v-if="actionNotice" class="report-action-notice" role="status">{{ actionNotice }}</p>
+      </section>
+
+      <section class="tail-evidence-section" aria-labelledby="tail-evidence-title">
+        <div class="tail-section-heading">
+          <div><p class="eyebrow">执行前证据</p><h2 id="tail-evidence-title">只在真实计划与真实回验上做判断</h2></div>
+          <p>推荐历史不可改写；观察池区间由服务端确定性规则计算。</p>
+        </div>
+        <div class="tail-evidence-grid">
+          <TailTrackRecord
+            :stats="stats"
+            :recommendations="recommendations?.recommendations || []"
+            :stats-error="statsError"
+            :recommendation-error="recommendationError"
+            :verifying="verifying"
+            @verify="verifyRecommendations"
+          />
+          <TailWatchlist :items="watchlist?.items || []" :error="watchlistError" />
+        </div>
       </section>
     </template>
     <div class="premarket-page__stamp" aria-label="报告时点">

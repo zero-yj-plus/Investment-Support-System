@@ -58,7 +58,11 @@ from ..jobs.scheduler import JOB_NAMES, apply_schedule, task_center_status  # no
 from ..product_state import build_market_context, route_lifecycle_contract  # noqa: E402
 from ..decision.risk_gate import evaluate_risk_gate  # noqa: E402
 from ..simulation import SimulationError  # noqa: E402
-from ..research_runs import ActiveResearchRunError, KINDS as RESEARCH_KINDS  # noqa: E402
+from ..research_runs import (  # noqa: E402
+    ActiveResearchRunDeleteError,
+    ActiveResearchRunError,
+    KINDS as RESEARCH_KINDS,
+)
 
 log = logging.getLogger("hermes.api")
 
@@ -2986,6 +2990,27 @@ async def cancel_research_run(run_id: str, request: Request):
     if run is None:
         return JSONResponse({"ok": False, "error": "研究任务不存在"}, status_code=404)
     return {"ok": True, "run": run}
+
+
+@router.delete("/research/runs/{run_id}")
+async def delete_research_run(run_id: str, request: Request):
+    manager = _research_manager(_state(request))
+    try:
+        deleted = await asyncio.to_thread(manager.delete, run_id)
+    except ActiveResearchRunDeleteError as exc:
+        return JSONResponse(
+            {"ok": False, "error": str(exc), "active": exc.run},
+            status_code=409,
+        )
+    if deleted is None:
+        return JSONResponse({"ok": False, "error": "研究任务不存在"}, status_code=404)
+    kind = str(deleted.get("kind") or "")
+    return {
+        "ok": True,
+        "deleted_run_id": run_id,
+        "kind": kind,
+        **manager.latest(kind),
+    }
 
 
 # ---------------------------------------------------------------- 对话会话（多会话/历史/分组）

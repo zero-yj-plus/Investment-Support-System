@@ -596,6 +596,12 @@ Vue 正式产业链/公司研究页不再直接持有本接口的长 SSE：它�
 
 显式停止后台任务。只有用户点击“停止”才调用；组件卸载、路由切换和浏览器中止请求不得隐式调用。
 
+#### DELETE /api/research/runs/{run_id}
+
+删除一条已经结束的产业链或单公司研究记录。`completed | failed | canceled | interrupted` 可以删除；`queued | running | canceling` 返回 HTTP 409，必须先显式停止任务。成功后服务端删除客户隔离目录中的对应任务文件，并返回删除后的 `active`、`latest` 和 `latest_completed`。不存在的任务返回 HTTP 404。
+
+Vue 历史列表删除前必须明确确认不可撤销；服务端删除成功后同步移除浏览器本地历史副本。旧版本遗留且没有 `rr_...` 服务端任务 ID 的条目只删除本地副本。删除当前查看项后显示剩余的最近完成记录；没有剩余记录时回到真实空态。
+
 SSE 事件流，每条 `data:` 一个 JSON：
 ```
 data: {"stage": "采集实时行情数据…"}

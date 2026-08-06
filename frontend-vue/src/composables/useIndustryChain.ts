@@ -1,12 +1,12 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { getJson, postJson } from '../services/api'
+import { ApiError, deleteJson, getJson, postJson } from '../services/api'
 import type {
   IndustryChainHistoryEntry,
   IndustryChainKnowledgeResponse,
   IndustryChainRequestKey,
   IndustryChainRunState,
 } from '../types/industryChain'
-import type { ResearchRun, ResearchRunLatestResponse, ResearchRunResponse } from '../types/researchRun'
+import type { ResearchRun, ResearchRunDeleteResponse, ResearchRunLatestResponse, ResearchRunResponse } from '../types/researchRun'
 import { RESEARCH_ACTIVE_STATUSES } from '../types/researchRun'
 import {
   INDUSTRY_CHAIN_HISTORY_KEY,
@@ -40,8 +40,11 @@ export function useIndustryChain() {
   const saving = ref(false)
   const saveError = ref('')
   const saveMessage = ref('')
+  const deletingHistoryId = ref('')
+  const historyError = ref('')
+  const historyMessage = ref('')
   const controllers: Partial<Record<IndustryChainRequestKey, AbortController>> = {}
-  const generations: Record<IndustryChainRequestKey, number> = { research: 0, knowledge: 0 }
+  const generations: Record<IndustryChainRequestKey, number> = { research: 0, knowledge: 0, delete: 0 }
   let alive = false
   let pollTimer: ReturnType<typeof setTimeout> | null = null
   let stageTimer: ReturnType<typeof setInterval> | null = null
@@ -49,8 +52,8 @@ export function useIndustryChain() {
 
   const running = computed(() => runState.value === 'loading')
   const summary = computed(() => summarizeIndustryChain(content.value))
-  const canSave = computed(() => runState.value === 'complete' && Boolean(content.value.trim()) && !saving.value)
-  const refreshing = computed(() => running.value || saving.value)
+  const canSave = computed(() => runState.value === 'complete' && Boolean(content.value.trim()) && !saving.value && !deletingHistoryId.value)
+  const refreshing = computed(() => running.value || saving.value || Boolean(deletingHistoryId.value))
 
   function persistHistory() {
     localStorage.setItem(INDUSTRY_CHAIN_HISTORY_KEY, JSON.stringify(history.value))
@@ -281,7 +284,7 @@ export function useIndustryChain() {
   }
 
   function selectHistory(entry: IndustryChainHistoryEntry) {
-    if (running.value || saving.value) return
+    if (running.value || saving.value || deletingHistoryId.value) return
     industryInput.value = entry.industry
     focusInput.value = entry.focus || ''
     currentIndustry.value = entry.industry
@@ -291,6 +294,62 @@ export function useIndustryChain() {
     saveError.value = ''
     saveMessage.value = ''
     activeHistoryId.value = entry.id
+  }
+
+  function resetHistorySelection() {
+    industryInput.value = ''
+    focusInput.value = ''
+    currentIndustry.value = ''
+    content.value = ''
+    runState.value = 'idle'
+    runError.value = ''
+    activeHistoryId.value = ''
+    saveError.value = ''
+    saveMessage.value = ''
+  }
+
+  async function deleteHistory(entry: IndustryChainHistoryEntry) {
+    if (running.value || saving.value || deletingHistoryId.value || !entry.id) return false
+    deletingHistoryId.value = entry.id
+    historyError.value = ''
+    historyMessage.value = ''
+    const serverBacked = /^rr_[0-9a-f]{32}$/.test(entry.id)
+    const wasActive = activeHistoryId.value === entry.id
+    try {
+      if (serverBacked) {
+        const guard = requestGuard('delete', 15_000)
+        try {
+          await deleteJson<ResearchRunDeleteResponse>(`/research/runs/${encodeURIComponent(entry.id)}`, guard.controller.signal)
+          if (!guard.current()) return false
+        } catch (error) {
+          if (!guard.current()) return false
+          if (!(error instanceof ApiError && error.status === 404)) {
+            historyError.value = guard.timedOut()
+              ? '删除请求超过 15 秒，记录仍保留。'
+              : errorMessage(error, '删除产业链研究记录失败。')
+            return false
+          }
+        } finally {
+          guard.finish()
+        }
+      }
+      if (!alive) return false
+      history.value = history.value.filter((item) => item.id !== entry.id)
+      persistHistory()
+      if (wasActive) {
+        resetHistorySelection()
+        if (serverBacked) await restoreLatest()
+        else if (history.value[0]) {
+          deletingHistoryId.value = ''
+          selectHistory(history.value[0])
+        }
+      }
+      if (!alive) return false
+      historyMessage.value = `已删除产业链研究记录：${entry.industry}`
+      return true
+    } finally {
+      if (alive) deletingHistoryId.value = ''
+    }
   }
 
   async function saveToKnowledge() {
@@ -340,12 +399,14 @@ export function useIndustryChain() {
     // 这里只中止短轮询；服务端后台研究任务继续运行。
     abortRequest('research')
     abortRequest('knowledge')
+    abortRequest('delete')
   })
 
   return {
     industryInput, focusInput, currentIndustry, content, runState, stageText, stageSeconds,
     runError, fieldError, history, activeHistoryId, saving, saveError, saveMessage,
+    deletingHistoryId, historyError, historyMessage,
     running, summary, canSave, refreshing, startResearch, stopResearch,
-    selectHistory, saveToKnowledge, refresh,
+    selectHistory, deleteHistory, saveToKnowledge, refresh,
   }
 }

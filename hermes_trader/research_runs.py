@@ -35,6 +35,12 @@ class ActiveResearchRunError(RuntimeError):
         self.run = run
 
 
+class ActiveResearchRunDeleteError(RuntimeError):
+    def __init__(self, run: dict):
+        super().__init__("运行中的研究任务不能删除，请先停止任务")
+        self.run = run
+
+
 class ResearchRunManager:
     """后台执行并以原子 JSON 文件保存研究任务状态。"""
 
@@ -298,6 +304,21 @@ class ResearchRunManager:
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
         return self.get(run_id)
+
+    def delete(self, run_id: str) -> dict | None:
+        """删除已结束的持久化研究记录；活跃任务必须先显式停止。"""
+        with self._lock:
+            row = self.get(run_id)
+            if row is None:
+                return None
+            if row.get("status") in ACTIVE_STATUSES:
+                raise ActiveResearchRunDeleteError(row)
+            path = self._path(str(row["kind"]), run_id)
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                return None
+            return row
 
     async def shutdown(self) -> None:
         self._shutting_down = True

@@ -463,6 +463,8 @@ def test_vue_tail_decision_preserves_locked_report_and_evidence_contracts() -> N
     assert "review.hit_status === 'hit'" in track
     assert "review.hit_status === 'miss'" in track
     assert 'aria-label="尾盘决策报告章节"' in page
+    assert page.index('class="report-layout tail-report-layout"') < page.index('class="tail-evidence-section"')
+    assert page.index('class="panel report-empty tail-report-empty"') < page.index('class="tail-evidence-section"')
     assert "v-html" not in page
     for controller in (
         "reportController?.abort()",
@@ -514,6 +516,8 @@ def test_vue_close_review_route_uses_real_append_only_contracts() -> None:
         assert endpoint in composable
     assert "report?.cockpit" in page
     assert "历史判断只追加、不回写" in page
+    assert page.index('class="report-layout close-report-layout"') < page.index('class="close-evidence-section"')
+    assert page.index('class="panel report-empty close-report-empty"') < page.index('class="close-evidence-section"')
     assert "win_rate_unit !== 'percent'" in track
     for state in ("waiting", "untriggered", "incomparable", "not_triggered", "insufficient_evidence", "hit", "partial_hit", "invalidated"):
         assert state in track
@@ -838,6 +842,8 @@ def test_vue_tomorrow_strategy_route_and_real_contracts() -> None:
     assert "ReportDocument" in page
     assert "TomorrowWatchlist" in page
     assert "TomorrowDataHealth" in page
+    assert page.index('class="report-layout tomorrow-report-layout"') < page.index('class="tomorrow-evidence-section"')
+    assert page.index('class="panel report-empty tomorrow-report-empty"') < page.index('class="tomorrow-evidence-section"')
     assert 'class="tomorrow-page__description"' in page
     assert ".tomorrow-page__description { max-width: none !important; }" in page
     assert "item.quote?.price" in watchlist

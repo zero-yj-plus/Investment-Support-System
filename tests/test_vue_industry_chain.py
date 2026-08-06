@@ -38,6 +38,7 @@ def test_vue_industry_chain_uses_persistent_background_runs_and_knowledge_contra
     assert "postJson<ResearchRunResponse>('/research/runs'" in composable
     assert "getJson<ResearchRunLatestResponse>('/research/runs/latest?kind=chain'" in composable
     assert "`/research/runs/${encodeURIComponent(runId)}`" in composable
+    assert "deleteJson<ResearchRunDeleteResponse>(`/research/runs/${encodeURIComponent(entry.id)}`" in composable
     assert "kind: 'chain', industry, focus" in composable
     assert "postJson<IndustryChainKnowledgeResponse>('/knowledge'" in composable
     assert "mode: 'chain'" in formatter
@@ -84,6 +85,7 @@ def test_vue_industry_chain_cleans_every_request_and_timer_on_unmount() -> None:
     assert "onBeforeUnmount(() =>" in composable
     assert "abortRequest('research')" in composable
     assert "abortRequest('knowledge')" in composable
+    assert "abortRequest('delete')" in composable
     assert "alive && controllers[key] === controller" in composable
     assert "requestGuard('research', 15_000)" in composable
     assert "服务端后台研究任务继续运行" in composable
@@ -114,6 +116,10 @@ def test_vue_industry_chain_uses_safe_markdown_and_native_interaction_semantics(
     assert 'role="alert"' in production
     assert 'aria-live="polite"' in production
     assert 'role="button"' not in production
+    assert "window.confirm" in read(HISTORY)
+    assert "此操作不可撤销" in read(HISTORY)
+    assert 'class="chain-history__delete"' in read(HISTORY)
+    assert '@delete="deleteHistory"' in read(PAGE)
 
 
 def test_vue_industry_chain_responsive_rules_contain_wide_content_and_keep_targets_large() -> None:
@@ -128,6 +134,7 @@ def test_vue_industry_chain_responsive_rules_contain_wide_content_and_keep_targe
     assert "@media (max-width: 720px)" in page
     assert "min-height: 44px" in form
     assert "min-height: 64px" in history
+    assert "min-height: 44px" in history
     assert "min-height: 44px" in read(ROOT / "frontend-vue/src/components/ReportInline.vue")
     assert ".report-table-wrap { max-width: 100%" in styles
     assert "overflow-x: auto" in styles

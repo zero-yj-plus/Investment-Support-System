@@ -1,5 +1,5 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { getJson, postJson } from '../services/api'
+import { ApiError, deleteJson, getJson, postJson } from '../services/api'
 import type {
   CompanyDisclosureResponse,
   CompanyHistoryEntry,
@@ -10,7 +10,7 @@ import type {
   CompanyResearchRunState,
   CompanyResourceState,
 } from '../types/companyResearch'
-import type { ResearchRun, ResearchRunLatestResponse, ResearchRunResponse } from '../types/researchRun'
+import type { ResearchRun, ResearchRunDeleteResponse, ResearchRunLatestResponse, ResearchRunResponse } from '../types/researchRun'
 import { RESEARCH_ACTIVE_STATUSES } from '../types/researchRun'
 import {
   COMPANY_CODE_RE,
@@ -54,6 +54,9 @@ export function useCompanyResearch() {
   const saving = ref(false)
   const saveError = ref('')
   const saveMessage = ref('')
+  const deletingHistoryId = ref('')
+  const historyError = ref('')
+  const historyMessage = ref('')
   const controllers: Partial<Record<CompanyRequestKey, AbortController>> = {}
   const generations: Record<CompanyRequestKey, number> = {
     status: 0,
@@ -61,6 +64,7 @@ export function useCompanyResearch() {
     interactions: 0,
     research: 0,
     knowledge: 0,
+    delete: 0,
   }
   let alive = false
   let pollTimer: ReturnType<typeof setTimeout> | null = null
@@ -84,8 +88,8 @@ export function useCompanyResearch() {
     return modelReady.value ? 'AI 研究连接已就绪。' : 'AI 研究连接状态待确认。'
   })
   const evidenceLoading = computed(() => disclosures.value.loading || interactions.value.loading)
-  const canSave = computed(() => runState.value === 'complete' && Boolean(content.value.trim()) && !saving.value)
-  const refreshing = computed(() => running.value || saving.value || statusLoading.value || evidenceLoading.value)
+  const canSave = computed(() => runState.value === 'complete' && Boolean(content.value.trim()) && !saving.value && !deletingHistoryId.value)
+  const refreshing = computed(() => running.value || saving.value || statusLoading.value || evidenceLoading.value || Boolean(deletingHistoryId.value))
 
   function persistHistory() {
     localStorage.setItem(COMPANY_HISTORY_KEY, JSON.stringify(history.value))
@@ -400,7 +404,7 @@ export function useCompanyResearch() {
   }
 
   function selectHistory(entry: CompanyHistoryEntry) {
-    if (running.value || saving.value) return
+    if (running.value || saving.value || deletingHistoryId.value) return
     codeInput.value = entry.code
     currentCode.value = entry.code
     content.value = entry.content
@@ -411,6 +415,64 @@ export function useCompanyResearch() {
     saveError.value = ''
     saveMessage.value = ''
     void loadEvidence(entry.code)
+  }
+
+  function resetHistorySelection() {
+    codeInput.value = ''
+    currentCode.value = ''
+    content.value = ''
+    runState.value = 'idle'
+    runError.value = ''
+    completedAt.value = null
+    activeHistoryId.value = ''
+    disclosures.value = emptyResource()
+    interactions.value = emptyResource()
+    saveError.value = ''
+    saveMessage.value = ''
+  }
+
+  async function deleteHistory(entry: CompanyHistoryEntry) {
+    if (running.value || saving.value || deletingHistoryId.value || !entry.id) return false
+    deletingHistoryId.value = entry.id
+    historyError.value = ''
+    historyMessage.value = ''
+    const serverBacked = /^rr_[0-9a-f]{32}$/.test(entry.id)
+    const wasActive = activeHistoryId.value === entry.id
+    try {
+      if (serverBacked) {
+        const guard = requestGuard('delete', 15_000)
+        try {
+          await deleteJson<ResearchRunDeleteResponse>(`/research/runs/${encodeURIComponent(entry.id)}`, guard.controller.signal)
+          if (!guard.current()) return false
+        } catch (error) {
+          if (!guard.current()) return false
+          if (!(error instanceof ApiError && error.status === 404)) {
+            historyError.value = guard.timedOut()
+              ? '删除请求超过 15 秒，记录仍保留。'
+              : errorMessage(error, '删除公司研究记录失败。')
+            return false
+          }
+        } finally {
+          guard.finish()
+        }
+      }
+      if (!alive) return false
+      history.value = history.value.filter((item) => item.id !== entry.id)
+      persistHistory()
+      if (wasActive) {
+        resetHistorySelection()
+        if (serverBacked) await restoreLatest()
+        else if (history.value[0]) {
+          deletingHistoryId.value = ''
+          selectHistory(history.value[0])
+        }
+      }
+      if (!alive) return false
+      historyMessage.value = `已删除公司研究记录：${entry.code}`
+      return true
+    } finally {
+      if (alive) deletingHistoryId.value = ''
+    }
   }
 
   async function saveToKnowledge() {
@@ -460,7 +522,7 @@ export function useCompanyResearch() {
     clearPollTimer()
     clearStageTimer()
     // 这里只中止状态、证据和保存请求；服务端后台研究任务继续运行。
-    ;(['status', 'disclosures', 'interactions', 'research', 'knowledge'] as CompanyRequestKey[])
+    ;(['status', 'disclosures', 'interactions', 'research', 'knowledge', 'delete'] as CompanyRequestKey[])
       .forEach(abortRequest)
   })
 
@@ -468,7 +530,8 @@ export function useCompanyResearch() {
     codeInput, currentCode, content, runState, runError, fieldError, stageText,
     stageSeconds, completedAt, statusLoading, statusError, modelReady, modelReason,
     disclosures, interactions, history, activeHistoryId, saving,
+    deletingHistoryId, historyError, historyMessage,
     saveError, saveMessage, running, evidenceLoading, canSave, refreshing,
-    startResearch, stopResearch, selectHistory, saveToKnowledge, refresh,
+    startResearch, stopResearch, selectHistory, deleteHistory, saveToKnowledge, refresh,
   }
 }

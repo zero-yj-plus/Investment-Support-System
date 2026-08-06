@@ -26,6 +26,8 @@ def test_installer_falls_back_from_py_launcher_to_python_and_preserves_configs()
     assert "struct.calcsize" in text
     assert "sys.version_info >= (3,10)" in text
     assert "pip', 'install', '-r'" in text
+    assert 'Test-RuntimeDependencies' in text
+    assert '"uvicorn"' in text
     assert "if (-not (Test-Path -LiteralPath $ConfigPath" in text
     assert "if (-not (Test-Path -LiteralPath $EnvPath" in text
 
@@ -39,6 +41,8 @@ def test_runtime_scripts_load_dotenv_without_putting_bridge_key_on_command_line(
     assert "--api-key" not in bridge
     assert "Start-Process" not in start
     assert "Start-Process" not in bridge
+    assert "DependencyProbe" in start
+    assert '"uvicorn"' in start
 
 
 def test_check_script_covers_ui_core_apis_and_optional_bridge():

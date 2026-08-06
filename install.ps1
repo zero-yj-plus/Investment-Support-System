@@ -35,6 +35,16 @@ function Test-PythonCandidate {
     return ($LASTEXITCODE -eq 0)
 }
 
+function Test-RuntimeDependencies {
+    param(
+        [Parameter(Mandatory = $true)][string]$PythonPath
+    )
+
+    $probe = 'import importlib.util; required=("fastapi","uvicorn","yaml","apscheduler","pandas","httpx"); missing=[name for name in required if importlib.util.find_spec(name) is None]; print("关键依赖检查：" + ("全部就绪" if not missing else "缺少 " + ", ".join(missing))); raise SystemExit(0 if not missing else 1)'
+    & $PythonPath -c $probe
+    return ($LASTEXITCODE -eq 0)
+}
+
 if (-not (Test-Path -LiteralPath $RequirementsPath -PathType Leaf)) {
     throw "部署包不完整：缺少 $RequirementsPath"
 }
@@ -83,6 +93,9 @@ if (-not $SkipPipUpgrade) {
 Write-Host '正在安装生产依赖 ...'
 Invoke-NativeChecked -FilePath $VenvPython -Arguments @('-m', 'pip', 'install', '-r', $RequirementsPath) -Description '安装生产依赖'
 Invoke-NativeChecked -FilePath $VenvPython -Arguments @('-m', 'pip', 'check') -Description '检查 Python 依赖'
+if (-not (Test-RuntimeDependencies -PythonPath $VenvPython)) {
+    throw '关键运行依赖未安装完整。请检查上方 pip 输出后重新运行 .\install.ps1。'
+}
 
 $ConfigPath = Join-Path $ProjectRoot 'config.yaml'
 $ConfigExample = Join-Path $ProjectRoot 'config.example.yaml'
@@ -109,4 +122,3 @@ Write-Host '安装完成。请先填写 config.yaml 和 .env，再运行：'
 Write-Host '  .\start.ps1'
 Write-Host '如使用本机通达信 TQ 服务，再单独运行：'
 Write-Host '  .\start-tdx-bridge.ps1'
-

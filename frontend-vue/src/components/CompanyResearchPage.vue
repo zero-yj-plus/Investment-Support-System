@@ -12,8 +12,9 @@ const {
   codeInput, currentCode, content, runState, runError, fieldError, stageText,
   stageSeconds, completedAt, statusLoading, modelReady, modelReason,
   disclosures, interactions, history, activeHistoryId, saving,
+  deletingHistoryId, historyError, historyMessage,
   saveError, saveMessage, running, evidenceLoading, canSave, refreshing,
-  startResearch, stopResearch, selectHistory, saveToKnowledge, refresh,
+  startResearch, stopResearch, selectHistory, deleteHistory, saveToKnowledge, refresh,
 } = useCompanyResearch()
 
 watch(refreshing, (value) => emit('refreshState', value), { immediate: true })
@@ -114,7 +115,16 @@ defineExpose({ refresh })
       </div>
 
       <aside class="company-sidebar" aria-label="公司研究历史">
-        <CompanyResearchHistory :entries="history" :active-id="activeHistoryId" :disabled="running || saving" @select="selectHistory" />
+        <CompanyResearchHistory
+          :entries="history"
+          :active-id="activeHistoryId"
+          :disabled="running || saving"
+          :deleting-id="deletingHistoryId"
+          :error="historyError"
+          :message="historyMessage"
+          @select="selectHistory"
+          @delete="deleteHistory"
+        />
       </aside>
     </div>
 
