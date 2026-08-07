@@ -53,6 +53,51 @@ Invoke-RestMethod 'http://127.0.0.1:18879/v1/realtime/quotes?codes=000001.SZ' -H
 项目仍按原方式启动。若 TQ 客户端退出或登录失效，桥会返回结构化上游错误，业务层按
 既有降级链路使用腾讯等公开源或明确显示缺失，不会以零值伪装数据。
 
+## Windows 登录守护（可选）
+
+通达信可能主动结束行情会话并回到登录界面。仓库提供可选的当前用户守护组件：
+
+```powershell
+.\install-tdx-login-guard.ps1 -TdxPath 'D:\tdx\TdxW.exe'
+```
+
+安装器把守护程序和独立配置复制到当前用户的
+`%LOCALAPPDATA%\HermesTrader\TdxLoginGuard`，并注册仅在该用户交互式登录时运行的
+计划任务。默认 `recovery_mode=close_dialog` 不保存凭据，只关闭已校准的超时登录页。
+需要完整自动登录时，先运行安装目录中的凭据设置脚本：
+
+```powershell
+$root=Join-Path $env:LOCALAPPDATA 'HermesTrader\TdxLoginGuard'
+pwsh.exe -NoProfile -File "$root\set-tdx-login-credential.ps1"
+```
+
+凭据文件使用当前 Windows 用户 DPAPI 加密。将配置切换为 `login_then_close` 后，守护按
+已校准控件填写账号密码，单次恢复最多提交一次。连续探测失败和操作冷却可以避免短暂
+断线触发重复操作。恢复成功必须同时满足 TQ `get_market_snapshot` 返回 `ErrorId=0`；
+配置了本地桥密钥时还会检查桥健康和一只股票的实时行情。
+
+守护只在同一运行周期内先观察到健康会话、随后发现会话失效且 `TdxW` 进程仍存在时
+执行关闭动作。默认 `start_tdx_if_missing=false`；只有显式启用账号密码自动登录后才应
+改为 `true`。本机 V7.73 已校准账号控件 `1443`、密码控件 `1058`。自动登录成功后的
+20 秒内，若同一 TdxW 进程出现 `#32770` 登录/扫码对话框，守护会关闭它；正常主界面
+`TdxW_MainFrame_Class` 不在关闭范围内。
+
+首次安装或迁移到新机器后，先在登录页运行只读控件扫描：
+
+```powershell
+$root=Join-Path $env:LOCALAPPDATA 'HermesTrader\TdxLoginGuard'
+pwsh.exe -NoProfile -File "$root\tdx-login-guard.ps1" `
+  -Config "$root\tdx-login-guard.json" -Inspect
+```
+
+迁移到新电脑或更换 Windows 用户后，DPAPI 密文不能复用，必须重新运行凭据设置脚本；
+客户端版本变化时也要重新校准控件。UI 操作要求 Windows 用户会话保持登录，不能作为
+Session 0 Windows 服务运行。卸载计划任务但保留日志：
+
+```powershell
+.\uninstall-tdx-login-guard.ps1
+```
+
 ## 单位与刷新
 
 - TQ 实时成交量（股）在桥内转换为 TDX 契约的手，现有适配器再统一为股。

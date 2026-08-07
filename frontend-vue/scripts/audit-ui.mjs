@@ -1132,6 +1132,21 @@ const fixtures = {
       { id: 'def456', title: '旧自由问答不会出现在本页', mode: 'free', updated_at: '2026-07-22 10:20:00', msg_count: 2 },
     ],
   },
+  '/api/chat/perspectives': {
+    ok: true,
+    max_selected: 4,
+    perspectives: [
+      ['92kobe', '92科比', 'A股短线与游资'], ['aizaibingchuan', '爱在冰川', 'A股短线与游资'],
+      ['chaoguyangjia', '炒股养家', 'A股短线与游资'], ['chenxiaoqun', '陈小群', 'A股短线与游资'],
+      ['huadongdandaodan', '华东大导弹', 'A股短线与游资'], ['ningbogansidui', '宁波敢死队', 'A股短线与游资'],
+      ['tuixuechaogu', '退学炒股', 'A股短线与游资'], ['yishunliuguang', '一瞬流光', 'A股短线与游资'],
+      ['zhaolao-ge', '赵老哥', 'A股短线与游资'], ['asking', 'Asking', 'A股短线与游资'],
+      ['beijing-chaogu', '北京炒家', 'A股短线与游资'], ['huanle-haian', '欢乐海岸', 'A股短线与游资'],
+      ['qiao-bangzhu', '乔帮主', 'A股短线与游资'], ['zhang-mengzhu', '章盟主', 'A股短线与游资'],
+      ['geweidong', '葛卫东', '宏观与趋势交易'], ['renzeping', '任泽平', '宏观与趋势交易'],
+      ['livermore', '利弗莫尔', '宏观与趋势交易'],
+    ].map(([id, name, category]) => ({ id, name, category, description: `${name}结构化分析视角`, tags: [], version: '2026-08-06' })),
+  },
   '/api/stock/600519/core': {
     ok: true, state: 'complete', ts: '2026-07-22 10:31:42', recognized: true, missing: [],
     recent_daily: [{ d: '2026-07-22', o: 1472.00, c: 1488.52, h: 1496.80, l: 1468.20, v: 3261547 }],
@@ -2661,6 +2676,9 @@ try {
     return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
   })
   await stockAskEmptyPage.goto('http://127.0.0.1:4175/#/research?tab=ask', { waitUntil: 'networkidle' })
+  await stockAskEmptyPage.locator('.stock-ask-perspectives__toggle').click()
+  const perspectiveInputs = stockAskEmptyPage.locator('.stock-ask-perspectives__grid input')
+  for (let index = 0; index < 4; index += 1) await perspectiveInputs.nth(index).check()
   await stockAskEmptyPage.addScriptTag({ content: axeSource })
   const stockAskEmptyState = await stockAskEmptyPage.evaluate(() => {
     const text = document.body.innerText
@@ -2671,6 +2689,9 @@ try {
       removedModes: ![...document.querySelectorAll('.stock-ask-page button')]
         .some((button) => ['自由问答', '持仓诊断', '产业链挖掘'].includes(button.textContent?.trim())),
       twoPresetRows: getComputedStyle(document.querySelector('.stock-ask-presets')).gridTemplateRows.split(' ').length === 2,
+      perspectiveCount: document.querySelectorAll('.stock-ask-perspectives__grid input').length === 17,
+      perspectiveLimit: document.querySelectorAll('.stock-ask-perspectives__grid input:checked').length === 4
+        && document.querySelectorAll('.stock-ask-perspectives__grid input:disabled:not(:checked)').length === 13,
     }
   })
   const stockAskEmptyAxe = await stockAskEmptyPage.evaluate(async () => window.axe.run(document, {

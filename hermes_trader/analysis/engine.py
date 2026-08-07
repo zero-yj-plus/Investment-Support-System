@@ -34,6 +34,7 @@ from ..analysis import industry_chain as industry_chain_mod
 from ..analysis.claim_validator import validate_report_finalization
 from ..analysis.methodology import load_methodology
 from ..analysis import report_eval
+from ..analysis import stock_perspectives
 from ..analysis.report_lineage import build_lineage, report_ref
 
 log = logging.getLogger("hermes.engine")
@@ -135,6 +136,16 @@ def _review_stock_explanation(content: str, packet: dict) -> dict:
         hard_errors.append("unsupported_price_claim")
     if _stock_action_conflict(text, action):
         hard_errors.append("frozen_action_conflict")
+    selected_perspectives = packet.get("selected_perspectives") or []
+    if selected_perspectives:
+        required_view_labels = [
+            f"{str(item.get('name') or '').strip()}视角"
+            for item in selected_perspectives
+            if isinstance(item, dict) and str(item.get("name") or "").strip()
+        ]
+        required_view_labels.append("多视角共识与分歧")
+        if any(label not in text for label in required_view_labels):
+            hard_errors.append("perspective_sections_incomplete")
 
     soft_issues: list[str] = []
     if len(visible) < _STOCK_DEEP_ANSWER_TARGET_MIN:
@@ -2649,6 +2660,7 @@ class Engine:
 
     async def governed_stock_explanation_stream(
         self, message: str, card: dict, *, history: list[dict] | None = None,
+        perspective_ids: tuple[str, ...] | None = None,
     ) -> AsyncIterator[str]:
         """把冻结事实组织成一份完整问股成稿，校验通过后才交给前端。
 
@@ -2716,6 +2728,25 @@ class Engine:
             "market_sentiment": sentiment,
             "market_overview": overview,
         }
+        selected_perspective_ids = stock_perspectives.resolve_perspective_ids(
+            perspective_ids
+        )
+        packet["selected_perspectives"] = [
+            {"id": item["id"], "name": item["name"]}
+            for item in stock_perspectives.selected_metadata(selected_perspective_ids)
+        ]
+        perspective_prompt = stock_perspectives.build_perspective_prompt(
+            selected_perspective_ids
+        )
+        answer_length = (
+            "回答目标为约 800—1300 个中文字符。"
+            if not selected_perspective_ids
+            else (
+                "回答目标为约 1200—"
+                f"{1600 + 180 * len(selected_perspective_ids)} 个中文字符；"
+                "视角判断要短而有区分度，不靠重复字段拉长篇幅。"
+            )
+        )
         system = (
             prompts.system_prompt(self.store.knowledge_digest())
             + "\n\n【问股最终成稿·最高优先级】\n"
@@ -2724,7 +2755,8 @@ class Engine:
             "frozen_decision 中的 direct_answer、final_action、entry_condition、"
             "invalidation_condition 是服务端冻结事实：必须保持语义一致并在正文中明确出现，"
             "不得改写为相反动作，不得新增价位、仓位或无条件买卖建议。\n"
-            "回答目标为约 800—1300 个中文字符。深度来自趋势位置、动量、量价、资金、"
+            + answer_length
+            + "深度来自趋势位置、动量、量价、资金、"
             "板块联动、市场情绪和基础财务的交叉判断，不是把所有字段逐项抄一遍；"
             "只展开数据状态为可用的维度，缺失信息集中在结尾一句说明。\n"
             "推荐结构：标题；开头用一个自然段直接回答用户问题；“结构与量价”、"
@@ -2734,6 +2766,7 @@ class Engine:
             "不要使用阿拉伯数字给段落编号。\n"
             "所有事实和数字只能来自下方统一分析资料包；若确定性技术结构已经完整，"
             "不得笼统声称“只有基础行情”或“没有可复算证据”。"
+            + perspective_prompt
             + prompts._inject({"统一分析资料包": packet})
         )
         recent = [

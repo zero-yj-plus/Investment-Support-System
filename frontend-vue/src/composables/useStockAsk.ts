@@ -10,10 +10,15 @@ import type {
   StockAskRequestKey,
   StockCoreResponse,
   StockEnrichmentResponse,
+  StockPerspective,
+  StockPerspectiveListResponse,
+  StockPerspectiveSummary,
 } from '../types/stockAsk'
 
 const CODE_RE = /^\d{6}$/
 const CONVERSATION_CODE_KEY = 'wudi.stockAsk.conversationCodes'
+const PERSPECTIVE_SELECTION_KEY = 'wudi.stockAsk.perspectiveIds'
+const DEFAULT_MAX_PERSPECTIVES = 4
 
 function nowLabel() {
   return new Intl.DateTimeFormat('zh-CN', {
@@ -56,6 +61,11 @@ export function useStockAsk() {
   const chatError = ref('')
   const saveWarning = ref('')
   const conversations = ref<ConversationMeta[]>([])
+  const perspectives = ref<StockPerspective[]>([])
+  const selectedPerspectiveIds = ref<string[]>([])
+  const maxSelectedPerspectives = ref(DEFAULT_MAX_PERSPECTIVES)
+  const perspectivesLoading = ref(true)
+  const perspectiveError = ref('')
   const conversationsLoading = ref(true)
   const conversationError = ref('')
   const activeConversationId = ref('')
@@ -68,6 +78,7 @@ export function useStockAsk() {
   const generations: Record<StockAskRequestKey, number> = {
     core: 0,
     enrichment: 0,
+    perspectiveCatalog: 0,
     conversationList: 0,
     conversationDetail: 0,
     conversationCreate: 0,
@@ -83,8 +94,80 @@ export function useStockAsk() {
   const quote = computed(() => core.value?.quote || null)
   const stockName = computed(() => quote.value?.name || core.value?.recognition?.name || '')
   const stockLoading = computed(() => coreLoading.value || enrichmentLoading.value)
-  const refreshing = computed(() => stockLoading.value || conversationsLoading.value)
+  const refreshing = computed(() => stockLoading.value || conversationsLoading.value || perspectivesLoading.value)
   const canAsk = computed(() => CODE_RE.test(selectedCode.value) && core.value?.recognized !== false)
+  const selectedPerspectives = computed<StockPerspectiveSummary[]>(() => selectedPerspectiveIds.value
+    .map((id) => perspectives.value.find((item) => item.id === id))
+    .filter((item): item is StockPerspective => Boolean(item))
+    .map(({ id, name, version }) => ({ id, name, version })))
+
+  function persistPerspectiveSelection() {
+    localStorage.setItem(PERSPECTIVE_SELECTION_KEY, JSON.stringify(selectedPerspectiveIds.value))
+  }
+
+  function restorePerspectiveSelection() {
+    let stored: unknown = []
+    try {
+      stored = JSON.parse(localStorage.getItem(PERSPECTIVE_SELECTION_KEY) || '[]')
+    } catch {
+      stored = []
+    }
+    const allowed = new Set(perspectives.value.map((item) => item.id))
+    selectedPerspectiveIds.value = (Array.isArray(stored) ? stored : [])
+      .map((item) => String(item || ''))
+      .filter((item, index, rows) => allowed.has(item) && rows.indexOf(item) === index)
+      .slice(0, maxSelectedPerspectives.value)
+    persistPerspectiveSelection()
+  }
+
+  async function loadPerspectives() {
+    const guard = requestGuard('perspectiveCatalog', 12_000)
+    perspectivesLoading.value = true
+    perspectiveError.value = ''
+    try {
+      const payload = await getJson<StockPerspectiveListResponse>('/chat/perspectives', guard.controller.signal)
+      if (!guard.current()) return
+      if (payload.ok === false || !Array.isArray(payload.perspectives)) {
+        throw new Error(payload.error || '视角列表返回不可用状态')
+      }
+      perspectives.value = payload.perspectives.filter((item) => item?.id && item?.name)
+      const serverLimit = Number(payload.max_selected)
+      maxSelectedPerspectives.value = Number.isInteger(serverLimit)
+        ? Math.min(DEFAULT_MAX_PERSPECTIVES, Math.max(1, serverLimit))
+        : DEFAULT_MAX_PERSPECTIVES
+      restorePerspectiveSelection()
+    } catch (error) {
+      if (!guard.current()) return
+      perspectiveError.value = guard.timedOut()
+        ? '分析视角读取超过 12 秒；默认问股仍可使用'
+        : errorText(error, '分析视角暂不可用；默认问股仍可使用')
+    } finally {
+      guard.finish()
+      if (alive) perspectivesLoading.value = false
+    }
+  }
+
+  function togglePerspective(id: string) {
+    if (streaming.value) return
+    perspectiveError.value = ''
+    if (!perspectives.value.some((item) => item.id === id)) return
+    if (selectedPerspectiveIds.value.includes(id)) {
+      selectedPerspectiveIds.value = selectedPerspectiveIds.value.filter((item) => item !== id)
+    } else if (selectedPerspectiveIds.value.length >= maxSelectedPerspectives.value) {
+      perspectiveError.value = `每轮最多选择 ${maxSelectedPerspectives.value} 个分析视角；请先取消一个`
+      return
+    } else {
+      selectedPerspectiveIds.value = [...selectedPerspectiveIds.value, id]
+    }
+    persistPerspectiveSelection()
+  }
+
+  function clearPerspectives() {
+    if (streaming.value) return
+    perspectiveError.value = ''
+    selectedPerspectiveIds.value = []
+    persistPerspectiveSelection()
+  }
 
   function persistConversationCodes() {
     localStorage.setItem(CONVERSATION_CODE_KEY, JSON.stringify(conversationCodes))
@@ -251,6 +334,9 @@ export function useStockAsk() {
         content: String(item.content || ''),
         ts: String(item.ts || '').slice(11, 19),
         imageCount: item.has_image ? 1 : 0,
+        perspectives: Array.isArray(item.perspectives)
+          ? item.perspectives.slice(0, DEFAULT_MAX_PERSPECTIVES)
+          : [],
         state: 'complete',
       }))
       const boundCode = conversationCodes[id]
@@ -295,7 +381,13 @@ export function useStockAsk() {
     }
   }
 
-  async function saveExchange(userText: string, imageCount: number, assistantText: string, code: string) {
+  async function saveExchange(
+    userText: string,
+    imageCount: number,
+    assistantText: string,
+    code: string,
+    perspectiveIds: string[],
+  ) {
     saveWarning.value = ''
     let conversationId = activeConversationId.value
     if (!conversationId) conversationId = await createConversation(false)
@@ -311,7 +403,7 @@ export function useStockAsk() {
         {
           messages: [
             { role: 'user', content: userText, has_image: imageCount > 0 },
-            { role: 'assistant', content: assistantText },
+            { role: 'assistant', content: assistantText, perspective_ids: perspectiveIds },
           ],
         },
         guard.controller.signal,
@@ -359,6 +451,8 @@ export function useStockAsk() {
 
     const code = selectedCode.value
     const images = pendingImages.value.map((item) => item.dataUrl)
+    const perspectiveIds = [...selectedPerspectiveIds.value]
+    const perspectiveMeta = selectedPerspectives.value.map((item) => ({ ...item }))
     const history = messages.value
       .filter((item) => item.state === 'complete' && (item.role === 'user' || item.role === 'assistant'))
       .slice(-10)
@@ -370,12 +464,14 @@ export function useStockAsk() {
     })
     const assistant: StockAskMessage = {
       id: messageId('assistant'), role: 'assistant', content: '', code,
-      ts: nowLabel(), state: 'streaming',
+      ts: nowLabel(), perspectives: perspectiveMeta, state: 'streaming',
     }
     messages.value.push(assistant)
     prompt.value = ''
     pendingImages.value = []
-    stageText.value = '正在核验行情、证据与风险闸…'
+    stageText.value = perspectiveIds.length
+      ? `正在核验行情、证据与风险闸，并准备 ${perspectiveIds.length} 个分析视角…`
+      : '正在核验行情、证据与风险闸…'
     stageSeconds.value = 0
     clearStageTimer()
     stageTimer = setInterval(() => { stageSeconds.value += 1 }, 1000)
@@ -387,6 +483,7 @@ export function useStockAsk() {
     try {
       await postEventStream('/chat', {
         mode: 'stock', message: userText, code, industry: '', history, images,
+        perspective_ids: perspectiveIds,
       }, {
         signal: guard.controller.signal,
         onStage(stage) {
@@ -404,7 +501,7 @@ export function useStockAsk() {
       if (!guard.current()) return
       if (!completed || !assistant.content.trim()) throw new Error('回答流未返回完整内容，已拒绝保存')
       assistant.state = 'complete'
-      await saveExchange(userText, images.length, assistant.content, code)
+      await saveExchange(userText, images.length, assistant.content, code, perspectiveIds)
     } catch (error) {
       if (!guard.current()) return
       const aborted = error instanceof DOMException && error.name === 'AbortError'
@@ -437,7 +534,7 @@ export function useStockAsk() {
   }
 
   async function refresh() {
-    const tasks: Promise<unknown>[] = [loadConversations()]
+    const tasks: Promise<unknown>[] = [loadConversations(), loadPerspectives()]
     if (selectedCode.value) tasks.push(loadStock(selectedCode.value))
     await Promise.allSettled(tasks)
   }
@@ -454,7 +551,7 @@ export function useStockAsk() {
     const pendingPrompt = sessionStorage.getItem('hermes.chat.prompt') || ''
     sessionStorage.removeItem('hermes.chat.code')
     sessionStorage.removeItem('hermes.chat.prompt')
-    await loadConversations()
+    await Promise.all([loadConversations(), loadPerspectives()])
     if (CODE_RE.test(pendingCode)) {
       await loadStock(pendingCode)
       if (pendingPrompt && core.value?.recognized !== false) {
@@ -477,7 +574,9 @@ export function useStockAsk() {
     coreLoading, enrichmentLoading, stockLoading, coreError, enrichmentError, codeError,
     composerError, chatError, saveWarning, conversations, conversationsLoading,
     conversationError, activeConversationId, messages, pendingImages, streaming,
-    stageText, stageSeconds, refreshing, canAsk, loadStock, loadConversations,
+    stageText, stageSeconds, refreshing, canAsk, perspectives, selectedPerspectiveIds,
+    selectedPerspectives, maxSelectedPerspectives, perspectivesLoading, perspectiveError,
+    loadStock, loadConversations, loadPerspectives, togglePerspective, clearPerspectives,
     newConversation, switchConversation, deleteConversation, addPendingImages,
     removePendingImage, send, stop, refresh,
   }

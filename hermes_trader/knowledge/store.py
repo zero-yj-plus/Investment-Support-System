@@ -258,7 +258,7 @@ class Store:
         return {"meta": meta, "messages": data.get("messages", [])}
 
     def add_messages(self, cid: str, msgs: list[dict]) -> bool:
-        """追加消息（{role,content,has_image?}）。content 取文本、图片只标记 has_image 不入库。
+        """追加消息（{role,content,has_image?,perspectives?}）。content 取文本、图片只标记 has_image 不入库。
         首条 user 消息会自动给默认标题的会话起名。"""
         cid = self._safe_cid(cid)
         if not cid:
@@ -268,8 +268,29 @@ class Store:
         for m in (msgs or []):
             if m.get("role") not in ("user", "assistant"):
                 continue
-            clean.append({"role": m["role"], "content": str(m.get("content", ""))[:20000],
-                          "ts": m.get("ts") or self.now_str(), "has_image": bool(m.get("has_image"))})
+            row = {
+                "role": m["role"],
+                "content": str(m.get("content", ""))[:20000],
+                "ts": m.get("ts") or self.now_str(),
+                "has_image": bool(m.get("has_image")),
+            }
+            if m["role"] == "assistant" and isinstance(m.get("perspectives"), list):
+                perspectives = []
+                for item in m["perspectives"][:4]:
+                    if not isinstance(item, dict):
+                        continue
+                    perspective_id = str(item.get("id") or "")[:40]
+                    name = str(item.get("name") or "")[:40]
+                    version = str(item.get("version") or "")[:24]
+                    if perspective_id and name:
+                        perspectives.append({
+                            "id": perspective_id,
+                            "name": name,
+                            "version": version,
+                        })
+                if perspectives:
+                    row["perspectives"] = perspectives
+            clean.append(row)
         if not clean:
             return False
         with self._lock:

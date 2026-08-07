@@ -1,7 +1,9 @@
 <script setup lang="ts">
+import { nextTick, ref, watch } from 'vue'
 import StockAskComposer from './StockAskComposer.vue'
 import StockAskMessage from './StockAskMessage.vue'
-import type { PendingStockImage, StockAskMessage as Message } from '../types/stockAsk'
+import StockAskPerspectives from './StockAskPerspectives.vue'
+import type { PendingStockImage, StockAskMessage as Message, StockPerspective } from '../types/stockAsk'
 
 const props = defineProps<{
   messages: Message[]
@@ -19,6 +21,11 @@ const props = defineProps<{
   chatError: string
   saveWarning: string
   canAsk: boolean
+  perspectives: StockPerspective[]
+  selectedPerspectiveIds: string[]
+  maxSelectedPerspectives: number
+  perspectivesLoading: boolean
+  perspectiveError: string
 }>()
 
 const emit = defineEmits<{
@@ -29,7 +36,40 @@ const emit = defineEmits<{
   removeImage: [id: string]
   send: []
   stop: []
+  togglePerspective: [id: string]
+  clearPerspectives: []
+  retryPerspectives: []
 }>()
+
+const messageList = ref<HTMLElement | null>(null)
+const followLatestMessage = ref(true)
+
+function updateMessageFollowState() {
+  const element = messageList.value
+  if (!element) return
+  followLatestMessage.value = element.scrollHeight - element.scrollTop - element.clientHeight <= 64
+}
+
+async function scrollToLatestMessage(force = false) {
+  await nextTick()
+  const element = messageList.value
+  if (!element || (!force && !followLatestMessage.value)) return
+  element.scrollTop = element.scrollHeight
+}
+
+watch(
+  () => props.messages.map((message) => `${message.id}:${message.content.length}:${message.state}`).join('|'),
+  () => void scrollToLatestMessage(),
+)
+
+watch(
+  () => props.messages[0]?.id,
+  (current, previous) => {
+    if (current === previous) return
+    followLatestMessage.value = true
+    void scrollToLatestMessage(true)
+  },
+)
 
 function updateCodeInput(event: Event) {
   emit('codeInput', (event.target as HTMLInputElement).value)
@@ -68,7 +108,27 @@ function updateCodeInput(event: Event) {
       </form>
     </header>
 
-    <div class="stock-ask-conversation__messages" role="log" aria-live="polite" aria-label="盘中问股对话记录">
+    <StockAskPerspectives
+      :items="perspectives"
+      :selected-ids="selectedPerspectiveIds"
+      :max-selected="maxSelectedPerspectives"
+      :loading="perspectivesLoading"
+      :error="perspectiveError"
+      :disabled="streaming"
+      @toggle="emit('togglePerspective', $event)"
+      @clear="emit('clearPerspectives')"
+      @retry="emit('retryPerspectives')"
+    />
+
+    <div
+      ref="messageList"
+      class="stock-ask-conversation__messages"
+      role="log"
+      aria-live="polite"
+      aria-label="盘中问股对话记录"
+      tabindex="0"
+      @scroll="updateMessageFollowState"
+    >
       <div v-if="messages.length === 0" class="stock-ask-conversation__empty">
         <span class="stock-ask-conversation__mark" aria-hidden="true">问</span>
         <h3>{{ selectedCode ? '围绕当前标的提出一个明确问题' : '先选择一只股票' }}</h3>
@@ -102,7 +162,7 @@ function updateCodeInput(event: Event) {
 </template>
 
 <style scoped>
-.stock-ask-conversation { min-width: 0; overflow: visible; }
+.stock-ask-conversation { display: grid; min-width: 0; height: calc(100dvh - 148px); min-height: 620px; grid-template-rows: auto auto minmax(96px, 1fr) auto auto; overflow: hidden; }
 .stock-ask-conversation > header { display: flex; min-height: 72px; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
 .stock-ask-conversation__heading { flex: 0 0 auto; }
 .stock-ask-conversation h2 { margin: 0; font-size: 18px; }
@@ -116,13 +176,19 @@ function updateCodeInput(event: Event) {
 .stock-ask-conversation__selector button:disabled, .stock-ask-conversation__selector input:disabled { cursor: wait; opacity: .55; }
 .stock-ask-conversation__selector > p { grid-column: 2; margin: 0; color: var(--text-3); font-size: 11px; text-align: right; }
 .stock-ask-conversation__selector > p.is-error { color: var(--danger); }
-.stock-ask-conversation__messages { min-height: 380px; }
-.stock-ask-conversation__empty { display: grid; min-height: 380px; place-content: center; justify-items: center; padding: 24px; text-align: center; }
+.stock-ask-conversation__messages { min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
+.stock-ask-conversation__empty { display: grid; min-height: 100%; place-content: center; justify-items: center; padding: 24px; text-align: center; }
 .stock-ask-conversation__mark { display: grid; width: 52px; height: 52px; place-items: center; margin-bottom: 10px; border: 1px solid var(--accent); border-radius: 8px; background: var(--accent-dim); color: var(--accent); font: 760 20px/1 "SFMono-Regular", Consolas, monospace; }
 .stock-ask-conversation__empty h3 { margin: 0 0 6px; font-size: 19px; }
 .stock-ask-conversation__empty p { max-width: 580px; margin: 0; color: var(--text-3); line-height: 1.7; }
 .stock-ask-conversation__feedback { margin: 0 12px 8px; padding: 9px 10px; border: 1px solid var(--danger); border-radius: 6px; color: var(--danger); font-size: 13px; }
 .stock-ask-conversation__feedback.is-warning { border-color: var(--warning); color: var(--warning); }
+
+@media (max-width: 800px) {
+  .stock-ask-conversation { height: auto; min-height: 0; grid-template-rows: auto; overflow: visible; }
+  .stock-ask-conversation__messages { min-height: 300px; overflow: visible; }
+  .stock-ask-conversation__empty { min-height: 300px; }
+}
 
 @media (max-width: 720px) {
   .stock-ask-conversation > header { align-items: stretch; flex-direction: column; gap: 8px; }
@@ -130,7 +196,6 @@ function updateCodeInput(event: Event) {
   .stock-ask-conversation__selector-controls { grid-template-columns: minmax(0, 1fr) auto; }
   .stock-ask-conversation__selector input, .stock-ask-conversation__selector button { min-height: 52px; }
   .stock-ask-conversation__selector > p { grid-column: 1; text-align: left; }
-  .stock-ask-conversation__messages, .stock-ask-conversation__empty { min-height: 300px; }
 }
 
 @media (max-width: 430px) {

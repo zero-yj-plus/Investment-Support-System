@@ -52,6 +52,7 @@ from ..analysis import (sentiment as senti, features, timing as timing_mod, quan
                         diagnosis as diagnosis_mod, cockpit as cockpit_mod, recommend as recommend_mod,
                         advice_proposal as proposal_mod, mainline_timeline, mainline_runtime,
                         engine as engine_mod, stock_analysis_contract,
+                        stock_perspectives as stock_perspectives_mod,
                         watchlist_zones as watchlist_zones_mod,
                         technical_screener as technical_screener_mod)
 from ..jobs.scheduler import JOB_NAMES, apply_schedule, task_center_status  # noqa: E402
@@ -2378,6 +2379,19 @@ def _deterministic_stock_chat_fallback(
         "",
         f"接下来不需要预判单边走势：若出现{entry}，原判断才得到强化；"
         f"若{stop}，当前结构即被证伪，应转入防守。",
+    ])
+    selected = [
+        str(item.get("name") or "").strip()
+        for item in (card.get("selected_perspectives") or [])
+        if isinstance(item, dict) and str(item.get("name") or "").strip()
+    ]
+    if selected:
+        paragraphs.extend([
+            "",
+            "> 本轮已选择" + "、".join(selected)
+            + "；由于深度成稿未完成，未伪造或补写这些视角的判断。",
+        ])
+    paragraphs.extend([
         "",
         f"> 深度成稿未采用：{reason_text}。以上仅保留已核验的确定性结论。",
     ])
@@ -2416,6 +2430,7 @@ def _stock_model_answer_is_displayable(answer: str, card: dict) -> bool:
 
 async def _governed_stock_chat_stream(
     st, code: str, message: str = "", history: list[dict] | None = None,
+    perspective_ids: tuple[str, ...] | None = None,
 ):
     """个股问答只输出一份已治理完整成稿，失败时回退自然语言安全说明。"""
     try:
@@ -2452,6 +2467,10 @@ async def _governed_stock_chat_stream(
     explanation_card["action"] = display_action
     explanation_card["direct_answer"] = direct
     explanation_card["answer_stage"] = stage_label
+    selected_perspectives = stock_perspectives_mod.selected_metadata(
+        perspective_ids or ()
+    )
+    explanation_card["selected_perspectives"] = selected_perspectives
     if holding_only_action:
         # 只调整这一轮问答的表达上下文；原始诊断卡和 RiskGate 回执
         # 保持不变，避免“不授权加仓”被扩写成“已有仓位必须退出”。
@@ -2465,7 +2484,10 @@ async def _governed_stock_chat_stream(
         parts: list[str] = []
         total = 0
         try:
-            async for delta in explain(message, explanation_card, history=history or []):
+            explain_kwargs = {"history": history or []}
+            if perspective_ids:
+                explain_kwargs["perspective_ids"] = perspective_ids
+            async for delta in explain(message, explanation_card, **explain_kwargs):
                 text = str(delta or "")
                 if not text:
                     continue
@@ -2775,6 +2797,16 @@ def _invoke_governed_chat_stream(fn, *args, **kwargs):
     safe_kwargs = kwargs if accepts_kwargs else {k: v for k, v in kwargs.items() if k in allowed}
     return fn(*args, **safe_kwargs)
 
+@router.get("/chat/perspectives")
+async def chat_perspectives():
+    """返回问股可选择的服务端白名单；前端不得自行注入提示词。"""
+    return {
+        "ok": True,
+        "max_selected": stock_perspectives_mod.MAX_SELECTED_PERSPECTIVES,
+        "perspectives": stock_perspectives_mod.public_perspectives(),
+    }
+
+
 @router.post("/chat")
 async def chat(request: Request):
     st = _state(request)
@@ -2788,6 +2820,24 @@ async def chat(request: Request):
     industry = str(body.get("industry", "")).strip()
     research_contract = str(body.get("research_contract", "")).strip()
     history = body.get("history") or []
+    try:
+        perspective_ids = stock_perspectives_mod.resolve_perspective_ids(
+            body.get("perspective_ids")
+        )
+    except stock_perspectives_mod.PerspectiveSelectionError as exc:
+        return JSONResponse(
+            {"ok": False, "error_code": "invalid_perspective_selection", "error": str(exc)},
+            status_code=400,
+        )
+    if perspective_ids and mode != "stock":
+        return JSONResponse(
+            {
+                "ok": False,
+                "error_code": "perspective_mode_not_supported",
+                "error": "分析视角目前只支持盘中问股模式",
+            },
+            status_code=400,
+        )
     # 多模态图片：只收 data:image/* base64，最多 4 张、单张 ≤8MB（防请求体/视觉 token 爆）。
     _imgs = body.get("images") or []
     images = [u for u in _imgs if isinstance(u, str) and u.startswith("data:image/") and len(u) <= 8_000_000][:4] \
@@ -2831,11 +2881,20 @@ async def chat(request: Request):
                 stage="正在核验提问中的股票标的…",
             ))
     if mode == "stock":
+        perspective_stage = (
+            f"正在核验行情、证据与风险闸，并准备 {len(perspective_ids)} 个分析视角…"
+            if perspective_ids else "正在核验行情、证据与风险闸…"
+        )
         return _sse(_governed_chat_sse_events(
             _invoke_governed_chat_stream(
-                _governed_stock_chat_stream, st, code, message=message, history=history,
+                _governed_stock_chat_stream,
+                st,
+                code,
+                message=message,
+                history=history,
+                perspective_ids=perspective_ids,
             ),
-            stage="正在核验行情、证据与风险闸…",
+            stage=perspective_stage,
         ))
     if mode == "position":
         return _sse(_governed_chat_sse_events(
@@ -3051,7 +3110,28 @@ async def chat_conversation_add(cid: str, request: Request):
     except Exception:
         return JSONResponse({"ok": False, "error": "无效 JSON"}, status_code=400)
     msgs = (body or {}).get("messages") or []
-    ok = await asyncio.to_thread(st.store.add_messages, cid, msgs)
+    normalized_msgs = []
+    for message_row in msgs if isinstance(msgs, list) else []:
+        if not isinstance(message_row, dict):
+            continue
+        row = dict(message_row)
+        try:
+            selected_ids = stock_perspectives_mod.resolve_perspective_ids(
+                row.pop("perspective_ids", None)
+            )
+        except stock_perspectives_mod.PerspectiveSelectionError as exc:
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "error_code": "invalid_perspective_selection",
+                    "error": str(exc),
+                },
+                status_code=400,
+            )
+        if row.get("role") == "assistant" and selected_ids:
+            row["perspectives"] = stock_perspectives_mod.selected_metadata(selected_ids)
+        normalized_msgs.append(row)
+    ok = await asyncio.to_thread(st.store.add_messages, cid, normalized_msgs)
     return {"ok": bool(ok)}
 
 

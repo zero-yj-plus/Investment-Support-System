@@ -32,6 +32,7 @@ def test_vue_stock_ask_uses_only_real_stock_chat_and_history_endpoints() -> None
         "/chat/conversations",
         "/chat/conversations/${encodeURIComponent(id)}",
         "/chat/conversations/${encodeURIComponent(conversationId)}/messages",
+        "/chat/perspectives",
         "postEventStream('/chat'",
     ):
         assert endpoint in source
@@ -39,6 +40,28 @@ def test_vue_stock_ask_uses_only_real_stock_chat_and_history_endpoints() -> None
     assert "/stock/${encodeURIComponent(code)}/charts" not in source
     assert "/market/" not in source
     assert "item.mode === 'stock'" in source
+    assert "perspective_ids: perspectiveIds" in source
+
+
+def test_vue_stock_ask_supports_accessible_multi_perspective_selection() -> None:
+    page = _read("src/components/StockAskPage.vue")
+    conversation = _read("src/components/StockAskConversation.vue")
+    selector = _read("src/components/StockAskPerspectives.vue")
+    message = _read("src/components/StockAskMessage.vue")
+
+    assert "<StockAskPerspectives" in conversation
+    assert ':max-selected-perspectives="maxSelectedPerspectives"' in page
+    assert 'type="checkbox"' in selector
+    assert ':aria-expanded="expanded"' in selector
+    assert 'aria-live="polite"' in selector
+    assert "selectedIds.length >= props.maxSelected" in selector
+    assert "item.description" not in selector
+    assert "aria-describedby" not in selector
+    assert conversation.index("<StockAskPerspectives") < conversation.index('class="stock-ask-conversation__messages"')
+    assert "每轮最多选择 ${maxSelectedPerspectives.value} 个分析视角" in _read("src/composables/useStockAsk.ts")
+    assert "@media (max-width: 720px)" in selector
+    assert "@media (prefers-reduced-motion: reduce)" in selector
+    assert "message.perspectives?.length" in message
 
 
 def test_vue_stock_ask_preserves_missing_partial_and_identity_semantics() -> None:
@@ -95,19 +118,23 @@ def test_vue_stock_ask_uses_safe_markdown_and_native_interactions() -> None:
     assert 'inputmode="numeric"' in sources
 
 
-def test_vue_stock_ask_is_dedicated_and_keeps_two_row_equal_height_composer() -> None:
+def test_vue_stock_ask_is_dedicated_and_keeps_compact_equal_height_composer() -> None:
     page = _read("src/components/StockAskPage.vue")
     composer = _read("src/components/StockAskComposer.vue")
 
     assert "本页不提供自由问答、持仓判断或产业链挖掘" in page
     assert "--composer-control-height: 52px" in composer
-    assert "grid-template-rows: repeat(2, minmax(44px, auto))" in composer
+    assert "grid-template-rows: repeat(2, 40px)" in composer
+    assert "grid-auto-columns: minmax(138px, 1fr)" in composer
+    assert "grid-template-rows: repeat(2, 44px)" in composer
     assert "height: var(--composer-control-height)" in composer
     assert "min-height: var(--composer-control-height)" in composer
     assert "max-height: var(--composer-control-height)" in composer
     assert "textarea" in composer and "resize: none" in composer
     assert "@media (max-width: 800px)" in composer
-    assert "position: static" in composer
+    assert 'aria-label="问股问题"' in composer
+    assert '<label for="stock-ask-prompt">你的问题</label>' not in composer
+    assert "图片只用于本轮上下文，不写入历史" not in composer
 
 
 def test_vue_stock_ask_responsive_contract_and_audit_scenarios() -> None:
@@ -122,6 +149,8 @@ def test_vue_stock_ask_responsive_contract_and_audit_scenarios() -> None:
     assert "const historyExpanded = ref(false)" in page
     assert "stock-ask-selector panel" not in page
     assert 'class="stock-ask-conversation__selector"' in conversation
+    assert "grid-template-rows: auto auto minmax(96px, 1fr) auto auto" in conversation
+    assert ".stock-ask-conversation__messages { min-height: 0; overflow-y: auto;" in conversation
     assert '.stock-ask-conversation__selector button[type="submit"]' in audit
     assert 'aria-expanded="expanded"' in history
     assert 'v-if="expanded" id="stock-ask-history-content"' in history
@@ -138,6 +167,7 @@ def test_vue_stock_ask_responsive_contract_and_audit_scenarios() -> None:
         assert scenario in audit
     for endpoint in (
         "/api/chat/conversations",
+        "/api/chat/perspectives",
         "/api/stock/600519/core",
         "/api/stock/600519/enrichment",
     ):

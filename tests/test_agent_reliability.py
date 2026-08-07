@@ -343,7 +343,7 @@ def test_interactive_model_timeouts_are_bounded_but_report_budget_is_preserved(
 
 
 @pytest.mark.asyncio
-async def test_deepseek_daily_reports_use_low_thinking_without_affecting_chat(
+async def test_deepseek_daily_reports_and_governed_stock_chat_use_task_specific_thinking(
     monkeypatch, tmp_path: Path,
 ) -> None:
     client = _direct_client(tmp_path)
@@ -363,12 +363,19 @@ async def test_deepseek_daily_reports_use_low_thinking_without_affecting_chat(
     assert await client.chat(
         [{"role": "user", "content": "chat"}], purpose="chat:free"
     ) == "ok"
+    assert await client.chat(
+        [{"role": "user", "content": "stock"}],
+        purpose="chat:stock-governed-explanation",
+    ) == "ok"
 
     assert _FakeClient.payloads[0]["thinking"] == {"type": "enabled"}
     assert _FakeClient.payloads[0]["reasoning_effort"] == "low"
     assert _FakeClient.payloads[0]["max_tokens"] == 24_000
     assert "thinking" not in _FakeClient.payloads[1]
     assert "reasoning_effort" not in _FakeClient.payloads[1]
+    assert _FakeClient.payloads[2]["thinking"] == {"type": "disabled"}
+    assert "reasoning_effort" not in _FakeClient.payloads[2]
+    assert _FakeClient.payloads[2]["max_tokens"] == 100
 
 
 @pytest.mark.asyncio

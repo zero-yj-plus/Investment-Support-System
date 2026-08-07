@@ -15,6 +15,8 @@ const {
   composerError, chatError, saveWarning, conversations, conversationsLoading,
   conversationError, activeConversationId, messages, pendingImages, streaming,
   stageText, stageSeconds, refreshing, canAsk, loadStock, loadConversations,
+  perspectives, selectedPerspectiveIds, maxSelectedPerspectives,
+  perspectivesLoading, perspectiveError, loadPerspectives, togglePerspective, clearPerspectives,
   newConversation, switchConversation, deleteConversation, addPendingImages,
   removePendingImage, send, stop, refresh,
 } = useStockAsk()
@@ -83,6 +85,11 @@ defineExpose({ refresh })
         :chat-error="chatError"
         :save-warning="saveWarning"
         :can-ask="canAsk"
+        :perspectives="perspectives"
+        :selected-perspective-ids="selectedPerspectiveIds"
+        :max-selected-perspectives="maxSelectedPerspectives"
+        :perspectives-loading="perspectivesLoading"
+        :perspective-error="perspectiveError"
         @code-input="codeInput = $event"
         @submit-code="submitCode"
         @update:prompt="prompt = $event"
@@ -90,6 +97,9 @@ defineExpose({ refresh })
         @remove-image="removePendingImage"
         @send="send()"
         @stop="stop"
+        @toggle-perspective="togglePerspective"
+        @clear-perspectives="clearPerspectives"
+        @retry-perspectives="loadPerspectives"
       />
       <StockAskEvidence
         class="stock-ask-workbench__evidence"

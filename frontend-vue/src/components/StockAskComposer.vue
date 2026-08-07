@@ -124,7 +124,6 @@ onBeforeUnmount(() => {
       </figure>
     </div>
 
-    <label for="stock-ask-prompt">你的问题</label>
     <div
       class="stock-ask-input-row"
       @dragover.prevent
@@ -145,6 +144,7 @@ onBeforeUnmount(() => {
         :value="modelValue"
         rows="1"
         :disabled="disabled"
+        aria-label="问股问题"
         placeholder="针对当前股票提问；Enter 发送，Shift+Enter 换行"
         @input="emit('update:modelValue', ($event.target as HTMLTextAreaElement).value)"
         @keydown="onKeydown"
@@ -167,14 +167,13 @@ onBeforeUnmount(() => {
       ><AppIcon name="send" :size="19" /><span>发送</span></button>
     </div>
     <p v-if="fileError || error" class="stock-ask-composer__error" role="alert">{{ fileError || error }}</p>
-    <p class="stock-ask-composer__note">图片只用于本轮上下文，不写入历史；服务端结论以真实行情、证据与风险闸为准。</p>
   </div>
 </template>
 
 <style scoped>
-.stock-ask-composer { --composer-control-height: 52px; position: sticky; z-index: 10; bottom: 8px; display: grid; gap: 7px; padding: 10px 12px 12px; border-top: 1px solid var(--border); background: color-mix(in srgb, var(--surface) 96%, var(--bg)); }
-.stock-ask-presets { display: grid; grid-auto-flow: column; grid-template-rows: repeat(2, minmax(44px, auto)); grid-auto-columns: minmax(164px, 1fr); gap: 6px; max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; padding: 1px 1px 4px; scrollbar-width: thin; }
-.stock-ask-presets button { min-height: 44px; padding: 7px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); color: var(--text-2); text-align: left; cursor: pointer; }
+.stock-ask-composer { --composer-control-height: 52px; display: grid; gap: 6px; padding: 8px 12px 10px; border-top: 1px solid var(--border); background: color-mix(in srgb, var(--surface) 96%, var(--bg)); }
+.stock-ask-presets { display: grid; grid-auto-flow: column; grid-template-rows: repeat(2, 40px); grid-auto-columns: minmax(138px, 1fr); gap: 4px; max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; padding: 1px 1px 2px; scrollbar-width: thin; }
+.stock-ask-presets button { height: 40px; min-height: 40px; padding: 3px 7px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); color: var(--text-2); font-size: 13px; line-height: 1.25; text-align: left; cursor: pointer; }
 .stock-ask-presets button:hover { border-color: var(--border-strong); color: var(--text); }
 .stock-ask-presets button:disabled { cursor: wait; opacity: .55; }
 .stock-ask-images { display: flex; gap: 8px; overflow-x: auto; padding: 3px 1px; }
@@ -182,7 +181,6 @@ onBeforeUnmount(() => {
 .stock-ask-images img { display: block; width: 64px; height: 64px; object-fit: cover; border: 1px solid var(--border); border-radius: 6px; }
 .stock-ask-images button { position: absolute; top: -5px; right: -5px; width: 44px; height: 44px; overflow: hidden; border: 0; border-radius: 50%; background: var(--danger); color: transparent; cursor: pointer; clip-path: circle(12px at 32px 12px); }
 .stock-ask-images button::after { position: absolute; top: 2px; right: 6px; color: #fff; content: "×"; font-size: 18px; line-height: 20px; }
-.stock-ask-composer > label { color: var(--text-2); font-size: 13px; font-weight: 700; }
 .stock-ask-input-row { display: grid; grid-template-columns: var(--composer-control-height) minmax(0, 1fr) auto; gap: 8px; min-width: 0; align-items: stretch; }
 .stock-ask-upload, .stock-ask-send, .stock-ask-input-row textarea { height: var(--composer-control-height); min-height: var(--composer-control-height); max-height: var(--composer-control-height); border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface-2); }
 .stock-ask-upload { display: grid; width: var(--composer-control-height); place-items: center; padding: 0; color: var(--text-2); cursor: pointer; }
@@ -192,17 +190,16 @@ onBeforeUnmount(() => {
 :global(:root[data-theme="light"] .stock-ask-send) { color: #fff; }
 .stock-ask-send.is-stop { border-color: var(--danger); background: transparent; color: var(--danger); }
 .stock-ask-upload:disabled, .stock-ask-send:disabled, .stock-ask-input-row textarea:disabled { cursor: wait; opacity: .55; }
-.stock-ask-composer__error, .stock-ask-composer__note { margin: 0; }
-.stock-ask-composer__error { color: var(--danger); font-size: 13px; }
-.stock-ask-composer__note { color: var(--text-3); font-size: 12px; }
+.stock-ask-composer__error { margin: 0; color: var(--danger); font-size: 13px; }
 
 @media (max-width: 800px) {
   .stock-ask-composer { position: static; }
+  .stock-ask-presets { grid-template-rows: repeat(2, 44px); grid-auto-columns: minmax(140px, 1fr); }
+  .stock-ask-presets button { height: 44px; min-height: 44px; }
 }
 
 @media (max-width: 480px) {
   .stock-ask-composer { padding-inline: 8px; }
-  .stock-ask-presets { grid-auto-columns: minmax(150px, 1fr); }
   .stock-ask-input-row { gap: 6px; }
   .stock-ask-send { min-width: var(--composer-control-height); width: var(--composer-control-height); padding: 0; }
   .stock-ask-send span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); }

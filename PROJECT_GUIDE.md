@@ -151,6 +151,9 @@ flowchart LR
 | `install.ps1` | Windows 部署安装器：检查 64 位 Python 3.10+、创建 `.venv`、安装生产依赖并保留已有配置。 |
 | `start.ps1` | Windows 主服务前台启动器：安全载入 `.env`，使用部署目录 `.venv` 启动应用。 |
 | `start-tdx-bridge.ps1` | Windows 本地 TQ/TDX 只读桥前台启动器；要求桥接密钥且不把密钥写入命令行。 |
+| `tdx-login-guard.ps1` | Windows 当前用户 TDX 登录守护；支持关闭超时登录页或使用本机 DPAPI 凭据自动登录，并以真实 TQ/桥调用验收。 |
+| `set-tdx-login-credential.ps1` | 在本机交互输入账号密码，并用当前 Windows 用户 DPAPI 加密保存；密文不可跨机器或 Windows 用户迁移。 |
+| `install-tdx-login-guard.ps1` / `uninstall-tdx-login-guard.ps1` | 安装或卸载当前用户交互式计划任务；安装目录和控件配置可迁移，凭据必须重新录入。 |
 | `check.ps1` | Windows 基础部署检查：验证必需文件、首页、核心 API 及已配置的本地桥。 |
 | `RELEASE_FILES.sha256` | 交付文件完整性清单，用于发现缺失或篡改。 |
 
@@ -211,6 +214,7 @@ flowchart LR
 | `analysis/sentiment.py` | 涨跌停、宽度、连板、炸板和昨日溢价合成的透明情绪周期评分。 |
 | `analysis/sentinel.py` | 数据/推送运行哨兵；确定性自检、告警和对已定稿未送达报告的补推。 |
 | `analysis/stock_analysis_contract.py` | 冻结“规则选股 → 受治理诊断 → AI 仅解释”的共享执行契约。 |
+| `analysis/stock_perspectives.py` | 问股 17 个结构化分析视角的服务端白名单、最多四选校验与并列会诊提示词；不执行外部 Skill 脚本。 |
 | `analysis/timing.py` | 价量均线四区域择时和五因子贪恐温度计。 |
 | `analysis/watchlist_zones.py` | 观察池双周期纯数字区间；用前复权日线与 5 分钟 OHLCV/成交额确定性计算超短线、波段区间，并管理同交易日降级快照。 |
 
@@ -410,7 +414,7 @@ FastAPI `/api`，不依赖旧前端。旧版默认不可访问，仅配置开启
 资金追踪页读取 `/api/capital/trends?days=1`，并保留 `/api/capital/snapshot` 手动采集动作；行业与热门股按真实数据日期、来源和单位分别展示，`tdx_raw_unverified` 仅显示原始公式值，加载、空数组、陈旧快照和动作失败均显式区分。
 我的持仓页读取 `/api/holdings` 与合并报价 `/api/quotes?codes=...`，新增代码时仅用 `/api/quote/{code}` 核验，并通过 `PUT /api/holdings` 整体保存；页面不消费或提交账户总资产，投入成本按成本价与股数自动汇总，任一现价缺失时不汇总持仓总市值、总盈亏或持仓构成，持仓加载失败时锁定保存以避免空账本覆盖。
 观察池页读取轻量合并的 `/api/watchlist`，新增时用 `/api/quote/{code}` 核验，并通过逐条 `POST /api/watchlist`、`PUT /api/watchlist/{id}`、`DELETE /api/watchlist/{id}` 管理账本；评级、状态、双周期区间、位置和价格边界完全展示服务端结果，`queued` 只表示区间计算已排队。页面明确区分空数组、报价缺失、降级快照、陈旧数据和传输失败，且不推断接口未提供的仓位上限。
-问股页固定使用股票模式，通过 `/api/stock/{code}/core` 与 `/api/stock/{code}/enrichment` 展示标的证据，并以 `/api/chat` SSE 生成受约束回答；会话接口负责追加式历史。页面不提供自由问答、持仓判断或产业链挖掘，标的核心与增强证据独立降级，Markdown 只通过安全 Vue 节点渲染。
+问股页固定使用股票模式，通过 `/api/stock/{code}/core` 与 `/api/stock/{code}/enrichment` 展示标的证据，并以 `/api/chat` SSE 生成受约束回答；`GET /api/chat/perspectives` 提供 17 个结构化视角，前端每轮最多选择 4 个并保留所用版本，会话接口负责追加式历史。视角只组织同一份冻结事实，不改写 RiskGate、动作、价位或缺失语义。页面不提供自由问答、持仓判断或产业链挖掘，标的核心与增强证据独立降级，Markdown 只通过安全 Vue 节点渲染。
 个股诊断页并行读取 `/api/quote/{code}` 与 `/api/diagnose?code={code}`；快速报价只作身份和行情预览，正式动作、仓位上限、价格条件、风险闸与证据链完全展示服务端治理卡。页面区分缺失、降级、冲突、陈旧、真实空数组和局部请求失败，不请求模型或其他研究接口，也不在浏览器中重算交易结论。
 条件选股页仅在用户明确提交时调用 `/api/screen`，展示服务端 80% 全市场覆盖门槛、确定性候选和行业低频补全状态；表单市值/成交额使用亿元入参，结果保持元口径。八个数值列表头使用原生按钮重排当前返回行，缺失值保持末位且不改变候选集合。候选通过真实链接进入个股诊断，加入观察池只准确展示接受与排队状态；页面不把候选包装为推荐、风险或仓位结论。
 技术面选股页读取 `/api/technical-screen/catalog`、`/status` 与保存方案，且只在用户明确提交时调用 `/api/technical-screen/query`；显式缓存刷新通过 `/api/technical-screen/refresh` 排队并轮询状态。页面使用前复权本地技术信号缓存，保留事件/状态、两层满足/排除规则、旧方案只读兼容与追加式历史命中；候选仅表示规则命中，不在浏览器生成推荐、仓位或价格结论。

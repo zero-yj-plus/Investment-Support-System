@@ -1,0 +1,53 @@
+{
+  "tdx_exe": "D:\\tdx\\TdxW.exe",
+  "process_name": "TdxW",
+  "tq_url": "http://127.0.0.1:17709/",
+  "bridge_url": "http://127.0.0.1:18879",
+  "project_env_file": "",
+  "probe_code": "000001.SZ",
+  "poll_seconds": 30,
+  "unhealthy_threshold": 2,
+  "action_cooldown_seconds": 180,
+  "startup_timeout_seconds": 45,
+  "login_timeout_seconds": 120,
+  "popup_wait_seconds": 20,
+  "recovery_mode": "close_dialog",
+  "start_tdx_if_missing": false,
+  "credential_file": "",
+  "username_control_id": 1443,
+  "password_control_id": 1058,
+  "max_login_attempts_per_recovery": 1,
+  "enable_keyboard_fallback": false,
+  "close_login_dialog_after_action": false,
+  "close_login_dialog_delay_seconds": 4,
+  "login_window_patterns": [
+    "登录",
+    "通达信"
+  ],
+  "login_window_classes": [
+    "#32770"
+  ],
+  "login_button_names": [
+    "登录",
+    "免费精选行情登录",
+    "注册用户登录"
+  ],
+  "dismiss_window_patterns": [
+    "扫码",
+    "二维码",
+    "手机登录",
+    "账号登录"
+  ],
+  "dismiss_window_classes": [
+    "#32770"
+  ],
+  "dismiss_button_names": [
+    "关闭",
+    "以后再说",
+    "暂不登录",
+    "跳过",
+    "取消",
+    "×"
+  ],
+  "log_path": ""
+}
