@@ -12,7 +12,8 @@ $ErrorActionPreference = 'Stop'
 $SourceGuard = Join-Path $PSScriptRoot 'tdx-login-guard.ps1'
 $SourceConfig = Join-Path $PSScriptRoot 'tdx-login-guard.config.example.json'
 $SourceCredentialSetup = Join-Path $PSScriptRoot 'set-tdx-login-credential.ps1'
-$ProjectEnv = Join-Path $PSScriptRoot '.env'
+$ProjectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
+$ProjectEnv = Join-Path $ProjectRoot '.env'
 
 foreach ($Required in @($SourceGuard, $SourceConfig, $SourceCredentialSetup, $TdxPath)) {
     if (-not (Test-Path -LiteralPath $Required -PathType Leaf)) {

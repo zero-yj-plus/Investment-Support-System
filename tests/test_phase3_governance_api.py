@@ -124,6 +124,50 @@ async def test_knowledge_review_queue_approve_and_reject_are_exposed(tmp_path: P
 
 
 @pytest.mark.asyncio
+async def test_sentiment_event_archive_is_idempotent_and_stays_draft_until_approved(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    state = SimpleNamespace(store=store)
+    event = {
+        "event_id": "news-001",
+        "title": "某公司发布项目进展公告",
+        "content": "公司披露项目仍处于建设阶段。",
+        "published_at": "2026-08-10T09:30:00+08:00",
+        "fetched_at": "2026-08-10T09:31:00+08:00",
+        "source": "公开采集",
+        "a_share": {
+            "matches": [{"kind": "stock", "code": "600000", "name": "浦发银行"}],
+        },
+        "observations": [{
+            "collection_platform_name": "公开采集端",
+            "source_url": "https://example.com/news/001",
+        }],
+    }
+
+    first = await routes.archive_news_a_share(Request(state, {"event": event}))
+    second = await routes.archive_news_a_share(Request(state, {"event": event}))
+    item = store.knowledge_items()[0]
+
+    assert first["ok"] is True and first["created"] is True
+    assert second["ok"] is True and second["created"] is False
+    assert first["id"] == second["id"] == item["id"]
+    assert len(store.knowledge_items()) == 1
+    assert item["category"] == "舆情留档"
+    assert item["status"] == "draft"
+    assert item["origin"] == "sentiment_event_archive"
+    assert item["archive_key"]
+    assert "公司披露项目仍处于建设阶段" in item["content"]
+    assert "600000" in item["content"]
+    assert item["title"] not in store.knowledge_digest()
+
+    approved = await routes.approve_knowledge(item["id"], Request(state, {"sample_count": 1}))
+    assert approved["ok"] is True
+    assert approved["item"]["status"] == "approved"
+    assert item["title"] in store.knowledge_digest()
+
+
+@pytest.mark.asyncio
 async def test_buy_recommendation_is_blocked_by_server_risk_level_five(
     monkeypatch, tmp_path: Path,
 ) -> None:
@@ -480,6 +524,48 @@ async def test_stock_chat_discards_partial_model_answer(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_stock_chat_keeps_complete_unsafe_answer_with_validation_labels(
+    monkeypatch,
+) -> None:
+    async def fake_card(_state, _code, *, source="问股"):
+        return {
+            "code": "000001", "name": "平安银行", "action": "观望",
+            "signal_action": "观望", "market_quote": {"price": 10.85},
+            "trade_plan": {
+                "entry_trigger": "放量站稳 10.87",
+                "stop": "有效跌破 10.63",
+            },
+            "missing": ["个股资金流为上一交易日数据"],
+        }
+
+    unsafe = "## 平安银行（000001）\n\n模型原文建议现在买入，并关注 99.99 元。"
+
+    async def explain(_message, card, *, history):
+        card["_explanation_failure_reason"] = "safety_validation_failed"
+        card["_explanation_warning_codes"] = [
+            "frozen_action_conflict", "unsupported_price_claim",
+        ]
+        yield unsafe
+
+    monkeypatch.setattr(routes, "_governed_and_record_diagnosis", fake_card)
+    state = SimpleNamespace(
+        engine=SimpleNamespace(governed_stock_explanation_stream=explain),
+    )
+    answer = "".join([
+        chunk async for chunk in routes._governed_stock_chat_stream(
+            state, "000001", "现在怎么看？",
+        )
+    ])
+
+    assert unsafe in answer
+    assert "以下模型全文予以保留，但未全部采信" in answer
+    assert "买卖动作与服务端冻结结论冲突" in answer
+    assert "服务端已核验结论" in answer
+    assert "个股资金流为上一交易日数据" in answer
+    assert "深度成稿未采用" not in answer
+
+
+@pytest.mark.asyncio
 async def test_engine_stock_answer_uses_unified_packet_and_complete_generation(
     monkeypatch,
 ) -> None:
@@ -673,8 +759,10 @@ async def test_engine_blocks_conflicting_or_unsupported_price_answer(monkeypatch
         )
     ])
 
-    assert answer == ""
+    assert answer == unsafe
     assert card["_explanation_failure_reason"] == "safety_validation_failed"
+    assert "frozen_action_conflict" in card["_explanation_warning_codes"]
+    assert "unsupported_price_claim" in card["_explanation_warning_codes"]
 
 
 def test_single_stock_section_prices_remain_bound_to_the_selected_stock() -> None:
@@ -845,8 +933,9 @@ async def test_engine_rejects_short_missing_stop_after_rewrite_still_incomplete(
     ])
 
     assert calls == 2
-    assert answer == ""
+    assert "正文看似完成" in answer
     assert card["_explanation_failure_reason"] == "model_missing_stop"
+    assert "model_missing_stop" in card["_explanation_warning_codes"]
 
 
 @pytest.mark.asyncio

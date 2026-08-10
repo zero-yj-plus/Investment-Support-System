@@ -7,6 +7,7 @@ export const KNOWLEDGE_CATEGORIES = [
   '经验教训',
   '选股偏好',
   '复盘笔记',
+  '舆情留档',
 ] as const
 
 export type KnowledgeCategory = (typeof KNOWLEDGE_CATEGORIES)[number]

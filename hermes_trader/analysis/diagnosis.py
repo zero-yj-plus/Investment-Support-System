@@ -1489,7 +1489,11 @@ def _deep_not_found_card(
     }
 
 
-async def _deterministic_deep_context(engine, code: str) -> dict:
+async def _deterministic_deep_context(
+    engine,
+    code: str,
+    data_material_ids: tuple[str, ...] | None = None,
+) -> dict:
     started = time.monotonic()
     # 身份门禁不与行情/图表线程池共用容量。否则并发查询时 stock_core
     # 可能因容量忙返回空结果，让指数别名或错误代码绕过身份核验。
@@ -1504,12 +1508,62 @@ async def _deterministic_deep_context(engine, code: str) -> dict:
     if identity.get("universe_complete") and not identity.get("known"):
         return _deep_not_found_card(engine, code, identity, started=started)
 
-    core_result, charts_result, enrichment_result, evidence_result = await asyncio.gather(
-        _blocking_call_with_budget(stock.stock_core, code, timeout=4.2),
-        _blocking_call_with_budget(stock.stock_charts, code, timeout=4.5),
-        _blocking_call_with_budget(stock.stock_enrichment, code, timeout=5.2),
-        _market_evidence_with_budget(engine, code, timeout=_FAST_MARKET_DATA_TIMEOUT),
-    )
+    selected = None if data_material_ids is None else set(data_material_ids)
+    if selected is None:
+        core_result, charts_result, enrichment_result, evidence_result = await asyncio.gather(
+            _blocking_call_with_budget(stock.stock_core, code, timeout=4.2),
+            _blocking_call_with_budget(stock.stock_charts, code, timeout=4.5),
+            _blocking_call_with_budget(stock.stock_enrichment, code, timeout=5.2),
+            _market_evidence_with_budget(engine, code, timeout=_FAST_MARKET_DATA_TIMEOUT),
+        )
+        risk_daily_result = None
+    else:
+        jobs = {
+            "core": _blocking_call_with_budget(stock.stock_core, code, timeout=4.2),
+            "risk_daily": _blocking_call_with_budget(stock.stock_risk_daily, code, timeout=4.5),
+            "evidence": _market_evidence_with_budget(
+                engine, code, timeout=_FAST_MARKET_DATA_TIMEOUT
+            ),
+        }
+        if "technical" in selected:
+            jobs["technical"] = _blocking_call_with_budget(
+                stock.stock_charts, code, timeout=4.5
+            )
+        if "sector" in selected:
+            jobs["board"] = _blocking_call_with_budget(
+                stock.stock_board_material, code, timeout=4.0
+            )
+        if "fund_flow" in selected:
+            jobs["flow"] = _blocking_call_with_budget(
+                stock.stock_flow_material, code, timeout=4.5
+            )
+        if "fundamental" in selected:
+            jobs["financial"] = _blocking_call_with_budget(
+                stock.stock_financial_material, code, timeout=4.0
+            )
+        keys = list(jobs)
+        values = await asyncio.gather(*(jobs[key] for key in keys))
+        material_values = dict(zip(keys, values))
+        core_result = material_values.get("core")
+        risk_daily_result = material_values.get("risk_daily")
+        evidence_result = material_values.get("evidence") or ([], {})
+        charts_result = material_values.get("technical") or {}
+        enrichment_result = {
+            "board": material_values.get("board"),
+            "flow": material_values.get("flow"),
+            "financial": material_values.get("financial"),
+            "missing": [
+                label
+                for material_id, label, key in (
+                    ("technical", "深度技术与量价", "technical"),
+                    ("sector", "行业/概念归属", "board"),
+                    ("fund_flow", "个股资金流", "flow"),
+                    ("fundamental", "基础财务", "financial"),
+                )
+                if material_id in selected and not material_values.get(key)
+            ],
+            "pending": [],
+        }
     core = core_result if isinstance(core_result, dict) else {}
     charts = charts_result if isinstance(charts_result, dict) else {}
     enrichment = enrichment_result if isinstance(enrichment_result, dict) else {}
@@ -1528,11 +1582,22 @@ async def _deterministic_deep_context(engine, code: str) -> dict:
             error=str(core.get("error") or ""),
         )
     quote = dict(core.get("quote") or {})
-    daily = charts.get("daily") or core.get("recent_daily") or []
+    daily = (
+        charts.get("daily") or core.get("recent_daily") or []
+    ) if selected is None else (
+        risk_daily_result or core.get("recent_daily") or []
+    )
     board = enrichment.get("board") or {}
     flow = enrichment.get("flow") if isinstance(enrichment.get("flow"), dict) else None
     financial = enrichment.get("financial") if isinstance(enrichment.get("financial"), dict) else None
-    technical = _deep_technical_analysis(quote, daily, flow, board)
+    # 自由问答材料选择只影响增强采集与模型注入，不允许用户通过勾选
+    # 资金或板块改变服务端冻结动作。核心技术与风控始终基于行情和日K。
+    technical = _deep_technical_analysis(
+        quote,
+        daily,
+        flow if selected is None else None,
+        board if selected is None else None,
+    )
 
     action = "观望"
     if technical["complete"]:
@@ -1555,25 +1620,26 @@ async def _deterministic_deep_context(engine, code: str) -> dict:
     ]))
     configured = bool(getattr(getattr(engine, "config", None), "model_connection_custom", False))
     dimensions = list(technical.get("dimensions") or [])
-    dimensions.append({
-        "id": "fundamental",
-        "label": "基础财务",
-        "status": "complete" if financial else "missing",
-        "score": 0,
-        "summary": (
-            " · ".join(
-                f"{label} {financial.get(key):.2f}"
-                for key, label in (
-                    ("roe", "ROE"), ("grossprofit_margin", "毛利率"),
-                    ("debt_to_assets", "资产负债率"), ("eps", "EPS"),
-                )
-                if financial.get(key) is not None
-            ) or "基础财务字段已返回"
-            if financial else "基础财务本次未返回"
-        ),
-        "source": str((financial or {}).get("source") or "TDX stock_info"),
-        "data_date": (financial or {}).get("data_date"),
-    })
+    if selected is None or "fundamental" in selected:
+        dimensions.append({
+            "id": "fundamental",
+            "label": "基础财务",
+            "status": "complete" if financial else "missing",
+            "score": 0,
+            "summary": (
+                " · ".join(
+                    f"{label} {financial.get(key):.2f}"
+                    for key, label in (
+                        ("roe", "ROE"), ("grossprofit_margin", "毛利率"),
+                        ("debt_to_assets", "资产负债率"), ("eps", "EPS"),
+                    )
+                    if financial.get(key) is not None
+                ) or "基础财务字段已返回"
+                if financial else "基础财务本次未返回"
+            ),
+            "source": str((financial or {}).get("source") or "TDX stock_info"),
+            "data_date": (financial or {}).get("data_date"),
+        })
     technical["dimensions"] = dimensions
     completed = sum(item.get("status") == "complete" for item in dimensions)
     elapsed_ms = int((time.monotonic() - started) * 1000)
@@ -1627,6 +1693,18 @@ async def _deterministic_deep_context(engine, code: str) -> dict:
         "board": board,
         "flow": flow,
         "financial": financial,
+        "selected_data_material_ids": list(data_material_ids or []),
+        "material_payloads": ({
+            "technical": {
+                "technical_analysis": technical,
+                "minute": charts.get("minute") or [],
+                "minute_date": charts.get("minute_date"),
+                "daily": list(daily)[-60:],
+            } if selected is not None and "technical" in selected else None,
+            "fund_flow": flow if selected is not None and "fund_flow" in selected else None,
+            "sector": board if selected is not None and "sector" in selected else None,
+            "fundamental": financial if selected is not None and "fundamental" in selected else None,
+        } if selected is not None else {}),
         "model_connection": {
             "configured": configured,
             "status": "not_requested" if configured else "not_configured",
@@ -1681,6 +1759,7 @@ async def diagnose(
     *,
     include_model: bool = True,
     analysis_depth: str = "fast",
+    data_material_ids: tuple[str, ...] | None = None,
 ) -> dict:
     """对单只个股产出结构化『证据链诊断卡』(见模块 docstring 的 schema)。
 
@@ -1694,7 +1773,9 @@ async def diagnose(
     code = (code or "").strip().zfill(6)
 
     if not include_model and analysis_depth == "deep":
-        return await _deterministic_deep_context(engine, code)
+        return await _deterministic_deep_context(
+            engine, code, data_material_ids=data_material_ids
+        )
 
     # Web 诊断首屏只需要可复算的行情证据与确定性规则，不应把模型、F10
     # 或其它增强链路串在 HTTP 事务里。模型解释仍可由问股/研究链路按需

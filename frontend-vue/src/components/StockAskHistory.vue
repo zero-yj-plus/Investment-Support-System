@@ -1,13 +1,14 @@
 <script setup lang="ts">
-import type { ConversationMeta } from '../types/stockAsk'
+import type { ConversationMeta, StockAskMode } from '../types/stockAsk'
 
-defineProps<{
+const props = defineProps<{
   conversations: ConversationMeta[]
   loading: boolean
   error: string
   activeId: string
   disabled: boolean
   expanded: boolean
+  mode: StockAskMode
 }>()
 
 const emit = defineEmits<{
@@ -19,34 +20,35 @@ const emit = defineEmits<{
 }>()
 
 function requestDelete(item: ConversationMeta) {
-  if (window.confirm(`删除问股记录“${item.title || '新对话'}”？此操作不可撤销。`)) emit('delete', item.id)
+  const label = props.mode === 'free' ? '问答记录' : '问股记录'
+  if (window.confirm(`删除${label}“${item.title || '新对话'}”？此操作不可撤销。`)) emit('delete', item.id)
 }
 </script>
 
 <template>
-  <aside class="stock-ask-history panel" :class="{ 'is-expanded': expanded }" aria-label="问股记录">
+  <aside class="stock-ask-history panel" :class="{ 'is-expanded': expanded }" :aria-label="mode === 'free' ? '自由问答记录' : '问股记录'">
     <header>
       <button
         type="button"
         class="stock-ask-history__toggle"
         :aria-expanded="expanded"
         aria-controls="stock-ask-history-content"
-        :aria-label="expanded ? '收起问股记录' : '展开问股记录'"
+        :aria-label="expanded ? `收起${mode === 'free' ? '自由问答' : '问股'}记录` : `展开${mode === 'free' ? '自由问答' : '问股'}记录`"
         @click="emit('toggle')"
       >
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6" /></svg>
-        <span class="stock-ask-history__toggle-label">问股记录</span>
+        <span class="stock-ask-history__toggle-label">{{ mode === 'free' ? '问答记录' : '问股记录' }}</span>
       </button>
       <button v-if="expanded" type="button" class="stock-ask-history__new" :disabled="disabled" @click="emit('new')">新建</button>
     </header>
 
     <div v-if="expanded" id="stock-ask-history-content">
-      <p v-if="loading" class="stock-ask-history__state" role="status">正在读取问股记录…</p>
+      <p v-if="loading" class="stock-ask-history__state" role="status">正在读取{{ mode === 'free' ? '问答' : '问股' }}记录…</p>
       <div v-else-if="error" class="stock-ask-history__state is-error" role="alert">
         <strong>历史暂不可用</strong><span>{{ error }}</span>
         <button type="button" @click="emit('retry')">重试</button>
       </div>
-      <p v-else-if="conversations.length === 0" class="stock-ask-history__state">暂无问股记录。选择股票并提问后会自动建立会话。</p>
+      <p v-else-if="conversations.length === 0" class="stock-ask-history__state">{{ mode === 'free' ? '暂无问答记录。提问后会自动建立会话。' : '暂无问股记录。选择股票并提问后会自动建立会话。' }}</p>
       <ol v-else>
         <li v-for="item in conversations" :key="item.id" :class="{ active: item.id === activeId }">
           <button
@@ -63,7 +65,7 @@ function requestDelete(item: ConversationMeta) {
             type="button"
             class="stock-ask-history__delete"
             :disabled="disabled"
-            :aria-label="`删除问股记录：${item.title || '新对话'}`"
+            :aria-label="`删除${mode === 'free' ? '问答' : '问股'}记录：${item.title || '新对话'}`"
             @click="requestDelete(item)"
           >删除</button>
         </li>

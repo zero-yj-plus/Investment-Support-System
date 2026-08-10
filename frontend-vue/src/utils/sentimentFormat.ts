@@ -45,6 +45,14 @@ export function eventTitle(event: SentimentEvent) {
   return event.title?.trim() || event.content?.trim().slice(0, 80) || '未提供事件标题'
 }
 
+export function eventArchiveKey(event: SentimentEvent) {
+  return String(
+    event.event_id
+    || event.content_hash
+    || `${event.published_at || event.time || 'time-missing'}:${eventTitle(event)}`,
+  )
+}
+
 export function eventDescription(event: SentimentEvent) {
   const title = eventTitle(event)
   let content = String(event.content || '').trim()

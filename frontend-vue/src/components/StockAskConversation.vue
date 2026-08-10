@@ -3,10 +3,11 @@ import { nextTick, ref, watch } from 'vue'
 import StockAskComposer from './StockAskComposer.vue'
 import StockAskMessage from './StockAskMessage.vue'
 import StockAskPerspectives from './StockAskPerspectives.vue'
-import type { PendingStockImage, StockAskMessage as Message, StockPerspective } from '../types/stockAsk'
+import type { PendingStockImage, StockAskMessage as Message, StockAskMode, StockPerspective } from '../types/stockAsk'
 
 const props = defineProps<{
   messages: Message[]
+  mode: StockAskMode
   prompt: string
   pendingImages: PendingStockImage[]
   codeInput: string
@@ -77,13 +78,17 @@ function updateCodeInput(event: Event) {
 </script>
 
 <template>
-  <section class="stock-ask-conversation panel" aria-labelledby="stock-ask-conversation-title">
+  <section class="stock-ask-conversation panel" :class="{ 'is-free': mode === 'free' }" aria-labelledby="stock-ask-conversation-title">
     <header>
       <div class="stock-ask-conversation__heading">
-        <p class="eyebrow">GOVERNED STOCK Q&amp;A</p>
-        <h2 id="stock-ask-conversation-title">盘中问股</h2>
+        <p v-if="mode === 'stock'" class="eyebrow">GOVERNED STOCK Q&amp;A</p>
+        <h2 id="stock-ask-conversation-title">{{ mode === 'free' ? '自由问答' : '盘中问股' }}</h2>
+        <p v-if="mode === 'free'" class="stock-ask-conversation__subtitle">不必预先选择股票；系统按问题决定是否注入市场或个股证据。</p>
       </div>
-      <form class="stock-ask-conversation__selector" novalidate @submit.prevent="emit('submitCode')">
+      <div v-if="mode === 'free'" class="stock-ask-conversation__model">
+        <span>发送时核验模型</span><small>使用当前系统模型连接</small>
+      </div>
+      <form v-else class="stock-ask-conversation__selector" novalidate @submit.prevent="emit('submitCode')">
         <label for="stock-ask-code">六位 A 股代码</label>
         <div class="stock-ask-conversation__selector-controls">
           <input
@@ -109,6 +114,7 @@ function updateCodeInput(event: Event) {
     </header>
 
     <StockAskPerspectives
+      v-if="mode === 'stock'"
       :items="perspectives"
       :selected-ids="selectedPerspectiveIds"
       :max-selected="maxSelectedPerspectives"
@@ -125,14 +131,15 @@ function updateCodeInput(event: Event) {
       class="stock-ask-conversation__messages"
       role="log"
       aria-live="polite"
-      aria-label="盘中问股对话记录"
+      :aria-label="mode === 'free' ? '自由问答对话记录' : '盘中问股对话记录'"
       tabindex="0"
       @scroll="updateMessageFollowState"
     >
       <div v-if="messages.length === 0" class="stock-ask-conversation__empty">
         <span class="stock-ask-conversation__mark" aria-hidden="true">问</span>
-        <h3>{{ selectedCode ? '围绕当前标的提出一个明确问题' : '先选择一只股票' }}</h3>
-        <p v-if="selectedCode">服务端先核验实时行情、确定性诊断、风险闸和建议留痕，再输出当前动作、失效条件与依据。</p>
+        <h3>{{ mode === 'free' ? '直接提出一个问题' : selectedCode ? '围绕当前标的提出一个明确问题' : '先选择一只股票' }}</h3>
+        <p v-if="mode === 'free'">可询问市场状态、研究方法，或输入一只股票的六位代码/完整名称。</p>
+        <p v-else-if="selectedCode">服务端先核验实时行情、确定性诊断、风险闸和建议留痕，再输出当前动作、失效条件与依据。</p>
       </div>
       <StockAskMessage
         v-for="message in messages"
@@ -147,6 +154,7 @@ function updateCodeInput(event: Event) {
       {{ chatError || saveWarning }}
     </div>
     <StockAskComposer
+      :mode="mode"
       :model-value="prompt"
       :pending-images="pendingImages"
       :streaming="streaming"
@@ -163,8 +171,13 @@ function updateCodeInput(event: Event) {
 
 <style scoped>
 .stock-ask-conversation { display: grid; min-width: 0; height: calc(100dvh - 148px); min-height: 620px; grid-template-rows: auto auto minmax(96px, 1fr) auto auto; overflow: hidden; }
+.stock-ask-conversation.is-free { grid-template-rows: auto minmax(96px, 1fr) auto auto; }
 .stock-ask-conversation > header { display: flex; min-height: 72px; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
 .stock-ask-conversation__heading { flex: 0 0 auto; }
+.stock-ask-conversation__subtitle { margin: 2px 0 0; color: var(--text-3); font-size: 12px; }
+.stock-ask-conversation__model { display: grid; justify-items: end; gap: 3px; }
+.stock-ask-conversation__model span { padding: 3px 8px; border: 1px solid var(--border); border-radius: 999px; color: var(--text-2); font-size: 12px; font-weight: 700; }
+.stock-ask-conversation__model small { color: var(--text-3); font-size: 11px; }
 .stock-ask-conversation h2 { margin: 0; font-size: 18px; }
 .stock-ask-conversation__selector { display: grid; min-width: min(100%, 350px); grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 3px 8px; }
 .stock-ask-conversation__selector label { color: var(--text-2); font-size: 12px; font-weight: 700; }
@@ -196,6 +209,7 @@ function updateCodeInput(event: Event) {
   .stock-ask-conversation__selector-controls { grid-template-columns: minmax(0, 1fr) auto; }
   .stock-ask-conversation__selector input, .stock-ask-conversation__selector button { min-height: 52px; }
   .stock-ask-conversation__selector > p { grid-column: 1; text-align: left; }
+  .stock-ask-conversation__model { justify-items: start; }
 }
 
 @media (max-width: 430px) {

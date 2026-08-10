@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import type { SentimentEvent, SentimentMappingMatch } from '../types/sentimentEvents'
+import type { SentimentArchiveState, SentimentEvent, SentimentMappingMatch } from '../types/sentimentEvents'
 import {
   compactTime,
   degradedReasonLabel,
@@ -15,7 +15,12 @@ import {
   sourceRelationLabel,
 } from '../utils/sentimentFormat'
 
-const props = defineProps<{ event: SentimentEvent; index: number }>()
+const props = defineProps<{
+  event: SentimentEvent
+  index: number
+  archiveState?: SentimentArchiveState
+}>()
+const emit = defineEmits<{ archive: [] }>()
 const expanded = ref(false)
 const detailsId = computed(() => `sentiment-event-details-${props.index}`)
 const contentTitleId = computed(() => `sentiment-event-content-title-${props.index}`)
@@ -46,6 +51,8 @@ const kind = computed(() => {
   if (mapping.value.state === 'unavailable') return { label: '映射不可用', tone: 'unavailable' }
   return { label: '市场资讯', tone: 'neutral' }
 })
+const archiveStatus = computed(() => props.archiveState?.status || 'idle')
+const archiveMessageId = computed(() => `sentiment-event-archive-message-${props.index}`)
 
 function names(rows: SentimentMappingMatch[], withCode = false) {
   return rows.map((item) => {
@@ -90,13 +97,29 @@ function toggleDetails() {
       <small>{{ observationState.note }}</small>
     </div>
 
-    <button
-      type="button"
-      class="sentiment-event-toggle"
-      :aria-expanded="expanded"
-      :aria-controls="detailsId"
-      @click="toggleDetails"
-    >{{ expanded ? '收起事件详情' : '展开事件详情与来源' }}</button>
+    <div class="sentiment-event-card__actions">
+      <button
+        type="button"
+        class="sentiment-event-toggle"
+        :aria-expanded="expanded"
+        :aria-controls="detailsId"
+        @click="toggleDetails"
+      >{{ expanded ? '收起事件详情' : '展开事件详情与来源' }}</button>
+      <button
+        type="button"
+        class="sentiment-event-archive"
+        :disabled="archiveStatus === 'archiving' || archiveStatus === 'archived'"
+        :aria-describedby="archiveMessageId"
+        @click="emit('archive')"
+      >{{ archiveStatus === 'archiving' ? '留档中…' : archiveStatus === 'archived' ? '已留档' : '留档到知识库' }}</button>
+      <span
+        :id="archiveMessageId"
+        class="sentiment-event-archive__message"
+        :class="{ 'is-error': archiveStatus === 'error' }"
+        :role="archiveStatus === 'error' ? 'alert' : 'status'"
+        aria-live="polite"
+      >{{ archiveState?.message || '' }}</span>
+    </div>
 
     <div v-if="expanded" :id="detailsId" class="sentiment-event-details">
       <section :aria-labelledby="contentTitleId">
@@ -186,8 +209,13 @@ function toggleDetails() {
 .observation-badge.is-info { color: var(--info); }
 .observation-badge.is-complete { color: var(--info); }
 .sentiment-event-card__state small { color: var(--text-3); font-size: 12px; line-height: 1.45; }
-.sentiment-event-toggle { grid-column: 2 / -1; justify-self: start; min-height: 44px; padding: 0 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); color: var(--text-2); cursor: pointer; font-weight: 680; }
-.sentiment-event-toggle:hover { border-color: var(--border-strong); color: var(--text); }
+.sentiment-event-card__actions { grid-column: 2 / -1; display: flex; min-width: 0; align-items: center; flex-wrap: wrap; gap: 8px; }
+.sentiment-event-toggle, .sentiment-event-archive { min-height: 44px; padding: 0 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); color: var(--text-2); cursor: pointer; font-weight: 680; }
+.sentiment-event-toggle:hover, .sentiment-event-archive:hover { border-color: var(--border-strong); color: var(--text); }
+.sentiment-event-archive { border-color: color-mix(in srgb, var(--accent) 48%, var(--border)); color: var(--accent); }
+.sentiment-event-archive:disabled { cursor: default; opacity: .68; }
+.sentiment-event-archive__message { min-height: 20px; flex: 1 1 260px; color: var(--info); font-size: 12px; line-height: 1.5; }
+.sentiment-event-archive__message.is-error { color: var(--danger); }
 .sentiment-event-details { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, .85fr); gap: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
 .sentiment-event-details > section { min-width: 0; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); }
 .sentiment-event-details > section:first-child { grid-column: 1 / -1; }
@@ -216,15 +244,17 @@ function toggleDetails() {
 @media (max-width: 1180px) {
   .sentiment-event-card { grid-template-columns: 96px minmax(0, 1fr) minmax(220px, .8fr); }
   .sentiment-event-card__state { grid-column: 3; }
-  .sentiment-event-toggle { grid-column: 2 / -1; }
+  .sentiment-event-card__actions { grid-column: 2 / -1; }
 }
 @media (max-width: 900px) {
   .sentiment-event-card { grid-template-columns: minmax(0, 1fr); padding: 12px; }
   .sentiment-event-card__time { flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 5px 9px; }
-  .sentiment-event-card__state, .sentiment-event-toggle, .sentiment-event-details { grid-column: 1; }
+  .sentiment-event-card__state, .sentiment-event-card__actions, .sentiment-event-details { grid-column: 1; }
   .sentiment-event-details { grid-template-columns: minmax(0, 1fr); }
   .sentiment-event-details > section:first-child { grid-column: 1; }
   .sentiment-detail-list, .sentiment-source-item dl { grid-template-columns: minmax(0, 1fr); }
-  .sentiment-event-toggle { width: 100%; justify-self: stretch; }
+  .sentiment-event-card__actions { align-items: stretch; flex-direction: column; }
+  .sentiment-event-toggle, .sentiment-event-archive { width: 100%; }
+  .sentiment-event-archive__message { min-height: 0; flex-basis: auto; }
 }
 </style>

@@ -52,6 +52,7 @@ from ..analysis import (sentiment as senti, features, timing as timing_mod, quan
                         diagnosis as diagnosis_mod, cockpit as cockpit_mod, recommend as recommend_mod,
                         advice_proposal as proposal_mod, mainline_timeline, mainline_runtime,
                         engine as engine_mod, stock_analysis_contract,
+                        chat_materials as chat_materials_mod,
                         stock_perspectives as stock_perspectives_mod,
                         watchlist_zones as watchlist_zones_mod,
                         technical_screener as technical_screener_mod)
@@ -784,12 +785,21 @@ def _deterministic_diagnosis_evidence(card: dict) -> list[dict]:
     return result[:4]
 
 
-async def governed_diagnosis_card(st, code: str) -> dict:
+async def governed_diagnosis_card(
+    st,
+    code: str,
+    data_material_ids: tuple[str, ...] | None = None,
+) -> dict:
     """Web/MCP 共用的唯一个股诊断治理入口。"""
     diagnose_kwargs = {"include_model": False}
     try:
         if "analysis_depth" in inspect.signature(diagnosis_mod.diagnose).parameters:
             diagnose_kwargs["analysis_depth"] = "deep"
+        if (
+            data_material_ids is not None
+            and "data_material_ids" in inspect.signature(diagnosis_mod.diagnose).parameters
+        ):
+            diagnose_kwargs["data_material_ids"] = data_material_ids
     except (TypeError, ValueError):
         pass
     raw = await diagnosis_mod.diagnose(st.engine, code, **diagnose_kwargs)
@@ -1941,9 +1951,22 @@ async def diagnose(code: str, request: Request):
     return {"ok": True, **card}
 
 
-async def _governed_and_record_diagnosis(st, code: str, *, source: str = "问股") -> dict:
+async def _governed_and_record_diagnosis(
+    st,
+    code: str,
+    *,
+    source: str = "问股",
+    data_material_ids: tuple[str, ...] | None = None,
+) -> dict:
     """生成结构化诊断，并在返回任何正式动作前完成统一建议留痕。"""
-    card = await governed_diagnosis_card(st, code)
+    diagnosis_kwargs = {}
+    if data_material_ids is not None:
+        try:
+            if "data_material_ids" in inspect.signature(governed_diagnosis_card).parameters:
+                diagnosis_kwargs["data_material_ids"] = data_material_ids
+        except (TypeError, ValueError):
+            diagnosis_kwargs["data_material_ids"] = data_material_ids
+    card = await governed_diagnosis_card(st, code, **diagnosis_kwargs)
     if card.get("recognized") is False or card.get("error_code") == "stock_not_found":
         return card
     # 结构化诊断是正式动作入口：返回客户前先写 proposal，并仅在当前价证据和
@@ -2307,6 +2330,91 @@ def _stock_chat_stage_label(context: dict | None) -> str:
     }.get(session, "个股回答")
 
 
+def _populate_stock_material_report(card: dict, report: dict) -> None:
+    """把已完成的单股确定性采集映射到 SSE 可复核材料状态。"""
+    quote = card.get("market_quote") or {}
+    quality = card.get("decision_market_evidence_quality") or card.get("market_evidence_quality") or {}
+    missing = [str(item) for item in (card.get("missing") or []) if str(item)]
+    required = report.get("required") or []
+    if len(required) >= 3:
+        required[0].update({
+            "state": "complete" if quote else "missing",
+            "injected": False,
+            "data_date": quote.get("as_of") or card.get("decision_generated_at"),
+            "source": quote.get("source"),
+            "stale": bool(quote.get("stale")),
+            "reason": quote.get("quote_note") or ("行情已核验" if quote else "行情未返回"),
+        })
+        required[1].update({
+            "state": "complete" if card.get("risk_decision") and card.get("trade_plan") else "degraded",
+            "injected": False,
+            "data_date": card.get("decision_generated_at"),
+            "source": "服务端确定性诊断与 RiskGate",
+            "stale": False,
+            "reason": "风险闸与失效条件已执行",
+        })
+        quality_state = str(quality.get("status") or "missing")
+        required[2].update({
+            "state": "complete" if quality_state == "ok" and not missing else "degraded",
+            "injected": False,
+            "data_date": card.get("decision_generated_at"),
+            "source": "字段级证据质量契约",
+            "stale": bool(quote.get("stale")),
+            "reason": "；".join(missing[:3]) if missing else "缺失、过期与降级状态已核验",
+        })
+
+    payloads = card.get("material_payloads") or {}
+    technical = payloads.get("technical") if isinstance(payloads, dict) else None
+    flow = payloads.get("fund_flow") if isinstance(payloads, dict) else None
+    sector = payloads.get("sector") if isinstance(payloads, dict) else None
+    fundamental = payloads.get("fundamental") if isinstance(payloads, dict) else None
+    data_as_of = card.get("decision_generated_at") or (card.get("analysis_pipeline") or {}).get("data_as_of")
+    if "technical" in set(report.get("selected_ids") or []):
+        chat_materials_mod.update_result(
+            report, "technical",
+            state="complete" if technical else "missing",
+            data_date=(technical or {}).get("minute_date") or data_as_of,
+            source="腾讯前复权日K与新浪/授权分时",
+            stale=bool(quote.get("stale")),
+            reason="技术结构与量价已完成" if technical else "技术增强未返回",
+        )
+    if "fund_flow" in set(report.get("selected_ids") or []):
+        trade_date = str((flow or {}).get("trade_date") or "")
+        formatted_date = (
+            f"{trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:8]}"
+            if len(trade_date) == 8 else (trade_date or None)
+        )
+        chat_materials_mod.update_result(
+            report, "fund_flow",
+            state="complete" if flow else "missing",
+            data_date=formatted_date,
+            source=(flow or {}).get("source"),
+            stale=bool(formatted_date and formatted_date != now_cn().strftime("%Y-%m-%d")),
+            reason=(
+                f"资金数据归属 {formatted_date}"
+                if flow and formatted_date else ("资金流已返回" if flow else "资金流源未返回")
+            ),
+        )
+    if "sector" in set(report.get("selected_ids") or []):
+        chat_materials_mod.update_result(
+            report, "sector",
+            state="complete" if sector else "missing",
+            data_date=data_as_of,
+            source=(sector or {}).get("source"),
+            stale=False,
+            reason="行业与概念关系已返回" if sector else "行业/概念关系未返回",
+        )
+    if "fundamental" in set(report.get("selected_ids") or []):
+        chat_materials_mod.update_result(
+            report, "fundamental",
+            state="complete" if fundamental else "missing",
+            data_date=(fundamental or {}).get("data_date") or (fundamental or {}).get("end_date"),
+            source=(fundamental or {}).get("source"),
+            stale=None,
+            reason="基础财务已返回" if fundamental else "基础财务源未返回",
+        )
+
+
 def _deterministic_stock_chat_fallback(
     card: dict,
     direct: str,
@@ -2412,34 +2520,115 @@ def _stock_model_answer_is_displayable(answer: str, card: dict) -> bool:
     if not text or "针对你这句话的补充" in text or "### 现在怎么做" in text:
         return False
     conservative = action in {"观望", "回避", "持有", "持有（不加仓）", "减仓", "止损", "清仓"}
+
+    def locally_negated(line: str, start: int) -> bool:
+        prefix = line[max(0, start - 12):start]
+        return bool(re.search(
+            r"(?:不|不能|不可|禁止|暂停|避免|回避|不得|取消|无需|不要)"
+            r"(?:应|可|宜|要|再|去|考虑)?\s*$",
+            prefix,
+        ))
+
     for raw in text.splitlines():
         line = raw.strip()
         if not line or not re.search(r"买入|建仓|加仓|低吸|介入|试仓|抄底|进攻仓", line):
             continue
-        if re.search(r"不|禁止|暂停|避免|回避|观望|休息|不得|取消|无|只看", line):
-            continue
-        if action == "持有（不加仓）" and "加仓" in line:
-            return False
-        if conservative and re.search(
-            r"立即买入|直接买入|现在买入|马上买入|果断买入|直接下单|无条件买入|满仓|重仓",
-            line,
-        ):
-            return False
+        if action == "持有（不加仓）":
+            for match in re.finditer("加仓", line):
+                if not locally_negated(line, match.start()):
+                    return False
+        if conservative:
+            direct_order = re.compile(
+                r"立即买入|直接买入|现在买入|马上买入|果断买入|直接下单|无条件买入|满仓|重仓"
+            )
+            for match in direct_order.finditer(line):
+                if not locally_negated(line, match.start()):
+                    return False
     return True
+
+
+def _stock_data_boundary_markdown(card: dict) -> str:
+    """由服务端稳定追加缺失/过期边界，不依赖模型是否主动说明。"""
+    missing = [
+        str(item).strip()
+        for item in (card.get("missing") or [])
+        if str(item).strip()
+    ]
+    if not missing:
+        return ""
+    return (
+        "> 数据边界：本轮仍缺少或仅取得"
+        + "、".join(missing[:4])
+        + "；正文可用于理解已有证据，但对应维度不能视为最新、完整事实。"
+    )
+
+
+def _annotated_stock_model_answer(
+    answer: str,
+    card: dict,
+    direct: str,
+    warning_codes: list[str],
+) -> str:
+    """保留完整模型正文，同时把未通过的校验项与冻结边界放在正文之前。"""
+    labels = {
+        "unsupported_numeric_claim": "存在资料包外或无法反查来源的数字",
+        "unsupported_price_claim": "存在未绑定当前股票证据的价格",
+        "frozen_action_conflict": "买卖动作与服务端冻结结论冲突",
+        "perspective_sections_incomplete": "已选分析视角未完整覆盖",
+        "answer_too_short": "分析篇幅不足",
+        "frozen_action_not_explicit": "冻结动作没有明确写出",
+        "execution_boundary_incomplete": "强化或失效条件没有完整写出",
+        "legacy_two_part_format": "仍含旧版两段式结构",
+        "model_missing_stop": "上游未提供标准 stop 终态",
+    }
+    warnings = [labels.get(code, str(code)) for code in warning_codes if str(code)]
+    warning_text = "；".join(dict.fromkeys(warnings)) or "正文未通过完整校验"
+    plan = card.get("trade_plan") or {}
+    entry = str(plan.get("entry_trigger") or "等待有效确认").strip()
+    stop = str(plan.get("stop") or "结构失效后转入防守").strip()
+    sections = [
+        "> **校验标注：以下模型全文予以保留，但未全部采信。**",
+        f"> 未采信项：{warning_text}。",
+        f"> 服务端已核验结论：**{direct}** 强化条件为“{entry}”；失效条件为“{stop}”。",
+        "",
+        "### 模型分析全文（带校验标注）",
+        "",
+        str(answer or "").strip(),
+    ]
+    boundary = _stock_data_boundary_markdown(card)
+    if boundary:
+        sections.extend(["", boundary])
+    return "\n".join(sections)
 
 
 async def _governed_stock_chat_stream(
     st, code: str, message: str = "", history: list[dict] | None = None,
     perspective_ids: tuple[str, ...] | None = None,
+    data_material_ids: tuple[str, ...] | None = None,
+    material_report: dict | None = None,
 ):
     """个股问答只输出一份已治理完整成稿，失败时回退自然语言安全说明。"""
     try:
-        card = await _governed_and_record_diagnosis(st, code)
+        diagnosis_kwargs = {}
+        if data_material_ids is not None:
+            try:
+                if "data_material_ids" in inspect.signature(
+                    _governed_and_record_diagnosis
+                ).parameters:
+                    diagnosis_kwargs["data_material_ids"] = data_material_ids
+            except (TypeError, ValueError):
+                diagnosis_kwargs["data_material_ids"] = data_material_ids
+        card = await _governed_and_record_diagnosis(st, code, **diagnosis_kwargs)
     except Exception:  # noqa: BLE001
         log.exception("盘中问股治理失败 code=%s", code)
+        if material_report is not None:
+            chat_materials_mod.finalize_report(material_report, model_used=False)
         yield "当前无法完成证据核验与建议留痕，因此不输出买卖动作。请稍后重试。"
         return
     if card.get("recognized") is False or card.get("error_code") == "stock_not_found":
+        if material_report is not None:
+            _populate_stock_material_report(card, material_report)
+            chat_materials_mod.finalize_report(material_report, model_used=False)
         yield (
             f"未找到 A 股代码 {code}。当前完整证券名录已核验，"
             "因此本次不会把指数别名或错误代码当成个股，也不会生成“观望/买入”等动作。"
@@ -2471,6 +2660,8 @@ async def _governed_stock_chat_stream(
         perspective_ids or ()
     )
     explanation_card["selected_perspectives"] = selected_perspectives
+    if material_report is not None:
+        _populate_stock_material_report(explanation_card, material_report)
     if holding_only_action:
         # 只调整这一轮问答的表达上下文；原始诊断卡和 RiskGate 回执
         # 保持不变，避免“不授权加仓”被扩写成“已有仓位必须退出”。
@@ -2487,6 +2678,9 @@ async def _governed_stock_chat_stream(
             explain_kwargs = {"history": history or []}
             if perspective_ids:
                 explain_kwargs["perspective_ids"] = perspective_ids
+            if data_material_ids is not None:
+                explain_kwargs["data_material_ids"] = data_material_ids
+                explain_kwargs["material_report"] = material_report
             async for delta in explain(message, explanation_card, **explain_kwargs):
                 text = str(delta or "")
                 if not text:
@@ -2502,8 +2696,26 @@ async def _governed_stock_chat_stream(
             failure_reason = "model_incomplete"
             log.warning("盘中问股深度成稿未返回，使用确定性回退 code=%s", code)
         answer = "".join(parts).strip()
+        warning_codes = [
+            str(item).strip()
+            for item in (explanation_card.get("_explanation_warning_codes") or [])
+            if str(item).strip()
+        ]
+        if answer and warning_codes:
+            yield _annotated_stock_model_answer(
+                answer,
+                explanation_card,
+                direct,
+                warning_codes,
+            )
+            if material_report is not None:
+                chat_materials_mod.finalize_report(material_report, model_used=True)
+            return
         if _stock_model_answer_is_displayable(answer, explanation_card):
-            yield answer
+            boundary = _stock_data_boundary_markdown(explanation_card)
+            yield answer + (f"\n\n{boundary}" if boundary else "")
+            if material_report is not None:
+                chat_materials_mod.finalize_report(material_report, model_used=True)
             return
         if answer:
             failure_reason = "safety_validation_failed"
@@ -2513,6 +2725,8 @@ async def _governed_stock_chat_stream(
                 explanation_card.get("_explanation_failure_reason") or failure_reason
             )
 
+    if material_report is not None:
+        chat_materials_mod.finalize_report(material_report, model_used=False)
     yield _deterministic_stock_chat_fallback(
         explanation_card,
         direct,
@@ -2596,8 +2810,12 @@ async def _governed_position_chat_stream(
     yield "\n".join(sections)
 
 
-async def _market_bundle_for_chat() -> tuple[dict, dict, dict]:
-    """自由问答的确定性市场底座；三块并行，单块失败不连坐。"""
+async def _market_bundle_for_chat(
+    store,
+    data_material_ids: tuple[str, ...] | None = None,
+    material_report: dict | None = None,
+) -> dict:
+    """自由问答材料按选择并行采集；大盘基础时点始终保留。"""
     async def guarded(func, timeout: float) -> dict:
         try:
             value = await asyncio.wait_for(asyncio.to_thread(func), timeout=timeout)
@@ -2605,17 +2823,96 @@ async def _market_bundle_for_chat() -> tuple[dict, dict, dict]:
             return {}
         return value if isinstance(value, dict) else {}
 
-    overview, sectors, flow = await asyncio.gather(
-        guarded(market.market_overview, 5.0),
-        guarded(market.market_sectors, 6.0),
-        guarded(market.market_flow, 5.0),
-    )
-    return overview, sectors, flow
+    selected = set(data_material_ids or ())
+    jobs = {"overview": guarded(market.market_overview, 5.0)}
+    if "sector" in selected:
+        jobs["sectors"] = guarded(market.market_sectors, 6.0)
+    if "fund_flow" in selected:
+        jobs["flow"] = guarded(market.market_flow, 5.0)
+    if "market_context" in selected:
+        jobs["sentiment"] = guarded(lambda: senti.compute_today(store), 4.0)
+    if "events" in selected:
+        jobs["events"] = guarded(news.cn_news, 6.0)
+    keys = list(jobs)
+    values = await asyncio.gather(*(jobs[key] for key in keys))
+    result = dict(zip(keys, values))
+    overview = result.get("overview") or {}
+    if material_report is not None:
+        required = material_report.get("required") or []
+        if len(required) >= 3:
+            data_date = overview.get("data_date") or overview.get("ts")
+            required[0].update({
+                "state": "complete" if overview else "missing",
+                "data_date": data_date,
+                "source": overview.get("source") or "市场总览聚合",
+                "stale": bool(overview.get("stale")),
+                "reason": "市场行情与时点已返回" if overview else "市场总览未返回",
+            })
+            required[1].update({
+                "state": "complete",
+                "source": "服务端自由问答风险边界",
+                "reason": "确定性风险约束始终生效",
+            })
+            required[2].update({
+                "state": "degraded" if overview.get("missing") else "complete",
+                "data_date": data_date,
+                "source": "数据质量契约",
+                "stale": bool(overview.get("stale")),
+                "reason": "；".join(str(item) for item in (overview.get("missing") or [])[:3])
+                or "缺失、过期与降级状态已核验",
+            })
+        for material_id, key, default_source in (
+            ("technical", "overview", "市场指数行情"),
+            ("fund_flow", "flow", "市场资金方向"),
+            ("sector", "sectors", "板块行情"),
+            ("market_context", "sentiment", "市场情绪规则"),
+            ("events", "events", "公开财经快讯"),
+        ):
+            if material_id not in selected:
+                continue
+            payload = result.get(key) or {}
+            available = bool(payload)
+            degraded_scope = material_id in {"technical", "fund_flow"} and available
+            chat_materials_mod.update_result(
+                material_report,
+                material_id,
+                state="degraded" if degraded_scope else ("complete" if available else "missing"),
+                data_date=payload.get("data_date") or payload.get("date") or payload.get("ts"),
+                source=payload.get("source") or default_source,
+                stale=bool(payload.get("stale")),
+                reason=(
+                    "未识别单股，仅取得市场指数行情，不含个股分时、日K和技术指标"
+                    if material_id == "technical" and available else
+                    "未识别单股，降级为全市场资金方向，不作为个股资金流"
+                    if material_id == "fund_flow" and available else
+                    "材料已采集" if available else "对应数据源未返回"
+                ),
+            )
+        if "fundamental" in selected:
+            chat_materials_mod.update_result(
+                material_report,
+                "fundamental",
+                state="missing",
+                reason="问题中未识别到单只股票，未启动个股财务采集",
+            )
+    return result
 
 
-async def _governed_free_chat_stream(st, message: str):
+async def _governed_free_chat_stream(
+    st,
+    message: str,
+    *,
+    data_material_ids: tuple[str, ...] | None = None,
+    material_report: dict | None = None,
+):
     """模型未连接时的自由问答：只回答可由当前市场数据支持的部分。"""
-    overview, sectors, flow = await _market_bundle_for_chat()
+    bundle = await _market_bundle_for_chat(
+        st.store, data_material_ids, material_report
+    )
+    overview = bundle.get("overview") or {}
+    sectors = bundle.get("sectors") or {}
+    flow = bundle.get("flow") or {}
+    events = bundle.get("events") or {}
     question = str(message or "").strip()
     indexes = [row for row in (overview.get("indexes") or []) if isinstance(row, dict)]
     sector_rows = [row for row in (sectors.get("sectors") or []) if isinstance(row, dict)]
@@ -2662,6 +2959,19 @@ async def _governed_free_chat_stream(st, message: str):
             )
         if not sector_rows:
             lines.append("- 当前板块行情源未返回。")
+    elif any(word in question for word in ("公告", "消息", "事件", "新闻", "利好", "利空")):
+        lines.append("### 公告与事件")
+        event_rows = [row for row in (events.get("items") or []) if isinstance(row, dict)]
+        for row in event_rows[:8]:
+            lines.append(f"- {row.get('title') or row.get('content') or '标题未提供'}")
+        if not event_rows:
+            lines.append("- 当前事件源未返回可核验条目；本次不补写消息或公告。")
+    elif any(word in question for word in ("估值", "业绩", "基本面", "长期")):
+        lines.extend([
+            "### 基本面与估值",
+            "- 本轮未识别到单只股票，因此没有启动个股财务或估值采集。",
+            "- 请补充一只股票的六位代码或完整名称后再问；系统不会猜测标的。",
+        ])
     else:
         lines.append("### 当前市场概览")
         for row in indexes[:5]:
@@ -2696,6 +3006,8 @@ async def _governed_free_chat_stream(st, message: str):
         "在自由问答里写入一只股票的 6 位代码或完整名称，会自动读取该股的真实证据；"
         "未识别或同时出现多只股票时会明确提示，不会猜测标的。",
     ])
+    if material_report is not None:
+        chat_materials_mod.finalize_report(material_report, model_used=False)
     yield "\n".join(lines)
 
 
@@ -2776,14 +3088,19 @@ async def _governed_chain_chat_stream(
     )
 
 
-async def _governed_chat_sse_events(gen, *, stage: str):
+async def _governed_chat_sse_events(
+    gen,
+    *,
+    stage: str,
+    done_payload: dict | None = None,
+):
     """把治理问股的纯文本生成器转换成前端统一 SSE 事件协议。"""
     yield {"stage": stage}
     async for chunk in gen:
         text = str(chunk or "")
         if text:
             yield {"delta": text}
-    yield {"done": True, "truncated": False}
+    yield {"done": True, "truncated": False, **(done_payload or {})}
 
 
 def _invoke_governed_chat_stream(fn, *args, **kwargs):
@@ -2797,6 +3114,22 @@ def _invoke_governed_chat_stream(fn, *args, **kwargs):
     safe_kwargs = kwargs if accepts_kwargs else {k: v for k, v in kwargs.items() if k in allowed}
     return fn(*args, **safe_kwargs)
 
+
+async def _with_material_report(gen, material_report: dict | None):
+    """让自由问答的 done/error 都携带本轮真实材料终态。"""
+    async for event in gen:
+        if not isinstance(event, dict):
+            yield event
+            continue
+        if event.get("error") and material_report is not None:
+            chat_materials_mod.finalize_report(material_report, model_used=False)
+            yield {**event, "data_materials": material_report, "model_used": False}
+            continue
+        if event.get("done") and material_report is not None:
+            yield {**event, "data_materials": material_report}
+            continue
+        yield event
+
 @router.get("/chat/perspectives")
 async def chat_perspectives():
     """返回问股可选择的服务端白名单；前端不得自行注入提示词。"""
@@ -2804,6 +3137,34 @@ async def chat_perspectives():
         "ok": True,
         "max_selected": stock_perspectives_mod.MAX_SELECTED_PERSPECTIVES,
         "perspectives": stock_perspectives_mod.public_perspectives(),
+    }
+
+
+@router.get("/chat/data-materials")
+async def chat_data_materials():
+    """返回自由问答材料白名单；采集能力仍以每轮真实结果为准。"""
+    return {
+        "ok": True,
+        "max_selected": chat_materials_mod.MAX_SELECTED,
+        "max_auto_selected": chat_materials_mod.MAX_AUTO_SELECTED,
+        "required": [dict(item) for item in chat_materials_mod.REQUIRED_MATERIALS],
+        "materials": chat_materials_mod.public_materials(),
+    }
+
+
+@router.post("/chat/data-materials/preselect")
+async def chat_data_materials_preselect(request: Request):
+    """按固定关键词规则返回稳定预选，不调用模型、不启动数据源。"""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "无效 JSON"}, status_code=400)
+    message = str((body or {}).get("message") or "").strip()
+    selected = chat_materials_mod.preselect_material_ids(message)
+    return {
+        "ok": True,
+        "preselected_ids": list(selected),
+        "max_selected": chat_materials_mod.MAX_SELECTED,
     }
 
 
@@ -2820,6 +3181,28 @@ async def chat(request: Request):
     industry = str(body.get("industry", "")).strip()
     research_contract = str(body.get("research_contract", "")).strip()
     history = body.get("history") or []
+    data_material_ids: tuple[str, ...] | None = None
+    material_report: dict | None = None
+    if mode == "free":
+        try:
+            data_material_ids = chat_materials_mod.resolve_material_ids(
+                body.get("data_material_ids"), message=message
+            )
+        except chat_materials_mod.DataMaterialSelectionError as exc:
+            return JSONResponse(
+                {"ok": False, "error_code": "invalid_data_material_selection", "error": str(exc)},
+                status_code=400,
+            )
+        material_report = chat_materials_mod.empty_report(data_material_ids)
+    elif body.get("data_material_ids") is not None:
+        return JSONResponse(
+            {
+                "ok": False,
+                "error_code": "data_material_mode_not_supported",
+                "error": "本轮数据材料目前只支持自由问答模式",
+            },
+            status_code=400,
+        )
     try:
         perspective_ids = stock_perspectives_mod.resolve_perspective_ids(
             body.get("perspective_ids")
@@ -2869,16 +3252,43 @@ async def chat(request: Request):
                     str(stock_reference["code"]),
                     message=message,
                     history=history,
+                    data_material_ids=data_material_ids,
+                    material_report=material_report,
                 ),
                 stage="自由问答已识别个股，正在核验行情、证据与风险闸…",
+                done_payload={
+                    "resolved_mode": "stock",
+                    "code": str(stock_reference["code"]),
+                    "data_materials": material_report,
+                },
             ))
         if stock_reference["state"] in {"ambiguous", "unrecognized"}:
             async def clarification_stream():
                 yield engine_mod.stock_reference_clarification(stock_reference)
 
+            if material_report is not None:
+                for item in material_report.get("required") or []:
+                    item.update({
+                        "state": "missing",
+                        "injected": False,
+                        "reason": "股票标的需先确认，本轮未启动材料采集",
+                    })
+                for item in material_report.get("optional") or []:
+                    if item.get("selected"):
+                        item.update({
+                            "state": "missing",
+                            "injected": False,
+                            "reason": "股票标的需先确认，本轮未启动材料采集",
+                        })
+                chat_materials_mod.finalize_report(material_report, model_used=False)
+
             return _sse(_governed_chat_sse_events(
                 clarification_stream(),
                 stage="正在核验提问中的股票标的…",
+                done_payload={
+                    "resolved_mode": "free",
+                    "data_materials": material_report,
+                },
             ))
     if mode == "stock":
         perspective_stage = (
@@ -2906,8 +3316,16 @@ async def chat(request: Request):
     model_status = await diagnosis_mod._model_connection_state(st.engine)
     if model_status != "available" and mode == "free":
         return _sse(_governed_chat_sse_events(
-            _governed_free_chat_stream(st, message),
-            stage="正在并行读取大盘、板块与资金证据…",
+            _governed_free_chat_stream(
+                st, message, data_material_ids=data_material_ids,
+                material_report=material_report,
+            ),
+            stage="正在读取本轮所选数据材料…",
+            done_payload={
+                "resolved_mode": "free",
+                "data_materials": material_report,
+                "model_used": False,
+            },
         ))
     if mode == "chain":
         return _sse(_governed_chat_sse_events(
@@ -2923,8 +3341,21 @@ async def chat(request: Request):
             ),
             stage="正在拆解需求、上下游与价值传导…",
         ))
-    return _sse(st.engine.chat_stream(mode, message, code=code, industry=industry,
-                                      history=history, images=images, codes=codes))
+    generated = _invoke_governed_chat_stream(
+        st.engine.chat_stream,
+        mode,
+        message,
+        code=code,
+        industry=industry,
+        history=history,
+        images=images,
+        codes=codes,
+        data_material_ids=data_material_ids,
+        material_report=material_report,
+    )
+    if mode == "free":
+        generated = _with_material_report(generated, material_report)
+    return _sse(generated)
 
 
 # ---------------------------------------------------------------- 持久化后台研究任务（产业链 / 单公司）
@@ -3077,7 +3508,12 @@ async def delete_research_run(run_id: str, request: Request):
 @router.get("/chat/conversations")
 async def chat_conversations(request: Request):
     st = _state(request)
-    return {"ok": True, "conversations": await asyncio.to_thread(st.store.list_conversations)}
+    rows = await asyncio.to_thread(st.store.list_conversations)
+    query = getattr(request, "query_params", {})
+    mode = str(query.get("mode") or "").strip() if query is not None else ""
+    if mode:
+        rows = [row for row in rows if str(row.get("mode") or "free") == mode]
+    return {"ok": True, "conversations": rows}
 
 
 @router.post("/chat/conversations")
@@ -3130,6 +3566,14 @@ async def chat_conversation_add(cid: str, request: Request):
             )
         if row.get("role") == "assistant" and selected_ids:
             row["perspectives"] = stock_perspectives_mod.selected_metadata(selected_ids)
+        if row.get("role") == "assistant":
+            stored_report = chat_materials_mod.sanitize_report(row.get("data_materials"))
+            if stored_report is not None:
+                row["data_materials"] = stored_report
+            else:
+                row.pop("data_materials", None)
+        else:
+            row.pop("data_materials", None)
         normalized_msgs.append(row)
     ok = await asyncio.to_thread(st.store.add_messages, cid, normalized_msgs)
     return {"ok": bool(ok)}
@@ -4266,7 +4710,14 @@ async def approve_knowledge(kid: str, request: Request):
             raise ValueError("批准失败：来源/证据不存在：" + "、".join(missing_sources[:10]))
         proposed_samples = body.get("sample_count", current.get("sample_count", 0))
         if current.get("origin") != "explicit_user_input":
-            source_count = len(set(map(str, report_ids))) + len(set(map(str, evidence_ids)))
+            source_count = (
+                len(set(map(str, report_ids)))
+                + len(set(map(str, evidence_ids)))
+                + int(bool(
+                    current.get("origin") == "sentiment_event_archive"
+                    and current.get("archive_key")
+                ))
+            )
             if int(proposed_samples or 0) > source_count:
                 raise ValueError("批准失败：sample_count 不得超过已核验来源数")
         item = st.store.approve(
@@ -5041,6 +5492,20 @@ async def news_multi():
 async def news_a_share():
     """新闻到 A 股公司/行业/概念的确定性映射；盘面字段只表达观察，不宣称因果。"""
     return await asyncio.to_thread(news.a_share_news)
+
+
+@router.post("/news/a-share/archive")
+async def archive_news_a_share(request: Request):
+    """把用户当前选中的事件幂等留档为知识草稿，不修改新闻源快照。"""
+    try:
+        body = await request.json()
+        event = body.get("event") if isinstance(body, dict) else None
+        if not isinstance(event, dict):
+            raise ValueError("event 必须是对象")
+        result = await asyncio.to_thread(_state(request).store.archive_sentiment_event, event)
+    except (TypeError, ValueError) as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    return {"ok": True, **result}
 
 
 @router.get("/news/a-share/observations")

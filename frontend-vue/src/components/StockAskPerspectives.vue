@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import type { StockPerspective } from '../types/stockAsk'
 
 const props = defineProps<{
@@ -17,7 +17,7 @@ const emit = defineEmits<{
   retry: []
 }>()
 
-const expanded = ref(false)
+const expanded = ref(true)
 const selectedSet = computed(() => new Set(props.selectedIds))
 const selectedItems = computed(() => props.items.filter((item) => selectedSet.value.has(item.id)))
 const atLimit = computed(() => props.selectedIds.length >= props.maxSelected)
@@ -34,6 +34,10 @@ const groups = computed(() => {
 function isDisabled(id: string) {
   return props.disabled || (atLimit.value && !selectedSet.value.has(id))
 }
+
+watch(() => props.disabled, (disabled) => {
+  if (disabled) expanded.value = false
+}, { immediate: true })
 </script>
 
 <template>
@@ -60,8 +64,8 @@ function isDisabled(id: string) {
     </div>
 
     <div v-if="expanded" id="stock-ask-perspectives-panel" class="stock-ask-perspectives__panel">
-      <p class="stock-ask-perspectives__help" :class="{ 'is-limit': atLimit }" aria-live="polite">
-        {{ atLimit ? `已达到 ${maxSelected} 个上限；取消一个后可改选。` : '每个视角独立分析，最后汇总共识与分歧；不会改写服务端风险结论。' }}
+      <p v-if="atLimit" class="stock-ask-perspectives__help is-limit" aria-live="polite">
+        已达到 {{ maxSelected }} 个上限；取消一个后可改选。
       </p>
       <p v-if="loading" class="stock-ask-perspectives__state" role="status">正在读取分析视角…</p>
       <div v-else-if="items.length" class="stock-ask-perspectives__groups">
@@ -106,7 +110,7 @@ function isDisabled(id: string) {
 .stock-ask-perspectives__clear:disabled { cursor: wait; opacity: .5; }
 .stock-ask-perspectives__selected { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 20px 8px; }
 .stock-ask-perspectives__selected span { padding: 3px 7px; border: 1px solid color-mix(in srgb, var(--accent) 48%, var(--border)); border-radius: 999px; background: var(--accent-dim); color: var(--accent); font-size: 11px; font-weight: 700; }
-.stock-ask-perspectives__panel { max-height: min(18dvh, 180px); overflow-y: auto; padding: 4px 12px 10px; border-top: 1px dashed var(--border); overscroll-behavior: contain; scrollbar-width: thin; }
+.stock-ask-perspectives__panel { padding: 4px 12px 10px; border-top: 1px dashed var(--border); }
 .stock-ask-perspectives__help, .stock-ask-perspectives__state { margin: 8px 0; color: var(--text-3); font-size: 12px; line-height: 1.6; }
 .stock-ask-perspectives__help.is-limit { color: var(--warning); font-weight: 700; }
 .stock-ask-perspectives__groups { display: grid; gap: 12px; }
@@ -121,10 +125,6 @@ function isDisabled(id: string) {
 .stock-ask-perspectives__grid strong { min-width: 0; color: var(--text); font-size: 13px; line-height: 1.35; }
 .stock-ask-perspectives__error { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px; color: var(--danger); font-size: 12px; }
 .stock-ask-perspectives__error button { min-height: 44px; padding: 0 12px; border: 1px solid var(--danger); border-radius: 7px; background: transparent; color: var(--danger); cursor: pointer; }
-
-@media (max-width: 800px) {
-  .stock-ask-perspectives__panel { max-height: none; overflow: visible; }
-}
 
 @media (max-width: 720px) {
   .stock-ask-perspectives__grid { grid-template-columns: minmax(0, 1fr); }

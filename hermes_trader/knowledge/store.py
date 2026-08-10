@@ -25,7 +25,7 @@ from ..data.base import now_cn
 
 KNOWLEDGE_CATEGORIES = [
     "交易原则", "亏损禁区", "擅长模式", "不擅长模式",
-    "仓位规则", "经验教训", "选股偏好", "复盘笔记",
+    "仓位规则", "经验教训", "选股偏好", "复盘笔记", "舆情留档",
 ]
 
 # 推荐回验的错误类型枚举（白皮书吸收③）——**唯一数据源**：落库白名单与统计直方图共用；
@@ -258,7 +258,7 @@ class Store:
         return {"meta": meta, "messages": data.get("messages", [])}
 
     def add_messages(self, cid: str, msgs: list[dict]) -> bool:
-        """追加消息（{role,content,has_image?,perspectives?}）。content 取文本、图片只标记 has_image 不入库。
+        """追加消息（{role,content,has_image?,perspectives?,data_materials?}）。content 取文本、图片只标记 has_image 不入库。
         首条 user 消息会自动给默认标题的会话起名。"""
         cid = self._safe_cid(cid)
         if not cid:
@@ -290,6 +290,17 @@ class Store:
                         })
                 if perspectives:
                     row["perspectives"] = perspectives
+            if m["role"] == "assistant" and isinstance(m.get("data_materials"), dict):
+                # 路由层已按白名单清洗；这里再用 JSON 往返断开可变引用，
+                # 并限制为固定深度的材料报告，不接受额外消息正文。
+                report = m["data_materials"]
+                row["data_materials"] = {
+                    "selected_ids": list(report.get("selected_ids") or [])[:4],
+                    "max_selected": 4,
+                    "model_used": bool(report.get("model_used")),
+                    "required": list(report.get("required") or [])[:3],
+                    "optional": list(report.get("optional") or [])[:6],
+                }
             clean.append(row)
         if not clean:
             return False
@@ -548,7 +559,16 @@ class Store:
         # 一条声称 approved 但缺少 v1 必要的来源/样本信息时，
         # 安全地降为 legacy_unverified，绝不让它进入 prompt。
         origin = str(item.get("origin") or ("legacy_import" if not had_status else "unknown"))[:80]
-        has_source = bool(source_report_ids or evidence_ids or origin == "explicit_user_input")
+        archive_key = str(item.get("archive_key") or "")[:80]
+        archived_event = item.get("archived_event")
+        if not isinstance(archived_event, dict):
+            archived_event = None
+        has_source = bool(
+            source_report_ids
+            or evidence_ids
+            or origin == "explicit_user_input"
+            or (origin == "sentiment_event_archive" and archive_key)
+        )
         if status == "approved" and (sample_count < 1 or not has_source):
             status = "legacy_unverified"
 
@@ -566,6 +586,8 @@ class Store:
             "version": max(1, int(item.get("version") or 1))
             if str(item.get("version") or "1").isdigit() else 1,
             "origin": origin,
+            "archive_key": archive_key or None,
+            "archived_event": archived_event,
             "source_report_ids": source_report_ids,
             "evidence_ids": evidence_ids,
             "sample_count": sample_count,
@@ -591,6 +613,10 @@ class Store:
             item.get("source_report_ids")
             or item.get("evidence_ids")
             or item.get("origin") == "explicit_user_input"
+            or (
+                item.get("origin") == "sentiment_event_archive"
+                and item.get("archive_key")
+            )
         )
 
     def _validate_knowledge_approval(self, item: dict) -> None:
@@ -621,7 +647,14 @@ class Store:
         if missing:
             raise ValueError("批准失败：来源/证据不存在：" + "、".join(dict.fromkeys(missing)))
         if item.get("origin") != "explicit_user_input":
-            source_count = len(set(item.get("source_report_ids") or [])) + len(set(evidence_ids))
+            source_count = (
+                len(set(item.get("source_report_ids") or []))
+                + len(set(evidence_ids))
+                + int(bool(
+                    item.get("origin") == "sentiment_event_archive"
+                    and item.get("archive_key")
+                ))
+            )
             if samples > source_count:
                 raise ValueError("批准失败：sample_count 不得超过已核验来源数")
 
@@ -745,6 +778,8 @@ class Store:
         evidence_ids: list[str] | None = None,
         sample_count: int | None = None,
         created_by: str = "user",
+        archive_key: str | None = None,
+        archived_event: dict | None = None,
     ) -> str:
         """新增 KnowledgeRule.v1。
 
@@ -781,6 +816,8 @@ class Store:
             "status": status,
             "version": 1,
             "origin": str(origin or "unknown")[:80],
+            "archive_key": str(archive_key or "")[:80] or None,
+            "archived_event": dict(archived_event) if isinstance(archived_event, dict) else None,
             "source_report_ids": src_reports,
             "evidence_ids": src_evidence,
             "sample_count": samples,
@@ -810,6 +847,129 @@ class Store:
             "sample_count": samples,
         })
         return kid
+
+    @staticmethod
+    def _sentiment_archive_snapshot(raw: dict) -> tuple[str, str, str, dict]:
+        """把页面选中的事件收敛为有界、可读、可去重的留档快照。"""
+        if not isinstance(raw, dict):
+            raise ValueError("舆情事件必须是对象")
+
+        def text(value, limit: int) -> str:
+            return str(value or "").strip()[:limit]
+
+        title = text(raw.get("title"), 120)
+        body = text(raw.get("content"), 6000)
+        if not title and not body:
+            raise ValueError("舆情事件标题与正文不能同时为空")
+        if not title:
+            title = body[:80]
+
+        published_at = text(raw.get("published_at") or raw.get("time"), 80)
+        fetched_at = text(raw.get("fetched_at"), 80)
+        source = text(raw.get("source"), 120)
+        event_id = text(raw.get("event_id"), 160)
+        content_hash = text(raw.get("content_hash"), 160)
+
+        matches: list[dict] = []
+        a_share = raw.get("a_share") if isinstance(raw.get("a_share"), dict) else {}
+        for row in list(a_share.get("matches") or [])[:24]:
+            if not isinstance(row, dict):
+                continue
+            matches.append({
+                "kind": text(row.get("kind"), 24),
+                "code": text(row.get("code"), 24),
+                "name": text(row.get("name"), 80),
+            })
+
+        sources: list[dict] = []
+        for row in list(raw.get("observations") or [])[:12]:
+            if not isinstance(row, dict):
+                continue
+            source_url = text(row.get("source_url"), 1000)
+            if not source_url.lower().startswith(("http://", "https://")):
+                source_url = ""
+            sources.append({
+                "source_id": text(row.get("source_id"), 80),
+                "publisher_name": text(row.get("publisher_name"), 120),
+                "collection_platform_name": text(row.get("collection_platform_name"), 120),
+                "published_at": text(row.get("published_at"), 80),
+                "fetched_at": text(row.get("fetched_at"), 80),
+                "source_url": source_url or None,
+            })
+
+        canonical = json.dumps({
+            "title": title,
+            "content": body,
+            "published_at": published_at,
+            "source": source,
+        }, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        archive_key = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        snapshot = {
+            "schema": "sentiment-event-archive.v1",
+            "archive_key": archive_key,
+            "event_id": event_id or None,
+            "content_hash": content_hash or None,
+            "title": title,
+            "content": body,
+            "published_at": published_at or None,
+            "fetched_at": fetched_at or None,
+            "source": source or None,
+            "matches": matches,
+            "sources": sources,
+        }
+
+        lines = [body or title]
+        if published_at:
+            lines.append(f"\n事件时间：{published_at}")
+        if fetched_at:
+            lines.append(f"抓取时间：{fetched_at}")
+        if source:
+            lines.append(f"聚合来源：{source}")
+        if matches:
+            labels = []
+            for row in matches:
+                label = row.get("name") or row.get("code") or ""
+                if row.get("code") and row.get("name"):
+                    label = f"{row['name']}（{row['code']}）"
+                if label:
+                    labels.append(f"{row.get('kind') or '关联'}：{label}")
+            if labels:
+                lines.append("A 股关联：" + "；".join(labels))
+        if sources:
+            lines.append("\n采集证据：")
+            for row in sources:
+                source_label = row.get("collection_platform_name") or row.get("publisher_name") or row.get("source_id") or "来源未提供"
+                suffix = f" · {row['source_url']}" if row.get("source_url") else ""
+                lines.append(f"- {source_label}{suffix}")
+        lines.append("\n留档说明：来自舆情事件页面的人工留档；仅保存事件与映射事实，不判断利多利空或新闻因果。")
+        return archive_key, title, "\n".join(lines)[:8000], snapshot
+
+    def archive_sentiment_event(self, event: dict) -> dict:
+        """幂等保存一条舆情事件为知识草稿，避免刷新列表覆盖用户选中的事实。"""
+        return self._knowledge_transaction(self._archive_sentiment_event_unlocked, event)
+
+    def _archive_sentiment_event_unlocked(self, event: dict) -> dict:
+        archive_key, title, content, snapshot = self._sentiment_archive_snapshot(event)
+        for item in self.knowledge_items():
+            if (
+                item.get("origin") == "sentiment_event_archive"
+                and item.get("archive_key") == archive_key
+            ):
+                return {"id": item.get("id"), "created": False, "item": item}
+
+        kid = self._add_knowledge_unlocked(
+            "舆情留档",
+            title,
+            content,
+            status="draft",
+            origin="sentiment_event_archive",
+            sample_count=1,
+            created_by="user:web",
+            archive_key=archive_key,
+            archived_event=snapshot,
+        )
+        item = next((row for row in self.knowledge_items() if row.get("id") == kid), None)
+        return {"id": kid, "created": True, "item": item}
 
     def review_queue(self) -> list[dict]:
         """待处理队列：自动 draft 与无法验证的历史条目。"""

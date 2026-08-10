@@ -30,6 +30,7 @@ from ..delivery import canonical_daily_plan_id, push_report_with_receipt
 from ..analysis.advice_proposal import proposal_ledger_for
 from ..analysis import sentiment as senti
 from ..analysis import diagnosis as diagnosis_mod
+from ..analysis import chat_materials
 from ..analysis import industry_chain as industry_chain_mod
 from ..analysis.claim_validator import validate_report_finalization
 from ..analysis.methodology import load_methodology
@@ -96,16 +97,27 @@ def _stock_action_conflict(content: str, final_action: str) -> bool:
     conservative = final_action in {
         "观望", "回避", "持有", "持有（不加仓）", "减仓", "止损", "清仓",
     }
+
+    def locally_negated(line: str, start: int) -> bool:
+        prefix = line[max(0, start - 12):start]
+        return bool(re.search(
+            r"(?:不|不能|不可|禁止|暂停|避免|回避|不得|取消|无需|不要)"
+            r"(?:应|可|宜|要|再|去|考虑)?\s*$",
+            prefix,
+        ))
+
     for raw in str(content or "").splitlines():
         line = raw.strip()
         if not line or not _RISK_INCREASING_RE.search(line):
             continue
-        if _NEGATED_ACTION_RE.search(line):
-            continue
-        if final_action == "持有（不加仓）" and "加仓" in line:
-            return True
-        if conservative and _DIRECT_ORDER_RE.search(line):
-            return True
+        if final_action == "持有（不加仓）":
+            for match in re.finditer("加仓", line):
+                if not locally_negated(line, match.start()):
+                    return True
+        if conservative:
+            for match in _DIRECT_ORDER_RE.finditer(line):
+                if not locally_negated(line, match.start()):
+                    return True
     return False
 
 
@@ -2070,8 +2082,138 @@ class Engine:
 
     # ------------------------------------------------ 对话上下文
 
+    async def _free_chat_material_context(
+        self,
+        data_material_ids: tuple[str, ...],
+        material_report: dict | None = None,
+    ) -> dict:
+        """只启动用户最终选择的自由问答材料采集任务。"""
+        selected = set(data_material_ids)
+        jobs = {
+            "overview": _bounded_thread_call(
+                market.market_overview, timeout=5.0, default={}
+            )
+        }
+        if "sector" in selected:
+            jobs["sector"] = _bounded_thread_call(
+                market.market_sectors, timeout=6.0, default={}
+            )
+        if "fund_flow" in selected:
+            jobs["fund_flow"] = _bounded_thread_call(
+                market.market_flow, timeout=5.0, default={}
+            )
+        if "market_context" in selected:
+            jobs["sentiment"] = _bounded_thread_call(
+                senti.compute_today, self.store, timeout=4.0, default={}
+            )
+        if "events" in selected:
+            jobs["events"] = _bounded_thread_call(
+                news.cn_news, timeout=6.0, default={}
+            )
+        keys = list(jobs)
+        values = await asyncio.gather(*(jobs[key] for key in keys))
+        collected = dict(zip(keys, values))
+        overview = collected.get("overview") or {}
+        data_date = overview.get("data_date") or overview.get("ts")
+        if material_report is not None:
+            required = material_report.get("required") or []
+            if len(required) >= 3:
+                required[0].update({
+                    "state": "complete" if overview else "missing",
+                    "data_date": data_date,
+                    "source": overview.get("source") or "市场总览聚合",
+                    "stale": bool(overview.get("stale")),
+                    "reason": "市场行情与时点已返回" if overview else "市场总览未返回",
+                })
+                required[1].update({
+                    "state": "complete",
+                    "source": "服务端自由问答风险边界",
+                    "reason": "确定性风险约束始终生效",
+                })
+                required[2].update({
+                    "state": "degraded" if overview.get("missing") else "complete",
+                    "data_date": data_date,
+                    "source": "数据质量契约",
+                    "stale": bool(overview.get("stale")),
+                    "reason": "；".join(str(item) for item in (overview.get("missing") or [])[:3])
+                    or "缺失、过期与降级状态已核验",
+                })
+            for material_id, key, source_label in (
+                ("technical", "overview", "市场指数行情"),
+                ("fund_flow", "fund_flow", "市场资金方向"),
+                ("sector", "sector", "板块行情"),
+                ("market_context", "sentiment", "市场情绪规则"),
+                ("events", "events", "公开财经快讯"),
+            ):
+                if material_id not in selected:
+                    continue
+                payload = collected.get(key) or {}
+                degraded_scope = material_id in {"technical", "fund_flow"} and bool(payload)
+                chat_materials.update_result(
+                    material_report,
+                    material_id,
+                    state="degraded" if degraded_scope else ("complete" if payload else "missing"),
+                    data_date=payload.get("data_date") or payload.get("date") or payload.get("ts"),
+                    source=payload.get("source") or source_label,
+                    stale=bool(payload.get("stale")),
+                    reason=(
+                        "未识别单股，仅取得市场指数行情，不含个股分时、日K和技术指标"
+                        if material_id == "technical" and payload else
+                        "未识别单股，降级为全市场资金方向，不作为个股资金流"
+                        if material_id == "fund_flow" and payload else
+                        "材料已采集" if payload else "对应数据源未返回"
+                    ),
+                )
+            if "fundamental" in selected:
+                chat_materials.update_result(
+                    material_report,
+                    "fundamental",
+                    state="missing",
+                    reason="问题中未识别到单只股票，未启动个股财务采集",
+                )
+
+        base_overview = {
+            key: overview.get(key)
+            for key in ("indexes", "data_date", "ts", "source", "stale", "missing")
+            if overview.get(key) is not None
+        }
+        context = {
+            "系统必需底座": {
+                "行情与数据时点": base_overview or "市场行情未返回",
+                "风险边界与失效条件": "只基于已注入事实回答；不得把研究讨论改写为无条件交易指令",
+                "缺失过期和降级状态": overview.get("missing") or [],
+            },
+            "本轮材料状态": (material_report or {}).get("optional") or [],
+        }
+        if "technical" in selected:
+            context["深度技术与量价"] = {
+                "scope": "market_indexes_only_no_single_stock",
+                "market_indexes": overview.get("indexes") or [],
+                "data_date": data_date,
+            }
+        if "fund_flow" in selected:
+            context["个股资金流"] = {
+                "scope": "market_fallback_no_single_stock",
+                "warning": "这是全市场资金方向，不是今日个股资金流，不得改写为某只股票的净流入",
+                "payload": collected.get("fund_flow") or "市场资金方向采集失败",
+            }
+        if "sector" in selected:
+            context["板块与题材"] = collected.get("sector") or "板块行情采集失败"
+        if "market_context" in selected:
+            context["市场环境"] = {
+                "market_overview": overview,
+                "sentiment": collected.get("sentiment") or "市场情绪采集失败",
+            }
+        if "fundamental" in selected:
+            context["基本面与估值"] = "未识别单只股票，本轮未启动个股财务采集"
+        if "events" in selected:
+            context["公告与事件"] = collected.get("events") or "公开事件源采集失败"
+        return context
+
     async def chat_context(self, mode: str, code: str = "", industry: str = "",
-                           codes: list[str] | None = None) -> dict:
+                           codes: list[str] | None = None,
+                           data_material_ids: tuple[str, ...] | None = None,
+                           material_report: dict | None = None) -> dict:
         today = now_cn().strftime("%Y-%m-%d")
         if mode == "stock" and code:
             # 五路并发、各有独立预算。公开财务/F10 是增强项，不能再排在盘口前面
@@ -2420,6 +2562,10 @@ class Engine:
             return await asyncio.to_thread(gather)
 
         # free
+        if data_material_ids is not None:
+            return await self._free_chat_material_context(
+                data_material_ids, material_report
+            )
         return await self._market_context(full=False)
 
     async def industry_chain_analysis(self, industry: str) -> dict:
@@ -2661,13 +2807,15 @@ class Engine:
     async def governed_stock_explanation_stream(
         self, message: str, card: dict, *, history: list[dict] | None = None,
         perspective_ids: tuple[str, ...] | None = None,
+        data_material_ids: tuple[str, ...] | None = None,
+        material_report: dict | None = None,
     ) -> AsyncIterator[str]:
-        """把冻结事实组织成一份完整问股成稿，校验通过后才交给前端。
+        """把冻结事实组织成一份完整问股成稿，并返回校验状态。
 
         该通道不向模型开放 action/仓位/价位改写权。模型只负责把
-        确定性结论、技术结构和市场背景写成自然语言；任何半截输出、
-        过短成稿、遗漏执行边界或出现未注入的关键数字都会被丢弃，
-        由路由层回退到简洁的确定性说明。
+        确定性结论、技术结构和市场背景写成自然语言。完整但存在冲突
+        或证据缺口的正文会连同校验码交给路由层标注展示；真正的半截
+        输出、再次截断或空响应仍由路由层回退到确定性说明。
         """
         code = str(card.get("code") or "").strip()
         if len(code) != 6 or not code.isdigit():
@@ -2678,11 +2826,64 @@ class Engine:
         # 避免固定卡与模型解释落在两个不同数据时点上。
         board = card.get("board") or {}
         industry_name = str(board.get("industry") or "").strip()
-        sectors, sentiment, overview = await asyncio.gather(
-            _bounded_thread_call(market.market_sectors, timeout=3.0, default={}),
-            _bounded_thread_call(senti.compute_today, self.store, timeout=3.0, default={}),
-            _bounded_thread_call(market.market_overview, timeout=3.0, default={}),
-        )
+        selected_materials = None if data_material_ids is None else set(data_material_ids)
+        if selected_materials is None:
+            sectors, sentiment, overview = await asyncio.gather(
+                _bounded_thread_call(market.market_sectors, timeout=3.0, default={}),
+                _bounded_thread_call(senti.compute_today, self.store, timeout=3.0, default={}),
+                _bounded_thread_call(market.market_overview, timeout=3.0, default={}),
+            )
+            event_payload = {}
+        else:
+            jobs = {}
+            if "sector" in selected_materials:
+                jobs["sectors"] = _bounded_thread_call(
+                    market.market_sectors, timeout=3.0, default={}
+                )
+            if "market_context" in selected_materials:
+                jobs["sentiment"] = _bounded_thread_call(
+                    senti.compute_today, self.store, timeout=3.0, default={}
+                )
+                jobs["overview"] = _bounded_thread_call(
+                    market.market_overview, timeout=3.0, default={}
+                )
+            if "events" in selected_materials:
+                end_date = now_cn().date()
+                start_date = end_date - timedelta(days=90)
+                if code.startswith(("0", "3", "6")):
+                    jobs["disclosures"] = _bounded_thread_call(
+                        official_disclosure.cached_official_disclosures,
+                        code,
+                        start_date.isoformat(),
+                        end_date.isoformat(),
+                        8,
+                        False,
+                        1,
+                        str(Path(self.config.data_dir) / "official-disclosures" / f"{code}.json"),
+                        timeout=4.0,
+                        default={"state": "missing", "items": []},
+                    )
+                if code.startswith(("0", "3")):
+                    jobs["interactions"] = _bounded_thread_call(
+                        official_interaction.cached_official_interactions,
+                        code,
+                        start_date.isoformat(),
+                        end_date.isoformat(),
+                        6,
+                        str(self.config.data_dir),
+                        timeout=4.0,
+                        default={"state": "missing", "items": []},
+                    )
+            keys = list(jobs)
+            values = await asyncio.gather(*(jobs[key] for key in keys)) if keys else []
+            collected = dict(zip(keys, values))
+            sectors = collected.get("sectors") or {}
+            sentiment = collected.get("sentiment") or {}
+            overview = collected.get("overview") or {}
+            event_payload = {
+                "official_disclosures": collected.get("disclosures") or {},
+                "exchange_interactions": collected.get("interactions") or {},
+            }
         related_sectors = [
             sector
             for sector in (
@@ -2692,6 +2893,52 @@ class Engine:
             and industry_name
             and industry_name in str(sector.get("name") or "")
         ][:5]
+        if material_report is not None and selected_materials is not None:
+            if "sector" in selected_materials:
+                sector_payload = (card.get("material_payloads") or {}).get("sector")
+                sector_available = bool(sector_payload)
+                market_available = bool(sectors)
+                chat_materials.update_result(
+                    material_report,
+                    "sector",
+                    state=(
+                        "complete" if sector_available and market_available
+                        else ("degraded" if sector_available or market_available else "missing")
+                    ),
+                    data_date=sectors.get("data_date") or sectors.get("ts"),
+                    source=(sector_payload or {}).get("source") or sectors.get("source") or "TDX relation / 板块行情",
+                    stale=bool(sectors.get("stale")),
+                    reason=(
+                        "行业概念与板块联动已返回"
+                        if sector_available and market_available
+                        else "只取得行业归属或板块行情中的一部分"
+                    ),
+                )
+            if "market_context" in selected_materials:
+                available = bool(sentiment or overview)
+                chat_materials.update_result(
+                    material_report,
+                    "market_context",
+                    state="complete" if sentiment and overview else ("degraded" if available else "missing"),
+                    data_date=overview.get("data_date") or overview.get("ts") or sentiment.get("date"),
+                    source="市场总览与确定性情绪规则",
+                    stale=bool(overview.get("stale")),
+                    reason="市场总览与情绪已返回" if sentiment and overview else "市场环境只返回部分数据",
+                )
+            if "events" in selected_materials:
+                disclosures = event_payload.get("official_disclosures") or {}
+                interactions = event_payload.get("exchange_interactions") or {}
+                available = bool(disclosures.get("items") or interactions.get("items"))
+                degraded = bool(disclosures or interactions) and not available
+                chat_materials.update_result(
+                    material_report,
+                    "events",
+                    state="complete" if available else ("degraded" if degraded else "missing"),
+                    data_date=disclosures.get("data_as_of") or interactions.get("data_as_of"),
+                    source="交易所公告与互动问答",
+                    stale=False,
+                    reason="官方事件证据已返回" if available else "官方事件源未返回可用条目",
+                )
         quote = dict(card.get("market_quote") or {})
         quote.setdefault("code", code)
         quote.setdefault("name", card.get("name") or "")
@@ -2714,20 +2961,44 @@ class Engine:
                 "summary": card.get("summary"),
             },
             "quote": quote,
-            "technical_analysis": card.get("technical_analysis") or {},
-            "board": board,
-            "flow": card.get("flow") or "本轮未取得个股资金增强",
-            "financial": card.get("financial") or "本轮未取得基础财务增强",
             "evidence": card.get("evidence") or [],
             "evidence_quality": card.get("market_evidence_quality")
             or card.get("decision_market_evidence_quality")
             or {},
             "missing": card.get("missing") or [],
-            "related_sector_performance": related_sectors
-            or "本轮未匹配到所属板块的当日增强",
-            "market_sentiment": sentiment,
-            "market_overview": overview,
+            "material_status": (material_report or {}).get("optional") or [],
         }
+        if selected_materials is None:
+            packet.update({
+                "technical_analysis": card.get("technical_analysis") or {},
+                "board": board,
+                "flow": card.get("flow") or "本轮未取得个股资金增强",
+                "financial": card.get("financial") or "本轮未取得基础财务增强",
+                "related_sector_performance": related_sectors
+                or "本轮未匹配到所属板块的当日增强",
+                "market_sentiment": sentiment,
+                "market_overview": overview,
+            })
+        else:
+            material_payloads = card.get("material_payloads") or {}
+            if "technical" in selected_materials:
+                packet["technical_material"] = material_payloads.get("technical") or "深度技术材料采集失败"
+            if "fund_flow" in selected_materials:
+                packet["fund_flow_material"] = material_payloads.get("fund_flow") or "个股资金流采集失败"
+            if "sector" in selected_materials:
+                packet["sector_material"] = {
+                    "board": material_payloads.get("sector") or "行业概念采集失败",
+                    "related_sector_performance": related_sectors or "板块联动采集失败",
+                }
+            if "market_context" in selected_materials:
+                packet["market_context_material"] = {
+                    "market_sentiment": sentiment or "市场情绪采集失败",
+                    "market_overview": overview or "市场总览采集失败",
+                }
+            if "fundamental" in selected_materials:
+                packet["fundamental_material"] = material_payloads.get("fundamental") or "基础财务采集失败"
+            if "events" in selected_materials:
+                packet["events_material"] = event_payload or "公告与事件采集失败"
         selected_perspective_ids = stock_perspectives.resolve_perspective_ids(
             perspective_ids
         )
@@ -2747,6 +3018,13 @@ class Engine:
                 "视角判断要短而有区分度，不靠重复字段拉长篇幅。"
             )
         )
+        material_scope_prompt = (
+            "深度来自趋势位置、动量、量价、资金、板块联动、市场情绪和基础财务的交叉判断，"
+            if selected_materials is None else (
+                "本轮只能展开 material_status 中 selected=true 且状态可用或降级的材料；"
+                "未选择的材料没有启动采集，也没有注入，绝不能凭常识补写其事实或数字。"
+            )
+        )
         system = (
             prompts.system_prompt(self.store.knowledge_digest())
             + "\n\n【问股最终成稿·最高优先级】\n"
@@ -2756,8 +3034,8 @@ class Engine:
             "invalidation_condition 是服务端冻结事实：必须保持语义一致并在正文中明确出现，"
             "不得改写为相反动作，不得新增价位、仓位或无条件买卖建议。\n"
             + answer_length
-            + "深度来自趋势位置、动量、量价、资金、"
-            "板块联动、市场情绪和基础财务的交叉判断，不是把所有字段逐项抄一遍；"
+            + material_scope_prompt
+            + "不是把所有字段逐项抄一遍；"
             "只展开数据状态为可用的维度，缺失信息集中在结尾一句说明。\n"
             "推荐结构：标题；开头用一个自然段直接回答用户问题；“结构与量价”、"
             "“市场与板块背景”、“下一交易日三种情景”、“执行边界”四段。"
@@ -2879,7 +3157,13 @@ class Engine:
                 if not review["ok"]:
                     # 首稿已触发安全硬闸；即使修订调用同时失败，最终未采用
                     # 的决定性原因仍是正文不安全，不能误报成“数据不足”。
+                    # 正文已经完整返回，保留全文并交由路由层显著标注，
+                    # 但不把其中动作或价格升级为可采信结论。
                     card["_explanation_failure_reason"] = "safety_validation_failed"
+                    card["_explanation_warning_codes"] = list(dict.fromkeys(
+                        review["hard_errors"] + review["soft_issues"]
+                    ))
+                    yield content
                     return
             else:
                 rewritten = str(rewritten_result.get("text") or "").strip()
@@ -2893,25 +3177,37 @@ class Engine:
                     candidate_status = rewritten_status
                 elif not review["ok"]:
                     card["_explanation_failure_reason"] = "safety_validation_failed"
+                    card["_explanation_warning_codes"] = list(dict.fromkeys(
+                        rewritten_review["hard_errors"]
+                        + rewritten_review["soft_issues"]
+                    ))
                     log.warning(
                         "问股深度成稿安全校验失败 code=%s errors=%s",
                         code,
                         rewritten_review["hard_errors"],
                     )
+                    yield rewritten
                     return
 
         content = _complete_stock_explanation(content, packet, review)
         final_review = _review_stock_explanation(content, packet)
         if candidate_status == "model_missing_stop" and final_review["soft_issues"]:
             card["_explanation_failure_reason"] = "model_missing_stop"
+            card["_explanation_warning_codes"] = list(dict.fromkeys(
+                ["model_missing_stop"] + final_review["soft_issues"]
+            ))
             log.warning(
                 "问股缺 stop 兼容稿完整性不足 code=%s issues=%s",
                 code,
                 final_review["soft_issues"],
             )
+            yield content
             return
         if not final_review["ok"]:
             card["_explanation_failure_reason"] = "safety_validation_failed"
+            card["_explanation_warning_codes"] = list(dict.fromkeys(
+                final_review["hard_errors"] + final_review["soft_issues"]
+            ))
             log.warning(
                 "问股深度成稿最终安全校验失败 code=%s errors=%s numeric=%s price=%s",
                 code,
@@ -2919,14 +3215,18 @@ class Engine:
                 final_review["numeric_suspects"],
                 final_review["price_errors"],
             )
+            yield content
             return
         card.pop("_explanation_failure_reason", None)
+        card.pop("_explanation_warning_codes", None)
         yield content
 
     async def chat_stream(
         self, mode: str, message: str, code: str = "", industry: str = "",
         history: list[dict] | None = None, images: list[str] | None = None,
         codes: list[str] | None = None,
+        data_material_ids: tuple[str, ...] | None = None,
+        material_report: dict | None = None,
     ) -> AsyncIterator[dict]:
         if mode == "free" and not code:
             stock_reference = resolve_free_stock_reference(message)
@@ -2939,9 +3239,25 @@ class Engine:
                 yield {"done": True, "truncated": False}
                 return
         # 分阶段等待事件（首个 delta 前）：前端据此显示"正在做什么 + 已等待秒数"占位气泡
-        yield {"stage": "采集实时行情数据…"}
+        yield {
+            "stage": (
+                "正在采集本轮所选数据材料…"
+                if mode == "free" and data_material_ids is not None
+                else "采集实时行情数据…"
+            )
+        }
         try:
-            ctx = await self.chat_context(mode, code, industry, codes=codes)
+            if mode == "free" and data_material_ids is not None:
+                ctx = await self.chat_context(
+                    mode,
+                    code,
+                    industry,
+                    codes=codes,
+                    data_material_ids=data_material_ids,
+                    material_report=material_report,
+                )
+            else:
+                ctx = await self.chat_context(mode, code, industry, codes=codes)
         except Exception:  # noqa: BLE001 — 详情只写服务端日志
             log.exception("问答上下文采集失败")
             yield _safe_stream_error("chat_context_failed")
@@ -3073,7 +3389,15 @@ class Engine:
             truncated = stream_meta.get("finish_reason") == "length"
             if truncated:
                 yield {"delta": "\n\n> ⚠️ **回答因长度限制被截断，后段缺失，可清空历史后重新提问。**"}
-            yield {"done": True, "truncated": truncated}
+            done_event = {"done": True, "truncated": truncated}
+            if mode == "free" and material_report is not None:
+                chat_materials.finalize_report(material_report, model_used=True)
+                done_event.update({
+                    "resolved_mode": "free",
+                    "model_used": True,
+                    "data_materials": material_report,
+                })
+            yield done_event
             return
 
     # ------------------------------------------------ DIY 研究工作流

@@ -23,7 +23,7 @@ Agent 权限、证据库健康或任务中心，因此不得因运维上游超�
   "ok": true,
   "status_scope": "shell",
   "client": {"name": "本地客户", "id": "local", "brand": "W.U.D.I.", "brand_sub": "A 股决策支持"},
-  "version": "1.3.2",
+  "version": "1.4.1",
   "date": "2026-06-10",
   "is_trade_day": true,
   "market_session": "intraday",
@@ -536,13 +536,45 @@ code 为 6 位数字（自动识别沪深）。
 ```
 - `mode`: `free`(自由问答) | `stock`(盘中问股，需 code) | `position`(持仓诊断，后端自动读取已保存持仓) | `chain`(产业链挖掘，需 industry) | `company`(单公司深研，需 code) | `restructuring`(重组拆解，code 可选)
 - `perspective_ids`：仅 `stock` 模式可用的分析视角 ID 数组；取值必须来自 `GET /api/chat/perspectives` 服务端白名单，去重后最多 4 个。未知 ID、非数组、超过上限或在其他模式使用均返回 HTTP 400。空数组保持默认问股逻辑。
+- `data_material_ids`：仅 `free` 模式可用的本轮最终材料 ID 数组；省略时使用服务端确定性预选，显式空数组表示不选任何可选材料，去重后最多 4 项。未知 ID、非数组、超过上限或在其他模式使用均返回 HTTP 400。该选择同时控制是否启动对应数据源和是否进入模型上下文，禁止先全量采集后裁剪。
 - 后端自动注入对应实时数据上下文（个股盘口/板块/资金/市场情绪），再调 Hermes。
 
-`stock` 模式先冻结确定性诊断、RiskGate 动作、强化条件和失效条件，再把同一诊断快照中的技术结构、量价、资金、板块、财务及市场背景组成统一分析资料包。未选择视角时，模型只负责生成一份约 800—1300 个中文字符的自然语言深度成稿；选择 1—4 个视角时目标约 1200—2320 字符，每个视角必须单独给出有证据的判断，随后汇总“多视角共识与分歧”。视角只改变观察框架，无权修改冻结动作、价位、风险等级或缺失语义，也不得冒充人物本人、另行联网或调用原 Skill 脚本。遗漏任一已选视角或共识分歧段属于不可采用的契约错误。问股不另设低于连接配置的 `max_tokens`，使用模型连接的统一预算（默认 8000）；服务端缓存生成增量并读取真实 `finish_reason`。收到可信 `stop` 终态后执行分级校验：与冻结动作冲突、出现资料包外关键数字/越界价格仍是硬拦截；篇幅偏短、未原样复述动作或执行边界属于软质量问题，自动补写一次，补写不可用时保留安全首稿并用自然语言补齐冻结边界。若首稿因 `length` 截断，已生成正文不会直接展示或丢失，而是作为上下文重写一次完整终稿；上游已返回正文但遗漏标准 `stop` 时，正文也必须经过同一套篇幅、冻结边界、数字来源和价格安全校验，完整且安全才允许展示。再次截断、真实流中断，或缺 `stop` 正文在补写后仍不完整，才回退确定性说明并显示准确原因。回退原因与数据缺口分开显示，数据缺口只限制对应维度。响应不再拼接“固定治理卡 + 针对问题补充”两段正文。
+`free` 模式请求示例：
+
+```json
+{
+  "mode": "free",
+  "message": "今天更适合进攻还是防守？",
+  "data_material_ids": ["sector", "market_context"],
+  "history": []
+}
+```
+
+自由问答始终执行行情与数据时点、风险边界与失效条件、缺失/过期/降级状态三个不可取消底座。输入一只六位代码或证券名录中的完整名称时，服务端先核验标的，再进入同一受治理单股问股链路；同时识别到多只股票、名称歧义或完整名录中的未知代码时只返回确认提示，不猜测标的、不启动可选材料采集。模型不可用时返回确定性市场答复，并在 `done.data_materials.model_used=false` 中明确标记未调用模型。
+
+未识别到单股时，`fundamental` 不启动个股财务源并标记 `missing`；`technical` 只能使用市场指数行情、`fund_flow` 只能使用全市场资金方向时均标记 `degraded`，上下文同时携带 scope 警告，禁止把它们表述成某只股票的分时/日 K/指标或今日个股资金流。
+
+`stock` 模式先冻结确定性诊断、RiskGate 动作、强化条件和失效条件，再把同一诊断快照中的技术结构、量价、资金、板块、财务及市场背景组成统一分析资料包。未选择视角时，模型只负责生成一份约 800—1300 个中文字符的自然语言深度成稿；选择 1—4 个视角时目标约 1200—2320 字符，每个视角必须单独给出有证据的判断，随后汇总“多视角共识与分歧”。视角只改变观察框架，无权修改冻结动作、价位、风险等级或缺失语义，也不得冒充人物本人、另行联网或调用原 Skill 脚本。遗漏任一已选视角或共识分歧段属于校验错误。问股不另设低于连接配置的 `max_tokens`，使用模型连接的统一预算（默认 8000）；服务端缓存生成增量并读取真实 `finish_reason`。收到可信 `stop` 终态后执行分级校验：与冻结动作冲突、出现资料包外关键数字/越界价格属于未采信项；篇幅偏短、未原样复述动作或执行边界属于软质量问题，均先自动补写一次。若完整正文修订后仍有未采信项，接口保留模型全文，并在正文前显著列出冲突项以及服务端冻结动作、强化条件和失效条件；缺失或上一交易日数据由服务端统一在文末标注，只限制对应维度。若首稿因 `length` 截断，已生成正文会作为上下文重写一次完整终稿；再次截断、真实流中断或空响应因不构成完整正文，才回退确定性说明并显示准确原因。上游已返回正文但遗漏标准 `stop` 时仍进入同一校验；若正文完整但质量不足，则以带校验标注的全文展示，不再伪装为“没有内容”。响应不再拼接“固定治理卡 + 针对问题补充”两段正文。
 
 ### GET /api/chat/perspectives
 
 返回问股视角白名单：`{"ok":true,"max_selected":4,"perspectives":[{"id","name","category","description","tags","version"}]}`。当前固定提供 17 个视角，前端按 `category` 分组。会话历史中的 assistant 消息可附带服务端规范化后的 `perspectives:[{id,name,version}]`，用于复核该轮实际采用的视角；历史事实只追加，不覆盖。
+
+### GET /api/chat/data-materials
+
+返回自由问答材料目录、三个系统必需底座以及上限：`max_auto_selected=3`、`max_selected=4`。第一版可选 ID 固定为 `technical | fund_flow | sector | market_context | fundamental | events`；分时、日 K 和技术指标归入 `technical`，公告、互动和新闻归入 `events`，不暴露原始字段级复选框。目录中的 `availability` 只表示发送前支持状态，不表示本轮数据已经可用。
+
+### POST /api/chat/data-materials/preselect
+
+请求 `{"mode":"free","message":"为什么上涨？"}`，返回 `{"ok":true,"preselected_ids":["technical","fund_flow","sector"],"max_selected":4}`。预选由固定关键词与组合意图规则产生，最多 3 项，不调用模型、不启动采集。用户发送时提交的 `data_material_ids` 才是最终范围。
+
+### 会话与历史
+
+- `GET /api/chat/conversations?mode=free|stock`：按模式返回会话；省略 `mode` 保持旧调用方的全量列表。
+- `POST /api/chat/conversations`：以 `{"mode":"free"}` 或 `{"mode":"stock"}` 建立会话。
+- `GET /api/chat/conversations/{cid}`：读取元数据和追加式消息。
+- `POST /api/chat/conversations/{cid}/messages`：完整一轮结束后追加消息；自由问答 assistant 消息可附服务端白名单清洗后的 `data_materials` 报告，问股 assistant 消息可附 `perspectives`。图片只保留 `has_image`，不把 base64 写入历史。
+- `DELETE /api/chat/conversations/{cid}`：删除指定会话。前端必须按 `mode` 隔离列表和活动会话；模式/会话切换时取消在途 SSE，旧响应不得写入新会话。
 
 `company` 模式把行情、板块、龙虎榜、财务、市场资金、市场总览和情绪拆成独立并行有界请求；任一增强源超时只降级对应维度。模型正文完成治理后，服务端固定追加行情/估值、最近报告期财务、确定性技术结构、官方公告与互动问答附录。长篇 `chain` 请求使用至少 16000 token、`company` 使用至少 20000 token 的专用生成预算，模型请求单次上限为 300 秒。长篇请求发生模型读取超时后不重放整次请求，避免总等待翻倍。调用方显式传入 `max_tokens` 时仍以显式值为准。
 
@@ -614,9 +646,9 @@ data: {"stage": "采集实时行情数据…"}
 data: {"stage": "Hermes 生成中…"}
 data: {"delta": "从分时看，"}
 data: {"delta": "该股……"}
-data: {"done": true}
+data: {"done": true, "resolved_mode": "free", "data_materials": {"model_used": true, "required": [], "optional": []}}
 ```
-出错：`data: {"error_code":"chat_generation_failed","error":"AI 生成服务暂不可用，本次回答未完成；请稍后重试。"}` 后流结束。
+出错：`data: {"error_code":"chat_generation_failed","error":"AI 生成服务暂不可用，本次回答未完成；请稍后重试。","data_materials":{...}}` 后流结束。自由问答的 `done` 或 `error` 均携带真实材料终态：每项区分 `complete | degraded | missing | not_selected`、`injected`、`data_date`、`source`、`stale` 和 `reason`；只有真实进入模型上下文的可用/降级材料才可标为 `injected=true`，用户勾选本身不代表已注入。
 异常详情只写服务端日志；SSE 永不返回上游 URL、Key、本机路径或原始异常文本。
 
 **阶段事件（`stage`）**：在**首个 `delta` 之前**，后端按耗时阶段先发若干 `{"stage": "<中文短语>"}` 事件——
@@ -672,7 +704,7 @@ body `{"portfolio_total_asset":1000000,"holdings":[...]}`（整体覆盖保存�
 每条包含 `status` (`draft/approved/rejected/superseded/legacy_unverified`)、`version`、
 `origin`、`source_report_ids`、`evidence_ids`、`sample_count` 和审批时点。**只有
 `approved` 会进入 `knowledge_digest()` 并注入后续 AI**；自动复盘只生成 `draft`。
-category 枚举：`交易原则` `亏损禁区` `擅长模式` `不擅长模式` `仓位规则` `经验教训` `选股偏好` `复盘笔记`。
+category 枚举：`交易原则` `亏损禁区` `擅长模式` `不擅长模式` `仓位规则` `经验教训` `选股偏好` `复盘笔记` `舆情留档`。
 ### POST /api/knowledge  body `{category,title,content}` → `{"ok":true,"id":"..."}`
 ### GET /api/knowledge/review-queue → 待审 `draft/legacy_unverified`
 ### POST /api/knowledge/{id}/approve
@@ -902,6 +934,15 @@ stale-while-revalidate：存在六小时内的非空最近成功快照时先返�
 30 秒、页面应明确标为沿用数据。`refreshing=true` 表示后台刷新已启动或正在进行。服务端快照按客户
 `data_dir/news/a-share-page-last-good.json` 隔离；前端还可在当前浏览器会话内保留最近成功响应，重进
 页面时先显示再刷新。
+
+### POST /api/news/a-share/archive
+
+请求 `{"event": <GET /api/news/a-share 返回的单条事件>}`，将用户明确选中的事件保存为
+`KnowledgeRule.v1` 草稿，分类为 `舆情留档`、来源为 `sentiment_event_archive`。服务端只保留有界的
+标题、正文、事件/抓取时间、A 股映射与 HTTP(S) 原文来源，并以事件正文、时间和聚合来源计算稳定
+`archive_key`。同一事件重复提交幂等返回既有条目：
+`{"ok":true,"id":"k_xxx","created":false,"item":{...}}`。留档不修改新闻完整快照，也不会让
+未经人工批准的新闻直接进入 AI 知识摘要；条目可在“历史与知识 → 知识库”审核和长期查看。
 
 ### GET /api/news/multi
 ```json

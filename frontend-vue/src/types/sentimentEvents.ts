@@ -135,3 +135,15 @@ export interface SentimentEventsResponse {
 }
 
 export type SentimentEventFilter = 'related' | 'direct' | 'clues' | 'all'
+
+export interface SentimentArchiveResponse {
+  ok?: boolean
+  error?: string
+  id?: string | null
+  created?: boolean
+}
+
+export interface SentimentArchiveState {
+  status: 'idle' | 'archiving' | 'archived' | 'error'
+  message: string
+}

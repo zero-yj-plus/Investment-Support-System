@@ -1,10 +1,14 @@
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { deleteJson, getJson, postEventStream, postJson } from '../services/api'
 import type {
   ConversationCreateResponse,
   ConversationDetailResponse,
   ConversationListResponse,
   ConversationMeta,
+  DataMaterialCatalogResponse,
+  DataMaterialDefinition,
+  DataMaterialPreselectResponse,
+  DataMaterialReport,
   PendingStockImage,
   StockAskMessage,
   StockAskRequestKey,
@@ -13,12 +17,15 @@ import type {
   StockPerspective,
   StockPerspectiveListResponse,
   StockPerspectiveSummary,
+  StockAskMode,
+  RequiredMaterialDefinition,
 } from '../types/stockAsk'
 
 const CODE_RE = /^\d{6}$/
 const CONVERSATION_CODE_KEY = 'wudi.stockAsk.conversationCodes'
 const PERSPECTIVE_SELECTION_KEY = 'wudi.stockAsk.perspectiveIds'
 const DEFAULT_MAX_PERSPECTIVES = 4
+const DEFAULT_MAX_MATERIALS = 4
 
 function nowLabel() {
   return new Intl.DateTimeFormat('zh-CN', {
@@ -47,6 +54,7 @@ function loadConversationCodes(): Record<string, string> {
 }
 
 export function useStockAsk() {
+  const mode = ref<StockAskMode>('free')
   const codeInput = ref('')
   const selectedCode = ref('')
   const prompt = ref('')
@@ -66,6 +74,15 @@ export function useStockAsk() {
   const maxSelectedPerspectives = ref(DEFAULT_MAX_PERSPECTIVES)
   const perspectivesLoading = ref(true)
   const perspectiveError = ref('')
+  const dataMaterials = ref<DataMaterialDefinition[]>([])
+  const requiredMaterials = ref<RequiredMaterialDefinition[]>([])
+  const selectedDataMaterialIds = ref<string[]>([])
+  const preselectedDataMaterialIds = ref<string[]>([])
+  const maxSelectedDataMaterials = ref(DEFAULT_MAX_MATERIALS)
+  const materialsAdjusted = ref(false)
+  const materialReport = ref<DataMaterialReport | null>(null)
+  const materialsLoading = ref(true)
+  const materialError = ref('')
   const conversationsLoading = ref(true)
   const conversationError = ref('')
   const activeConversationId = ref('')
@@ -79,6 +96,8 @@ export function useStockAsk() {
     core: 0,
     enrichment: 0,
     perspectiveCatalog: 0,
+    materialCatalog: 0,
+    materialPreselect: 0,
     conversationList: 0,
     conversationDetail: 0,
     conversationCreate: 0,
@@ -88,14 +107,15 @@ export function useStockAsk() {
   }
   let alive = false
   let stageTimer: ReturnType<typeof setInterval> | null = null
+  let materialPreselectTimer: ReturnType<typeof setTimeout> | null = null
   let stopRequested = false
   let conversationCodes: Record<string, string> = {}
 
   const quote = computed(() => core.value?.quote || null)
   const stockName = computed(() => quote.value?.name || core.value?.recognition?.name || '')
   const stockLoading = computed(() => coreLoading.value || enrichmentLoading.value)
-  const refreshing = computed(() => stockLoading.value || conversationsLoading.value || perspectivesLoading.value)
-  const canAsk = computed(() => CODE_RE.test(selectedCode.value) && core.value?.recognized !== false)
+  const refreshing = computed(() => stockLoading.value || conversationsLoading.value || perspectivesLoading.value || materialsLoading.value)
+  const canAsk = computed(() => mode.value === 'free' || (CODE_RE.test(selectedCode.value) && core.value?.recognized !== false))
   const selectedPerspectives = computed<StockPerspectiveSummary[]>(() => selectedPerspectiveIds.value
     .map((id) => perspectives.value.find((item) => item.id === id))
     .filter((item): item is StockPerspective => Boolean(item))
@@ -167,6 +187,95 @@ export function useStockAsk() {
     perspectiveError.value = ''
     selectedPerspectiveIds.value = []
     persistPerspectiveSelection()
+  }
+
+  async function loadDataMaterials() {
+    const guard = requestGuard('materialCatalog', 12_000)
+    materialsLoading.value = true
+    materialError.value = ''
+    try {
+      const payload = await getJson<DataMaterialCatalogResponse>(
+        '/chat/data-materials', guard.controller.signal,
+      )
+      if (!guard.current()) return
+      if (payload.ok === false || !Array.isArray(payload.materials)) {
+        throw new Error(payload.error || '数据材料目录返回不可用状态')
+      }
+      dataMaterials.value = payload.materials.filter((item) => item?.id && item?.name)
+      requiredMaterials.value = Array.isArray(payload.required) ? payload.required : []
+      const serverLimit = Number(payload.max_selected)
+      maxSelectedDataMaterials.value = Number.isInteger(serverLimit)
+        ? Math.min(DEFAULT_MAX_MATERIALS, Math.max(1, serverLimit))
+        : DEFAULT_MAX_MATERIALS
+      await requestMaterialPreselection(prompt.value, true)
+    } catch (error) {
+      if (!guard.current()) return
+      materialError.value = guard.timedOut()
+        ? '数据材料目录读取超过 12 秒；本轮仍可只使用系统必需底座'
+        : errorText(error, '数据材料目录暂不可用')
+    } finally {
+      guard.finish()
+      if (alive) materialsLoading.value = false
+    }
+  }
+
+  async function requestMaterialPreselection(question: string, force = false) {
+    if (mode.value !== 'free' || (!force && materialsAdjusted.value)) return
+    const guard = requestGuard('materialPreselect', 8_000)
+    try {
+      const payload = await postJson<DataMaterialPreselectResponse>(
+        '/chat/data-materials/preselect',
+        { mode: 'free', message: String(question || '').trim() },
+        guard.controller.signal,
+      )
+      if (!guard.current() || mode.value !== 'free') return
+      if (payload.ok === false || !Array.isArray(payload.preselected_ids)) {
+        throw new Error(payload.error || '系统预选返回不可用状态')
+      }
+      const allowed = new Set(dataMaterials.value.map((item) => item.id))
+      preselectedDataMaterialIds.value = payload.preselected_ids
+        .map((item) => String(item || ''))
+        .filter((item, index, rows) => allowed.has(item) && rows.indexOf(item) === index)
+        .slice(0, 3)
+      if (!materialsAdjusted.value || force) {
+        selectedDataMaterialIds.value = [...preselectedDataMaterialIds.value]
+        if (force) materialsAdjusted.value = false
+      }
+    } catch (error) {
+      if (guard.current()) materialError.value = errorText(error, '系统预选暂不可用')
+    } finally {
+      guard.finish()
+    }
+  }
+
+  function scheduleMaterialPreselection() {
+    if (materialPreselectTimer) clearTimeout(materialPreselectTimer)
+    materialPreselectTimer = setTimeout(() => {
+      materialPreselectTimer = null
+      void requestMaterialPreselection(prompt.value)
+    }, 280)
+  }
+
+  function toggleDataMaterial(id: string) {
+    if (streaming.value || mode.value !== 'free') return
+    materialError.value = ''
+    if (!dataMaterials.value.some((item) => item.id === id && item.availability !== 'unavailable')) return
+    materialsAdjusted.value = true
+    materialReport.value = null
+    if (selectedDataMaterialIds.value.includes(id)) {
+      selectedDataMaterialIds.value = selectedDataMaterialIds.value.filter((item) => item !== id)
+    } else if (selectedDataMaterialIds.value.length >= maxSelectedDataMaterials.value) {
+      materialError.value = `每轮最多选择 ${maxSelectedDataMaterials.value} 个可选材料；请先取消一个`
+    } else {
+      selectedDataMaterialIds.value = [...selectedDataMaterialIds.value, id]
+    }
+  }
+
+  async function resetDataMaterials() {
+    if (streaming.value || mode.value !== 'free') return
+    materialReport.value = null
+    materialsAdjusted.value = false
+    await requestMaterialPreselection(prompt.value, true)
   }
 
   function persistConversationCodes() {
@@ -277,10 +386,13 @@ export function useStockAsk() {
     conversationsLoading.value = true
     conversationError.value = ''
     try {
-      const payload = await getJson<ConversationListResponse>('/chat/conversations', guard.controller.signal)
+      const payload = await getJson<ConversationListResponse>(
+        `/chat/conversations?mode=${encodeURIComponent(mode.value)}`,
+        guard.controller.signal,
+      )
       if (!guard.current()) return
       if (payload.ok === false) throw new Error(payload.error || '历史接口返回不可用状态')
-      conversations.value = (payload.conversations || []).filter((item) => item.mode === 'stock')
+      conversations.value = (payload.conversations || []).filter((item) => item.mode === mode.value)
     } catch (error) {
       if (!guard.current()) return
       conversationError.value = guard.timedOut()
@@ -296,12 +408,12 @@ export function useStockAsk() {
     const guard = requestGuard('conversationCreate', 12_000)
     try {
       const payload = await postJson<ConversationCreateResponse>(
-        '/chat/conversations', { mode: 'stock' }, guard.controller.signal,
+        '/chat/conversations', { mode: mode.value }, guard.controller.signal,
       )
       if (!guard.current() || !payload.conversation?.id) return ''
       activeConversationId.value = payload.conversation.id
       if (resetMessages) messages.value = []
-      if (selectedCode.value) bindConversationCode(payload.conversation.id, selectedCode.value)
+      if (mode.value === 'stock' && selectedCode.value) bindConversationCode(payload.conversation.id, selectedCode.value)
       conversations.value = [payload.conversation, ...conversations.value.filter((item) => item.id !== payload.conversation?.id)]
       return payload.conversation.id
     } catch (error) {
@@ -313,12 +425,48 @@ export function useStockAsk() {
   }
 
   async function newConversation() {
-    if (streaming.value) return
+    if (streaming.value) {
+      abortRequest('chat')
+      streaming.value = false
+      clearStageTimer()
+    }
+    abortRequest('conversationSave')
+    materialReport.value = null
     await createConversation(true)
   }
 
+  async function switchMode(nextMode: StockAskMode) {
+    if (nextMode === mode.value) return
+    abortRequest('chat')
+    abortRequest('conversationDetail')
+    abortRequest('conversationCreate')
+    abortRequest('conversationSave')
+    abortRequest('core')
+    abortRequest('enrichment')
+    streaming.value = false
+    clearStageTimer()
+    mode.value = nextMode
+    activeConversationId.value = ''
+    messages.value = []
+    pendingImages.value = []
+    chatError.value = ''
+    saveWarning.value = ''
+    materialReport.value = null
+    if (nextMode === 'free') {
+      codeError.value = ''
+      await requestMaterialPreselection(prompt.value, true)
+    }
+    await loadConversations()
+  }
+
   async function switchConversation(id: string) {
-    if (!id || id === activeConversationId.value || streaming.value) return
+    if (!id || id === activeConversationId.value) return
+    if (streaming.value) {
+      abortRequest('chat')
+      streaming.value = false
+      clearStageTimer()
+    }
+    abortRequest('conversationSave')
     const guard = requestGuard('conversationDetail', 12_000)
     conversationError.value = ''
     try {
@@ -326,7 +474,7 @@ export function useStockAsk() {
         `/chat/conversations/${encodeURIComponent(id)}`, guard.controller.signal,
       )
       if (!guard.current()) return
-      if (payload.ok === false || payload.meta?.mode !== 'stock') throw new Error(payload.error || '这不是盘中问股会话')
+      if (payload.ok === false || payload.meta?.mode !== mode.value) throw new Error(payload.error || '这不是当前模式的会话')
       activeConversationId.value = id
       messages.value = (payload.messages || []).map((item, index) => ({
         id: `history-${id}-${index}`,
@@ -337,12 +485,14 @@ export function useStockAsk() {
         perspectives: Array.isArray(item.perspectives)
           ? item.perspectives.slice(0, DEFAULT_MAX_PERSPECTIVES)
           : [],
+        dataMaterials: item.data_materials,
         state: 'complete',
       }))
+      materialReport.value = [...messages.value].reverse().find((item) => item.dataMaterials)?.dataMaterials || null
       const boundCode = conversationCodes[id]
-      if (CODE_RE.test(boundCode || '')) {
+      if (mode.value === 'stock' && CODE_RE.test(boundCode || '')) {
         await loadStock(boundCode)
-      } else {
+      } else if (mode.value === 'stock') {
         abortRequest('core')
         abortRequest('enrichment')
         selectedCode.value = ''
@@ -385,8 +535,9 @@ export function useStockAsk() {
     userText: string,
     imageCount: number,
     assistantText: string,
-    code: string,
-    perspectiveIds: string[],
+    code = '',
+    perspectiveIds: string[] = [],
+    dataMaterialReport: DataMaterialReport | null = null,
   ) {
     saveWarning.value = ''
     let conversationId = activeConversationId.value
@@ -395,7 +546,7 @@ export function useStockAsk() {
       saveWarning.value = '回答已完成，但本轮未能写入历史会话'
       return
     }
-    bindConversationCode(conversationId, code)
+    if (mode.value === 'stock') bindConversationCode(conversationId, code)
     const guard = requestGuard('conversationSave', 12_000)
     try {
       await postJson<{ ok?: boolean }>(
@@ -403,7 +554,11 @@ export function useStockAsk() {
         {
           messages: [
             { role: 'user', content: userText, has_image: imageCount > 0 },
-            { role: 'assistant', content: assistantText, perspective_ids: perspectiveIds },
+            {
+              role: 'assistant', content: assistantText,
+              perspective_ids: perspectiveIds,
+              data_materials: dataMaterialReport || undefined,
+            },
           ],
         },
         guard.controller.signal,
@@ -438,7 +593,8 @@ export function useStockAsk() {
     composerError.value = ''
     chatError.value = ''
     saveWarning.value = ''
-    if (!canAsk.value) {
+    if (mode.value === 'free') materialReport.value = null
+    if (mode.value === 'stock' && !canAsk.value) {
       codeError.value = core.value?.recognized === false
         ? '当前代码未通过 A 股名录核验，不能生成问股动作'
         : '请先输入并查询一只 6 位 A 股代码'
@@ -449,29 +605,36 @@ export function useStockAsk() {
       return
     }
 
-    const code = selectedCode.value
+    const requestMode = mode.value
+    const code = requestMode === 'stock' ? selectedCode.value : ''
     const images = pendingImages.value.map((item) => item.dataUrl)
-    const perspectiveIds = [...selectedPerspectiveIds.value]
-    const perspectiveMeta = selectedPerspectives.value.map((item) => ({ ...item }))
+    const perspectiveIds = requestMode === 'stock' ? [...selectedPerspectiveIds.value] : []
+    const perspectiveMeta = requestMode === 'stock'
+      ? selectedPerspectives.value.map((item) => ({ ...item })) : []
+    const dataMaterialIds = requestMode === 'free' ? [...selectedDataMaterialIds.value] : []
     const history = messages.value
       .filter((item) => item.state === 'complete' && (item.role === 'user' || item.role === 'assistant'))
       .slice(-10)
       .map((item) => ({ role: item.role, content: item.content }))
-    const userText = text || '请结合已选择的股票和上传图片做盘中分析。'
+    const userText = text || (requestMode === 'stock'
+      ? '请结合已选择的股票和上传图片做盘中分析。'
+      : '请结合上传图片与本轮选定材料回答。')
     messages.value.push({
-      id: messageId('user'), role: 'user', content: userText, code,
+      id: messageId('user'), role: 'user', content: userText, code: code || undefined,
       imageCount: images.length, ts: nowLabel(), state: 'complete',
     })
     const assistant: StockAskMessage = {
-      id: messageId('assistant'), role: 'assistant', content: '', code,
+      id: messageId('assistant'), role: 'assistant', content: '', code: code || undefined,
       ts: nowLabel(), perspectives: perspectiveMeta, state: 'streaming',
     }
     messages.value.push(assistant)
     prompt.value = ''
     pendingImages.value = []
-    stageText.value = perspectiveIds.length
-      ? `正在核验行情、证据与风险闸，并准备 ${perspectiveIds.length} 个分析视角…`
-      : '正在核验行情、证据与风险闸…'
+    stageText.value = requestMode === 'free'
+      ? '正在判断问题类型并准备本轮上下文…'
+      : (perspectiveIds.length
+        ? `正在核验行情、证据与风险闸，并准备 ${perspectiveIds.length} 个分析视角…`
+        : '正在核验行情、证据与风险闸…')
     stageSeconds.value = 0
     clearStageTimer()
     stageTimer = setInterval(() => { stageSeconds.value += 1 }, 1000)
@@ -479,11 +642,13 @@ export function useStockAsk() {
     streaming.value = true
     const guard = requestGuard('chat', 100_000)
     let completed = false
+    let completedMaterialReport: DataMaterialReport | null = null
 
     try {
       await postEventStream('/chat', {
-        mode: 'stock', message: userText, code, industry: '', history, images,
+        mode: requestMode, message: userText, code, industry: '', history, images,
         perspective_ids: perspectiveIds,
+        ...(requestMode === 'free' ? { data_material_ids: dataMaterialIds } : {}),
       }, {
         signal: guard.controller.signal,
         onStage(stage) {
@@ -493,15 +658,30 @@ export function useStockAsk() {
           if (!guard.current()) return
           assistant.content += delta
         },
-        onDone() {
+        onDone(payload) {
           if (!guard.current()) return
           completed = true
+          if (requestMode === 'free' && payload.data_materials && typeof payload.data_materials === 'object') {
+            completedMaterialReport = payload.data_materials as unknown as DataMaterialReport
+            materialReport.value = completedMaterialReport
+            assistant.dataMaterials = completedMaterialReport
+          }
+          if (payload.code) assistant.code = String(payload.code)
+        },
+        onError(payload) {
+          if (!guard.current() || requestMode !== 'free') return
+          if (payload.data_materials && typeof payload.data_materials === 'object') {
+            materialReport.value = payload.data_materials as unknown as DataMaterialReport
+          }
         },
       })
       if (!guard.current()) return
       if (!completed || !assistant.content.trim()) throw new Error('回答流未返回完整内容，已拒绝保存')
       assistant.state = 'complete'
-      await saveExchange(userText, images.length, assistant.content, code, perspectiveIds)
+      await saveExchange(
+        userText, images.length, assistant.content, code, perspectiveIds,
+        completedMaterialReport,
+      )
     } catch (error) {
       if (!guard.current()) return
       const aborted = error instanceof DOMException && error.name === 'AbortError'
@@ -513,13 +693,14 @@ export function useStockAsk() {
       } else {
         messages.value = messages.value.filter((item) => item !== assistant)
         chatError.value = aborted && stopRequested
-          ? '已停止本次问股。'
-          : errorText(error, '盘中问股暂不可用，请稍后重试')
+          ? `已停止本次${requestMode === 'free' ? '自由问答' : '问股'}。`
+          : errorText(error, requestMode === 'free' ? '自由问答暂不可用，请稍后重试' : '盘中问股暂不可用，请稍后重试')
       }
     } finally {
-      clearStageTimer()
+      const isCurrentChat = guard.current()
       guard.finish()
-      if (alive) {
+      if (alive && isCurrentChat) {
+        clearStageTimer()
         streaming.value = false
         stageText.value = ''
         stageSeconds.value = 0
@@ -534,7 +715,12 @@ export function useStockAsk() {
   }
 
   async function refresh() {
-    const tasks: Promise<unknown>[] = [loadConversations(), loadPerspectives()]
+    if (streaming.value) {
+      abortRequest('chat')
+      streaming.value = false
+      clearStageTimer()
+    }
+    const tasks: Promise<unknown>[] = [loadConversations(), loadPerspectives(), loadDataMaterials()]
     if (selectedCode.value) tasks.push(loadStock(selectedCode.value))
     await Promise.allSettled(tasks)
   }
@@ -542,6 +728,15 @@ export function useStockAsk() {
   function onVisibilityChange() {
     if (document.visibilityState === 'visible' && !streaming.value) void loadConversations()
   }
+
+  watch(prompt, () => {
+    if (mode.value !== 'free' || streaming.value) return
+    if (materialReport.value) {
+      materialReport.value = null
+      materialsAdjusted.value = false
+    }
+    if (!materialsAdjusted.value) scheduleMaterialPreselection()
+  })
 
   onMounted(async () => {
     alive = true
@@ -551,7 +746,8 @@ export function useStockAsk() {
     const pendingPrompt = sessionStorage.getItem('hermes.chat.prompt') || ''
     sessionStorage.removeItem('hermes.chat.code')
     sessionStorage.removeItem('hermes.chat.prompt')
-    await Promise.all([loadConversations(), loadPerspectives()])
+    if (CODE_RE.test(pendingCode)) mode.value = 'stock'
+    await Promise.all([loadConversations(), loadPerspectives(), loadDataMaterials()])
     if (CODE_RE.test(pendingCode)) {
       await loadStock(pendingCode)
       if (pendingPrompt && core.value?.recognized !== false) {
@@ -564,19 +760,24 @@ export function useStockAsk() {
   onBeforeUnmount(() => {
     alive = false
     clearStageTimer()
+    if (materialPreselectTimer) clearTimeout(materialPreselectTimer)
+    materialPreselectTimer = null
     document.removeEventListener('visibilitychange', onVisibilityChange)
     ;(Object.keys(controllers) as StockAskRequestKey[]).forEach(abortRequest)
     pendingImages.value = []
   })
 
   return {
-    codeInput, selectedCode, prompt, core, enrichment, quote, stockName,
+    mode, codeInput, selectedCode, prompt, core, enrichment, quote, stockName,
     coreLoading, enrichmentLoading, stockLoading, coreError, enrichmentError, codeError,
     composerError, chatError, saveWarning, conversations, conversationsLoading,
     conversationError, activeConversationId, messages, pendingImages, streaming,
     stageText, stageSeconds, refreshing, canAsk, perspectives, selectedPerspectiveIds,
     selectedPerspectives, maxSelectedPerspectives, perspectivesLoading, perspectiveError,
+    dataMaterials, requiredMaterials, selectedDataMaterialIds, preselectedDataMaterialIds,
+    maxSelectedDataMaterials, materialsAdjusted, materialReport, materialsLoading, materialError,
     loadStock, loadConversations, loadPerspectives, togglePerspective, clearPerspectives,
+    loadDataMaterials, toggleDataMaterial, resetDataMaterials, switchMode,
     newConversation, switchConversation, deleteConversation, addPendingImages,
     removePendingImage, send, stop, refresh,
   }

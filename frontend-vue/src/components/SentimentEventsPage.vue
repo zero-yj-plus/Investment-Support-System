@@ -4,7 +4,9 @@ import SentimentEventFeed from './SentimentEventFeed.vue'
 import { useSentimentEvents } from '../composables/useSentimentEvents'
 
 const emit = defineEmits<{ refreshState: [refreshing: boolean] }>()
-const { data, events, loading, refreshing, error, refreshNotice, refresh } = useSentimentEvents()
+const {
+  data, events, loading, refreshing, error, refreshNotice, archiveStates, refresh, archiveEvent,
+} = useSentimentEvents()
 
 watch(refreshing, (value) => emit('refreshState', value), { immediate: true })
 
@@ -93,7 +95,12 @@ defineExpose({ refresh })
         <button type="button" class="secondary-button" :disabled="refreshing" @click="refresh()">重试采集链</button>
       </section>
 
-      <SentimentEventFeed v-if="events.length" :events="events" />
+      <SentimentEventFeed
+        v-if="events.length"
+        :events="events"
+        :archive-states="archiveStates"
+        @archive="archiveEvent"
+      />
 
       <footer class="page-footer sentiment-page__footer">
         <span>事件时间与抓取时间分别展示；多采集端命中不等于独立信源确认。</span>

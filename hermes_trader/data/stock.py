@@ -55,6 +55,32 @@ def _tdx_board(code: str) -> dict | None:
     return {"industry": industry_name, "concepts": concepts, "source": relation.get("source") or "TDX relation"}
 
 
+@ttl_cache(15, fail_seconds=3)
+def stock_risk_daily(code: str) -> list[dict]:
+    """受治理问股的不可取消日 K 底座；不触发分时或增强采集。"""
+    return list(tx.daily_bars(code.strip().zfill(6), 120) or [])[-120:]
+
+
+@ttl_cache(60, fail_seconds=10)
+def stock_board_material(code: str) -> dict | None:
+    """按材料选择单独读取行业/概念，不联动资金流或财务。"""
+    return _tdx_board(code.strip().zfill(6))
+
+
+@ttl_cache(60, fail_seconds=10)
+def stock_flow_material(code: str) -> dict | None:
+    """按材料选择单独读取个股资金流，不联动板块或财务。"""
+    value = tx.moneyflow(code.strip().zfill(6))
+    return value if isinstance(value, dict) else None
+
+
+@ttl_cache(300, fail_seconds=20)
+def stock_financial_material(code: str) -> dict | None:
+    """按材料选择单独读取基础财务，不联动板块或资金流。"""
+    value = tdxapi.basic_financial(code.strip().zfill(6))
+    return value if isinstance(value, dict) else None
+
+
 def _quote_freshness() -> tuple[bool, str | None, str]:
     """判断此刻"现价"是不是真实时。A股集合竞价 09:15、连续交易至 15:00 收盘。
     返回 (stale, as_of_date, note)：

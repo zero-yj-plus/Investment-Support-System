@@ -266,7 +266,7 @@ const fixtures = {
   '/api/status': {
     ok: true,
     client: { name: '审计个人投资者', id: 'audit' },
-    version: '1.3.2-audit',
+    version: '1.4.1-audit',
     date: '2026-07-28',
     data_source: '客户授权 TDX API + 免费公开源',
     model_connection: { configured: true, connected: true, status: 'connected', required_for_core: false },
@@ -318,7 +318,7 @@ const fixtures = {
   '/api/shell-status': {
     ok: true,
     client: { name: '审计个人投资者', id: 'audit', brand: '审计白标', brand_sub: 'A 股决策支持' },
-    version: '1.3.2-audit',
+    version: '1.4.1-audit',
     is_trade_day: true,
     market_session: 'intraday',
     market_context: {
@@ -1146,6 +1146,27 @@ const fixtures = {
       ['geweidong', '葛卫东', '宏观与趋势交易'], ['renzeping', '任泽平', '宏观与趋势交易'],
       ['livermore', '利弗莫尔', '宏观与趋势交易'],
     ].map(([id, name, category]) => ({ id, name, category, description: `${name}结构化分析视角`, tags: [], version: '2026-08-06' })),
+  },
+  '/api/chat/data-materials': {
+    ok: true,
+    max_selected: 4,
+    max_auto_selected: 3,
+    required: [
+      { id: 'quote_time', name: '行情与数据时点' },
+      { id: 'risk_boundary', name: '风险边界与失效条件' },
+      { id: 'quality_state', name: '缺失、过期和降级状态' },
+    ],
+    materials: [
+      ['technical', '深度技术与量价', '趋势、均线、量价、关键位置、技术结构', false],
+      ['fund_flow', '个股资金流', '主力净额、资金日期、来源和可用明细', false],
+      ['sector', '板块与题材', '行业、概念、板块联动和题材归属', false],
+      ['market_context', '市场环境', '指数、市场宽度、情绪、主线和市场背景', false],
+      ['fundamental', '基本面与估值', 'PE、PB、ROE、利润、负债及报告期', false],
+      ['events', '公告与事件', '官方公告、互动问答、新闻事件和证据等级', true],
+    ].map(([id, name, description, slow]) => ({ id, name, description, slow, availability: 'supported' })),
+  },
+  '/api/chat/data-materials/preselect': {
+    ok: true, preselected_ids: [], max_selected: 4,
   },
   '/api/stock/600519/core': {
     ok: true, state: 'complete', ts: '2026-07-22 10:31:42', recognized: true, missing: [],
@@ -2647,7 +2668,8 @@ try {
     runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
   }))
   const stockAskLoadingState = await stockAskLoadingPage.evaluate(() => ({
-    dedicatedMode: document.body.innerText.includes('本页不提供自由问答、持仓判断或产业链挖掘'),
+    stockModeActive: document.querySelector('.stock-ask-mode-switch button[aria-selected="true"]')?.textContent?.trim() === '盘中问股',
+    modeSwitchVisible: document.body.innerText.includes('盘中问股') && document.body.innerText.includes('自由问答'),
     evidenceLoading: Boolean(document.querySelector('.stock-evidence__loading')),
     equalComposerHeight: (() => {
       const upload = document.querySelector('.stock-ask-upload')?.getBoundingClientRect().height
@@ -2676,22 +2698,21 @@ try {
     return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
   })
   await stockAskEmptyPage.goto('http://127.0.0.1:4175/#/research?tab=ask', { waitUntil: 'networkidle' })
-  await stockAskEmptyPage.locator('.stock-ask-perspectives__toggle').click()
-  const perspectiveInputs = stockAskEmptyPage.locator('.stock-ask-perspectives__grid input')
-  for (let index = 0; index < 4; index += 1) await perspectiveInputs.nth(index).check()
+  const materialInputs = stockAskEmptyPage.locator('.stock-ask-materials fieldset input')
+  for (let index = 0; index < 4; index += 1) await materialInputs.nth(index).check()
   await stockAskEmptyPage.addScriptTag({ content: axeSource })
   const stockAskEmptyState = await stockAskEmptyPage.evaluate(() => {
     const text = document.body.innerText
     return {
-      noHistory: text.includes('暂无问股记录'),
-      noStock: text.includes('尚未选择股票') && text.includes('先选择一只股票'),
+      noHistory: text.includes('暂无问答记录'),
+      directQuestion: text.includes('直接提出一个问题'),
       missingNotZero: !text.includes('0.00 元') && !text.includes('0.00%'),
-      removedModes: ![...document.querySelectorAll('.stock-ask-page button')]
-        .some((button) => ['自由问答', '持仓诊断', '产业链挖掘'].includes(button.textContent?.trim())),
-      twoPresetRows: getComputedStyle(document.querySelector('.stock-ask-presets')).gridTemplateRows.split(' ').length === 2,
-      perspectiveCount: document.querySelectorAll('.stock-ask-perspectives__grid input').length === 17,
-      perspectiveLimit: document.querySelectorAll('.stock-ask-perspectives__grid input:checked').length === 4
-        && document.querySelectorAll('.stock-ask-perspectives__grid input:disabled:not(:checked)').length === 13,
+      modeSwitch: document.querySelectorAll('.stock-ask-mode-switch button').length === 2,
+      onePresetRow: getComputedStyle(document.querySelector('.stock-ask-presets')).gridTemplateRows.split(' ').length === 1,
+      requiredCount: document.querySelectorAll('.stock-ask-materials__required').length === 3,
+      materialCount: document.querySelectorAll('.stock-ask-materials fieldset input').length === 6,
+      materialLimit: document.querySelectorAll('.stock-ask-materials fieldset input:checked').length === 4
+        && document.querySelectorAll('.stock-ask-materials fieldset input:disabled:not(:checked)').length === 2,
     }
   })
   const stockAskEmptyAxe = await stockAskEmptyPage.evaluate(async () => window.axe.run(document, {
@@ -2719,6 +2740,7 @@ try {
     return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
   })
   await stockAskFailurePage.goto('http://127.0.0.1:4175/#/research?tab=ask', { waitUntil: 'networkidle' })
+  await stockAskFailurePage.getByRole('tab', { name: '盘中问股' }).click()
   await stockAskFailurePage.locator('#stock-ask-code').fill('600519')
   await stockAskFailurePage.locator('.stock-ask-conversation__selector button[type="submit"]').click()
   await stockAskFailurePage.waitForSelector('.stock-evidence__quote')

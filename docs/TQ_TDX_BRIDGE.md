@@ -38,8 +38,8 @@ $env:TDXAPI_KEY=$env:TQ_BRIDGE_API_KEY
 
 ## 启动与检查
 
-```powershell
-py -3 scripts\tq_tdx_bridge.py
+```bat
+start-tdx-bridge.bat
 ```
 
 另开一个 PowerShell 检查：
@@ -58,7 +58,7 @@ Invoke-RestMethod 'http://127.0.0.1:18879/v1/realtime/quotes?codes=000001.SZ' -H
 通达信可能主动结束行情会话并回到登录界面。仓库提供可选的当前用户守护组件：
 
 ```powershell
-.\install-tdx-login-guard.ps1 -TdxPath 'D:\tdx\TdxW.exe'
+.\scripts\tdx-login-guard\install-tdx-login-guard.ps1 -TdxPath 'D:\tdx\TdxW.exe'
 ```
 
 安装器把守护程序和独立配置复制到当前用户的
@@ -95,7 +95,7 @@ pwsh.exe -NoProfile -File "$root\tdx-login-guard.ps1" `
 Session 0 Windows 服务运行。卸载计划任务但保留日志：
 
 ```powershell
-.\uninstall-tdx-login-guard.ps1
+.\scripts\tdx-login-guard\uninstall-tdx-login-guard.ps1
 ```
 
 ## 单位与刷新

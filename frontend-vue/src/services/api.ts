@@ -83,6 +83,7 @@ export interface EventStreamHandlers {
   onStage?: (stage: string) => void
   onDelta?: (delta: string) => void
   onDone?: (payload: Record<string, unknown>) => void
+  onError?: (payload: Record<string, unknown>) => void
 }
 
 export async function postEventStream(
@@ -133,7 +134,10 @@ export async function postEventStream(
       } catch {
         continue
       }
-      if (event.error != null) throw new ApiError(String(event.error))
+      if (event.error != null) {
+        handlers.onError?.(event)
+        throw new ApiError(String(event.error))
+      }
       if (event.done) {
         finished = true
         handlers.onDone?.(event)

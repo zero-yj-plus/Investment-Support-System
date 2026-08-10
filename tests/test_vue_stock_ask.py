@@ -33,13 +33,16 @@ def test_vue_stock_ask_uses_only_real_stock_chat_and_history_endpoints() -> None
         "/chat/conversations/${encodeURIComponent(id)}",
         "/chat/conversations/${encodeURIComponent(conversationId)}/messages",
         "/chat/perspectives",
+        "/chat/data-materials",
+        "/chat/data-materials/preselect",
         "postEventStream('/chat'",
     ):
         assert endpoint in source
-    assert "mode: 'stock'" in source
+    assert "mode: requestMode" in source
+    assert "data_material_ids: dataMaterialIds" in source
     assert "/stock/${encodeURIComponent(code)}/charts" not in source
     assert "/market/" not in source
-    assert "item.mode === 'stock'" in source
+    assert "item.mode === mode.value" in source
     assert "perspective_ids: perspectiveIds" in source
 
 
@@ -54,9 +57,15 @@ def test_vue_stock_ask_supports_accessible_multi_perspective_selection() -> None
     assert 'type="checkbox"' in selector
     assert ':aria-expanded="expanded"' in selector
     assert 'aria-live="polite"' in selector
+    assert "const expanded = ref(true)" in selector
+    assert "watch(() => props.disabled" in selector
+    assert "if (disabled) expanded.value = false" in selector
     assert "selectedIds.length >= props.maxSelected" in selector
     assert "item.description" not in selector
     assert "aria-describedby" not in selector
+    assert "每个视角独立分析，最后汇总共识与分歧；不会改写服务端风险结论。" not in selector
+    assert "max-height: min(18dvh, 180px)" not in selector
+    assert "overflow-y: auto" not in selector
     assert conversation.index("<StockAskPerspectives") < conversation.index('class="stock-ask-conversation__messages"')
     assert "每轮最多选择 ${maxSelectedPerspectives.value} 个分析视角" in _read("src/composables/useStockAsk.ts")
     assert "@media (max-width: 720px)" in selector
@@ -118,11 +127,13 @@ def test_vue_stock_ask_uses_safe_markdown_and_native_interactions() -> None:
     assert 'inputmode="numeric"' in sources
 
 
-def test_vue_stock_ask_is_dedicated_and_keeps_compact_equal_height_composer() -> None:
+def test_vue_stock_ask_keeps_compact_equal_height_composer_and_free_mode() -> None:
     page = _read("src/components/StockAskPage.vue")
     composer = _read("src/components/StockAskComposer.vue")
 
-    assert "本页不提供自由问答、持仓判断或产业链挖掘" in page
+    assert "自由问答不会绕过单股风险闸" in page
+    assert "role=\"tablist\"" in page
+    assert "盘中问股" in page and "自由问答" in page
     assert "--composer-control-height: 52px" in composer
     assert "grid-template-rows: repeat(2, 40px)" in composer
     assert "grid-auto-columns: minmax(138px, 1fr)" in composer
@@ -132,7 +143,7 @@ def test_vue_stock_ask_is_dedicated_and_keeps_compact_equal_height_composer() ->
     assert "max-height: var(--composer-control-height)" in composer
     assert "textarea" in composer and "resize: none" in composer
     assert "@media (max-width: 800px)" in composer
-    assert 'aria-label="问股问题"' in composer
+    assert "mode === 'free' ? '自由问答问题' : '问股问题'" in composer
     assert '<label for="stock-ask-prompt">你的问题</label>' not in composer
     assert "图片只用于本轮上下文，不写入历史" not in composer
 
@@ -168,7 +179,27 @@ def test_vue_stock_ask_responsive_contract_and_audit_scenarios() -> None:
     for endpoint in (
         "/api/chat/conversations",
         "/api/chat/perspectives",
+        "/api/chat/data-materials",
+        "/api/chat/data-materials/preselect",
         "/api/stock/600519/core",
         "/api/stock/600519/enrichment",
     ):
         assert endpoint in audit
+
+
+def test_vue_free_chat_material_selector_matches_contract() -> None:
+    page = _read("src/components/StockAskPage.vue")
+    materials = _read("src/components/StockAskMaterials.vue")
+    composable = _read("src/composables/useStockAsk.ts")
+
+    assert "<StockAskMaterials" in page
+    assert "本轮数据材料" in materials
+    assert "系统必需" in materials and "不可取消" in materials
+    assert "selectedIds.length" in materials and "maxSelected" in materials
+    assert "selectedIds.length >= props.maxSelected" in materials
+    assert "恢复系统预选" in materials
+    for label in ("已注入", "未注入", "缺失", "降级", "陈旧数据", "来源"):
+        assert label in materials
+    assert "abortRequest('chat')" in composable
+    assert "if (!guard.current()) return" in composable
+    assert "mode.value === 'free'" in composable

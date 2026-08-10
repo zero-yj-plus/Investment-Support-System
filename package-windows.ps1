@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$Version = '1.3.2'
+    [string]$Version = '1.4.1'
 )
 
 Set-StrictMode -Version Latest
@@ -70,10 +70,11 @@ try {
         'requirements.txt',
         'README.md',
         'SOURCE_DELIVERY.txt',
-        'install.ps1',
-        'start.ps1',
-        'start-tdx-bridge.ps1',
-        'check.ps1',
+        'install.bat',
+        'start.bat',
+        'start-tdx-bridge.bat',
+        'check.bat',
+        'upgrade.bat',
         'docs\TQ_TDX_BRIDGE.md'
     )
 
@@ -100,13 +101,32 @@ try {
             [System.IO.File]::WriteAllText($_.FullName, $Text, $Utf8Bom)
         }
 
+    # Keep CMD entrypoints ASCII + CRLF for old Windows Server cmd.exe.
+    $Ascii = New-Object System.Text.ASCIIEncoding
+    Get-ChildItem -LiteralPath $StageRoot -Recurse -Filter '*.bat' -File |
+        ForEach-Object {
+            $Text = Get-Content -LiteralPath $_.FullName -Raw -Encoding UTF8
+            $Text = $Text -replace "`r?`n", "`r`n"
+            [System.IO.File]::WriteAllText($_.FullName, $Text, $Ascii)
+        }
+
     $RequiredPaths = @(
         'hermes_trader\__init__.py',
         'hermes_trader\main.py',
         'hermes_trader\data\__init__.py',
         'frontend-vue\dist\index.html',
-        'install.ps1',
-        'start.ps1',
+        'install.bat',
+        'start.bat',
+        'start-tdx-bridge.bat',
+        'scripts\tdx-login-guard\tdx-login-guard.ps1',
+        'scripts\tdx-login-guard\tdx-login-guard.config.example.json',
+        'scripts\tdx-login-guard\set-tdx-login-credential.ps1',
+        'scripts\tdx-login-guard\install-tdx-login-guard.ps1',
+        'scripts\tdx-login-guard\uninstall-tdx-login-guard.ps1',
+        'check.bat',
+        'upgrade.bat',
+        'scripts\windows_upgrade.py',
+        'docs\TQ_TDX_BRIDGE.md',
         'requirements.txt'
     )
 
@@ -137,7 +157,7 @@ try {
         -Encoding UTF8
 
     if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {
-        throw 'Run install.ps1 in the source project before packaging.'
+        throw 'Run install.bat in the source project before packaging.'
     }
 
     # Verify imports from staging, not from the source repository.
@@ -187,8 +207,19 @@ try {
         -Value "$ZipHash  $ZipName" `
         -Encoding ASCII
 
+    $UpgradeBatName = "WUDI-$Version-Windows-upgrade-$Timestamp.bat"
+    $UpgradeBatPath = Join-Path $OutputRoot $UpgradeBatName
+    $UpgradeBatText = Get-Content `
+        -LiteralPath (Join-Path $ProjectRoot 'upgrade.bat') `
+        -Raw `
+        -Encoding UTF8
+    $UpgradeBatText = $UpgradeBatText -replace "`r?`n", "`r`n"
+    [System.IO.File]::WriteAllText($UpgradeBatPath, $UpgradeBatText, $Ascii)
+
     Write-Host "Package created:"
     Write-Host "  $ZipPath"
+    Write-Host "Upgrade bootstrap:"
+    Write-Host "  $UpgradeBatPath"
     Write-Host "SHA256:"
     Write-Host "  $ZipHash"
 }

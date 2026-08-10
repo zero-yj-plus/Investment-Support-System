@@ -1,10 +1,10 @@
 # Hermes Trader 白标母版项目导读（人类 / AI 共读版）
 
-> 当前开发版本：`1.3.2`。上一正式归档为 `v1.3.1`，发布基线 `86c88fe2127e0f84ae89b0e769fab50f8db439c0`，源码包生成于 `2026-07-27T06:46:04Z`；当前工作树尚未创建 `v1.3.2` 标签或发布清单。
+> 当前发布版本：`1.4.1`，发布标签为 `v1.4.1`。上一正式归档为 `V1.4.0`，基线提交 `4c16135a58084c569b24030d1e3e75df16f77213`（2026-07-31T10:32:02+08:00）。
 >
 > 本文依据当前工作区静态源码生成。它描述“代码现在是什么”，不是产品宣传稿，也不替代 `docs/API_CONTRACT.md` 的接口契约。
 >
-> 本文的上一归档版本已纳入 `v1.3.1` 完整性清单；当前修改尚未纳入正式发布清单。后续发布必须由发布流程整体重建清单，不要手工追加单个哈希。
+> 正式交付包必须由发布流程整体重建完整性清单，不要手工追加单个文件哈希。
 
 ## 1. 一句话理解项目
 
@@ -148,13 +148,13 @@ flowchart LR
 | `requirements-dev.txt` | 复用生产依赖并加入 pytest、pytest-asyncio。 |
 | `pytest.ini` | 测试目录、严格 asyncio 模式和 `cloud` 标记。 |
 | `run.sh` | Bash 启动器：载入 `.env`，优先 `.venv/bin/python`，否则用 `uv`，再启动模块。 |
-| `install.ps1` | Windows 部署安装器：检查 64 位 Python 3.10+、创建 `.venv`、安装生产依赖并保留已有配置。 |
-| `start.ps1` | Windows 主服务前台启动器：安全载入 `.env`，使用部署目录 `.venv` 启动应用。 |
-| `start-tdx-bridge.ps1` | Windows 本地 TQ/TDX 只读桥前台启动器；要求桥接密钥且不把密钥写入命令行。 |
-| `tdx-login-guard.ps1` | Windows 当前用户 TDX 登录守护；支持关闭超时登录页或使用本机 DPAPI 凭据自动登录，并以真实 TQ/桥调用验收。 |
-| `set-tdx-login-credential.ps1` | 在本机交互输入账号密码，并用当前 Windows 用户 DPAPI 加密保存；密文不可跨机器或 Windows 用户迁移。 |
-| `install-tdx-login-guard.ps1` / `uninstall-tdx-login-guard.ps1` | 安装或卸载当前用户交互式计划任务；安装目录和控件配置可迁移，凭据必须重新录入。 |
-| `check.ps1` | Windows 基础部署检查：验证必需文件、首页、核心 API 及已配置的本地桥。 |
+| `install.bat` | Windows 部署入口：定位 64 位 Python 3.10+，调用标准库部署助手创建 `.venv`、安装生产依赖并保留已有配置。 |
+| `start.bat` | Windows 主服务前台启动入口：通过部署助手安全载入 `.env`，使用部署目录 `.venv` 启动应用。 |
+| `start-tdx-bridge.bat` | Windows 本地 TQ/TDX 只读桥前台启动入口；要求桥接密钥且不把密钥写入命令行。 |
+| `check.bat` | Windows 基础部署检查入口：验证必需文件、首页、核心 API 及已配置的本地桥。 |
+| `upgrade.bat` | Windows 原目录升级入口：校验新版 ZIP 后调用升级助手，保留客户配置、密钥、运行数据和虚拟环境。 |
+| `scripts/windows_deploy.py` | BAT 共用的标准库部署助手；负责环境创建、依赖安装、`.env` 载入、进程启动和 HTTP 验收。 |
+| `scripts/windows_upgrade.py` | Windows 无感升级助手；安全识别并停止本实例、备份状态、完整替换程序/前端、更新依赖、健康检查并在失败时恢复旧程序。 |
 | `RELEASE_FILES.sha256` | 交付文件完整性清单，用于发现缺失或篡改。 |
 
 ## 7. 后端 `hermes_trader/`
@@ -163,7 +163,7 @@ flowchart LR
 
 | 文件 | 职责 |
 | --- | --- |
-| `__init__.py` | 包说明和版本常量 `1.3.2`。 |
+| `__init__.py` | 包说明和版本常量 `1.4.1`。 |
 | `__main__.py` | `python -m hermes_trader` 的最小入口。 |
 | `main.py` | FastAPI 装配、应用生命周期、中间件、状态对象、扩展发现、静态前端挂载和 CLI。 |
 | `config.py` | YAML + `${ENV}` 展开 + `data/settings.json` 运行时覆盖；处理部署地域、模型连接、权限和敏感配置脱敏。 |
@@ -414,7 +414,7 @@ FastAPI `/api`，不依赖旧前端。旧版默认不可访问，仅配置开启
 资金追踪页读取 `/api/capital/trends?days=1`，并保留 `/api/capital/snapshot` 手动采集动作；行业与热门股按真实数据日期、来源和单位分别展示，`tdx_raw_unverified` 仅显示原始公式值，加载、空数组、陈旧快照和动作失败均显式区分。
 我的持仓页读取 `/api/holdings` 与合并报价 `/api/quotes?codes=...`，新增代码时仅用 `/api/quote/{code}` 核验，并通过 `PUT /api/holdings` 整体保存；页面不消费或提交账户总资产，投入成本按成本价与股数自动汇总，任一现价缺失时不汇总持仓总市值、总盈亏或持仓构成，持仓加载失败时锁定保存以避免空账本覆盖。
 观察池页读取轻量合并的 `/api/watchlist`，新增时用 `/api/quote/{code}` 核验，并通过逐条 `POST /api/watchlist`、`PUT /api/watchlist/{id}`、`DELETE /api/watchlist/{id}` 管理账本；评级、状态、双周期区间、位置和价格边界完全展示服务端结果，`queued` 只表示区间计算已排队。页面明确区分空数组、报价缺失、降级快照、陈旧数据和传输失败，且不推断接口未提供的仓位上限。
-问股页固定使用股票模式，通过 `/api/stock/{code}/core` 与 `/api/stock/{code}/enrichment` 展示标的证据，并以 `/api/chat` SSE 生成受约束回答；`GET /api/chat/perspectives` 提供 17 个结构化视角，前端每轮最多选择 4 个并保留所用版本，会话接口负责追加式历史。视角只组织同一份冻结事实，不改写 RiskGate、动作、价位或缺失语义。页面不提供自由问答、持仓判断或产业链挖掘，标的核心与增强证据独立降级，Markdown 只通过安全 Vue 节点渲染。
+问股页在同一页面提供“盘中问股 / 自由问答”切换，不增加侧栏入口；两类会话按 `mode` 隔离并以 `/api/chat` SSE 生成回答。盘中问股继续通过 `/api/stock/{code}/core` 与 `/api/stock/{code}/enrichment` 展示标的证据，`GET /api/chat/perspectives` 提供 17 个结构化视角，前端每轮最多选择 4 个并保留所用版本。自由问答不要求预选股票，识别到唯一代码或完整名称时自动进入同一受治理单股链路；右侧六类可选材料由确定性规则预选、用户最多四选，并同时控制采集和模型注入，三个风险/质量底座不可取消。视角或材料选择均不改写 RiskGate、动作、价位或缺失语义；标的核心与增强证据独立降级，Markdown 只通过安全 Vue 节点渲染。
 个股诊断页并行读取 `/api/quote/{code}` 与 `/api/diagnose?code={code}`；快速报价只作身份和行情预览，正式动作、仓位上限、价格条件、风险闸与证据链完全展示服务端治理卡。页面区分缺失、降级、冲突、陈旧、真实空数组和局部请求失败，不请求模型或其他研究接口，也不在浏览器中重算交易结论。
 条件选股页仅在用户明确提交时调用 `/api/screen`，展示服务端 80% 全市场覆盖门槛、确定性候选和行业低频补全状态；表单市值/成交额使用亿元入参，结果保持元口径。八个数值列表头使用原生按钮重排当前返回行，缺失值保持末位且不改变候选集合。候选通过真实链接进入个股诊断，加入观察池只准确展示接受与排队状态；页面不把候选包装为推荐、风险或仓位结论。
 技术面选股页读取 `/api/technical-screen/catalog`、`/status` 与保存方案，且只在用户明确提交时调用 `/api/technical-screen/query`；显式缓存刷新通过 `/api/technical-screen/refresh` 排队并轮询状态。页面使用前复权本地技术信号缓存，保留事件/状态、两层满足/排除规则、旧方案只读兼容与追加式历史命中；候选仅表示规则命中，不在浏览器生成推荐、仓位或价格结论。
@@ -436,7 +436,7 @@ FastAPI `/api`，不依赖旧前端。旧版默认不可访问，仅配置开启
 | `src/components/HoldingsPage.vue`、`HoldingEditor.vue`、`HoldingsTable.vue` | 我的持仓标题操作、自动成本/市值汇总边界、账本编辑和桌面宽表/移动卡片明细。 |
 | `src/components/WatchlistPage.vue`、`WatchlistItemRow.vue`、`WatchlistEditor.vue`、`WatchlistImportDialog.vue` | 观察池紧凑单行列表、服务端双周期价格边界、逐项数据健康、显式核验编辑及 TXT 批量导入预览。 |
 | `src/components/TomorrowStrategyPage.vue`、`TomorrowDecisionSummary.vue`、`TomorrowWatchlist.vue`、`TomorrowDataHealth.vue` | 次日策略的风险底座、观察池触发条件、依据健康和安全报告工作区。 |
-| `src/components/StockAsk*.vue` | 专属盘中问股的历史栏、对话、安全消息节点、标的证据与等高输入区。 |
+| `src/components/StockAsk*.vue` | 盘中问股/自由问答的模式切换、隔离历史、对话、安全消息节点、标的证据、本轮材料选择与等高输入区。 |
 | `src/components/Diagnosis*.vue` | 个股诊断的代码查询、确定性结论、风险/价格边界、结构化证据与数据治理。 |
 | `src/components/Screener*.vue` | 条件选股的结论边界、原生筛选表单、响应式候选明细和覆盖率治理。 |
 | `src/components/TechnicalScreener*.vue`、`TechnicalSignalDialog.vue` | 技术面选股的缓存结论、自然语言规则编辑、信号库、响应式候选明细、事件历史与数据治理。 |
@@ -455,7 +455,7 @@ FastAPI `/api`，不依赖旧前端。旧版默认不可访问，仅配置开启
 | `src/composables/useHoldings.ts` | 持仓、批量报价、单票核验与整体保存的独立请求控制、覆盖保护、自动刷新和卸载清理。 |
 | `src/composables/useWatchlist.ts` | 观察池读取、代码核验、逐条 CRUD、原子批量追加、区间重算排队、自动刷新与独立请求卸载清理；`utils/watchlistImport.ts` 负责东方财富/同花顺 TXT 的本地解码、解析和预去重。 |
 | `src/composables/useTomorrowStrategy.ts` | 次日策略报告与观察池的独立请求、SSE 生成、推送提交语义、自动刷新和卸载清理。 |
-| `src/composables/useStockAsk.ts` | 问股核心/增强证据、会话、SSE、附件和生命周期资源的独立控制与局部降级。 |
+| `src/composables/useStockAsk.ts` | 问股模式隔离、材料预选、核心/增强证据、会话、SSE、附件和生命周期资源的独立控制与局部降级。 |
 | `src/composables/useDiagnosis.ts` | 快速报价与正式诊断的独立请求控制、跨页代码意图、刷新保留和卸载清理。 |
 | `src/composables/useScreener.ts` | 条件筛选与观察池提交的独立请求控制、覆盖/空值语义、结果保留和卸载清理。 |
 | `src/composables/useTechnicalScreener.ts` | 技术信号目录、缓存状态、显式筛选/刷新、方案 CRUD、历史事件的独立请求控制与卸载清理。 |
@@ -485,6 +485,7 @@ FastAPI `/api`，不依赖旧前端。旧版默认不可访问，仅配置开启
 | `run_restricted_hermes.sh` | 校验客户 profile 未漂移后启动受限代理。 |
 | `tdx_dataset_probe.py` | 凭据安全的 TDX 数据集探针；只输出计数、日期、覆盖率和一致性，不打印 URL/key/完整行。 |
 | `tq_tdx_bridge.py` | 仅监听本机的 TQ HTTP → TDX API v2.8 只读兼容桥；固定方法白名单并拒绝交易/账户能力。 |
+| `tdx-login-guard/` | Windows 当前用户 TDX 登录守护组件：主程序、配置模板、DPAPI 凭据设置及计划任务安装/卸载脚本。 |
 
 ## 10. 文档与示例
 
@@ -592,6 +593,7 @@ FastAPI `/api`，不依赖旧前端。旧版默认不可访问，仅配置开启
 | `test_company_disclosure_frontend.py` | 公司页公告面板和完整/降级/缺失语义。 |
 | `test_company_official_evidence.py` | 公司研究上下文的官方证据与降级。 |
 | `test_free_chat_stock_injection.py` | 自由问答股票识别、歧义和未知代码。 |
+| `test_free_chat_data_materials.py` | 自由问答材料白名单、确定性预选、四项上限及按选择采集。 |
 | `test_frontend_api_cache.py` | GET 单飞缓存、超时释放和重试。 |
 | `test_frontend_workspace_runtime_contract.py` | 工作台不被后台刷新重挂、导航可达性和默认入口。 |
 | `test_hotboard_frontend.py` | 涨停题材独立口径和懒加载可见性。 |

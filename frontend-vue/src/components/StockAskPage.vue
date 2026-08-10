@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import StockAskConversation from './StockAskConversation.vue'
 import StockAskEvidence from './StockAskEvidence.vue'
 import StockAskHistory from './StockAskHistory.vue'
+import StockAskMaterials from './StockAskMaterials.vue'
 import { useStockAsk } from '../composables/useStockAsk'
 import { formatTime } from '../utils/stockAskFormat'
 
@@ -10,24 +11,37 @@ const emit = defineEmits<{ 'refresh-state': [value: boolean] }>()
 const historyExpanded = ref(false)
 
 const {
-  codeInput, selectedCode, prompt, core, enrichment, stockName,
+  mode, codeInput, selectedCode, prompt, core, enrichment, stockName,
   coreLoading, enrichmentLoading, stockLoading, coreError, enrichmentError, codeError,
   composerError, chatError, saveWarning, conversations, conversationsLoading,
   conversationError, activeConversationId, messages, pendingImages, streaming,
   stageText, stageSeconds, refreshing, canAsk, loadStock, loadConversations,
   perspectives, selectedPerspectiveIds, maxSelectedPerspectives,
   perspectivesLoading, perspectiveError, loadPerspectives, togglePerspective, clearPerspectives,
+  dataMaterials, requiredMaterials, selectedDataMaterialIds, preselectedDataMaterialIds,
+  maxSelectedDataMaterials, materialsAdjusted, materialReport, materialsLoading, materialError,
+  loadDataMaterials, toggleDataMaterial, resetDataMaterials, switchMode,
   newConversation, switchConversation, deleteConversation, addPendingImages,
   removePendingImage, send, stop, refresh,
 } = useStockAsk()
 
 const dataStamp = computed(() => {
+  if (mode.value === 'free') {
+    const dates = materialReport.value?.optional.map((item) => item.data_date).filter(Boolean) || []
+    return dates[0] || (streaming.value ? '正在采集本轮材料' : '发送时按需采集')
+  }
   if (!selectedCode.value) return '尚未选择标的'
   if (stockLoading.value) return '正在更新标的证据'
   return formatTime(core.value?.quote?.as_of || core.value?.ts || enrichment.value?.ts)
 })
 
 const healthLabel = computed(() => {
+  if (mode.value === 'free') {
+    if (!materialReport.value) return `待发送 · 已选 ${selectedDataMaterialIds.value.length}/${maxSelectedDataMaterials.value}`
+    const injected = materialReport.value.optional.filter((item) => item.injected).length
+    const degraded = materialReport.value.optional.some((item) => item.state === 'degraded' || item.state === 'missing')
+    return `${materialReport.value.model_used ? `已注入 ${injected} 项` : '未调用模型'}${degraded ? ' · 部分缺失/降级' : ''}`
+  }
   if (!selectedCode.value) return '等待查询'
   if (core.value?.recognized === false || core.value?.state === 'not_found') return '代码未通过核验'
   if (coreError.value && !core.value) return '首屏暂不可用'
@@ -49,7 +63,11 @@ defineExpose({ refresh })
     <header class="stock-ask-page__header">
       <div class="page-heading">
         <h1 id="stock-ask-page-title">问股</h1>
-        <p class="page-subtitle">专属盘中问股：先锁定单只 A 股，再围绕当前动作、风险边界、失效条件和证据完整性提问。</p>
+        <p class="page-subtitle">{{ mode === 'free' ? '自由问答：直接讨论市场、板块与交易研究问题；识别到单只股票时自动切入受治理问股。' : '专属盘中问股：先锁定单只 A 股，再围绕当前动作、风险边界、失效条件和证据完整性提问。' }}</p>
+      </div>
+      <div class="stock-ask-mode-switch" role="tablist" aria-label="问股模式">
+        <button type="button" role="tab" :aria-selected="mode === 'stock'" @click="switchMode('stock')">盘中问股</button>
+        <button type="button" role="tab" :aria-selected="mode === 'free'" @click="switchMode('free')">自由问答</button>
       </div>
     </header>
 
@@ -60,8 +78,9 @@ defineExpose({ refresh })
         :loading="conversationsLoading"
         :error="conversationError"
         :active-id="activeConversationId"
-        :disabled="streaming"
+        :disabled="false"
         :expanded="historyExpanded"
+        :mode="mode"
         @toggle="historyExpanded = !historyExpanded"
         @new="newConversation"
         @select="switchConversation"
@@ -70,6 +89,7 @@ defineExpose({ refresh })
       />
       <StockAskConversation
         class="stock-ask-workbench__conversation"
+        :mode="mode"
         :messages="messages"
         :prompt="prompt"
         :pending-images="pendingImages"
@@ -101,7 +121,25 @@ defineExpose({ refresh })
         @clear-perspectives="clearPerspectives"
         @retry-perspectives="loadPerspectives"
       />
+      <StockAskMaterials
+        v-if="mode === 'free'"
+        class="stock-ask-workbench__evidence"
+        :items="dataMaterials"
+        :required-items="requiredMaterials"
+        :selected-ids="selectedDataMaterialIds"
+        :preselected-ids="preselectedDataMaterialIds"
+        :max-selected="maxSelectedDataMaterials"
+        :adjusted="materialsAdjusted"
+        :report="materialReport"
+        :loading="materialsLoading"
+        :error="materialError"
+        :disabled="streaming"
+        @toggle="toggleDataMaterial"
+        @reset="resetDataMaterials"
+        @retry="loadDataMaterials"
+      />
       <StockAskEvidence
+        v-else
         class="stock-ask-workbench__evidence"
         :code="selectedCode"
         :core="core"
@@ -114,13 +152,13 @@ defineExpose({ refresh })
     </div>
 
     <footer class="stock-ask-page__governance">
-      <span>本页不提供自由问答、持仓判断或产业链挖掘。</span>
+      <span>{{ mode === 'free' ? '自由问答不会绕过单股风险闸；识别到单股后自动进入受治理问股。' : '盘中问股保持受治理单股链路，不提供组合持仓判断或产业链挖掘。' }}</span>
       <span>未完整回答不保存；历史消息只追加，不覆盖既有事实。</span>
     </footer>
-    <dl class="stock-ask-page__stamp data-footnote-stamp" aria-label="问股标的、数据时点与证据状态">
-      <div><dt>当前标的</dt><dd class="mono">{{ selectedCode || '—' }}</dd></div>
+    <dl class="stock-ask-page__stamp data-footnote-stamp" :aria-label="mode === 'free' ? '问答模式、数据时点与注入状态' : '问股标的、数据时点与证据状态'">
+      <div><dt>{{ mode === 'free' ? '当前模式' : '当前标的' }}</dt><dd :class="{ mono: mode === 'stock' }">{{ mode === 'free' ? '自由问答' : (selectedCode || '—') }}</dd></div>
       <div><dt>数据时点</dt><dd class="mono">{{ dataStamp }}</dd></div>
-      <div><dt>证据状态</dt><dd>{{ healthLabel }}</dd></div>
+      <div><dt>{{ mode === 'free' ? '注入状态' : '证据状态' }}</dt><dd>{{ healthLabel }}</dd></div>
     </dl>
   </section>
 </template>
@@ -130,6 +168,11 @@ defineExpose({ refresh })
 .stock-ask-page__header { display: flex; min-width: 0; align-items: flex-start; justify-content: space-between; gap: 24px; }
 .stock-ask-page__header h1 { margin: 0; font-size: clamp(24px, 2.1vw, 30px); }
 .stock-ask-page__header > div > p:last-child { max-width: 780px; margin: 5px 0 0; color: var(--text-2); }
+.stock-ask-mode-switch { display: inline-grid; grid-template-columns: repeat(2, minmax(108px, 1fr)); min-width: 232px; padding: 3px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+.stock-ask-mode-switch button { min-height: 44px; padding: 0 12px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--text-3); font-size: 13px; font-weight: 720; cursor: pointer; }
+.stock-ask-mode-switch button:hover { color: var(--text); background: var(--surface-2); }
+.stock-ask-mode-switch button[aria-selected="true"] { border-color: color-mix(in srgb, var(--accent) 42%, var(--border)); background: var(--accent-dim); color: var(--accent); }
+.stock-ask-mode-switch button:disabled { cursor: wait; opacity: .55; }
 .stock-ask-page__header dl { display: grid; grid-template-columns: repeat(3, minmax(100px, 1fr)); min-width: min(100%, 440px); margin: 0; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
 .stock-ask-page__header dl div { min-width: 0; padding: 9px 10px; border-right: 1px solid var(--border); }
 .stock-ask-page__header dl div:last-child { border-right: 0; }
@@ -149,6 +192,7 @@ defineExpose({ refresh })
 @media (max-width: 1180px) {
   .stock-ask-page__header { flex-direction: column; gap: 10px; }
   .stock-ask-page__header dl { width: 100%; }
+  .stock-ask-mode-switch { width: 100%; }
   .stock-ask-page__stamp { width: 100%; }
   .stock-ask-workbench { grid-template-columns: 56px minmax(0, 1fr); grid-template-areas: "history conversation" "evidence evidence"; }
   .stock-ask-workbench.is-history-expanded { grid-template-columns: minmax(190px, 220px) minmax(0, 1fr); }

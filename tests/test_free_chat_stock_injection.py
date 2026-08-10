@@ -182,7 +182,11 @@ async def test_api_free_stock_question_uses_governed_stock_path_before_model_pro
         "history": [{"role": "user", "content": "上一问"}],
     }
     assert any(event.get("delta") == "治理个股答复" for event in events)
-    assert events[-1] == {"done": True, "truncated": False}
+    assert events[-1]["done"] is True
+    assert events[-1]["truncated"] is False
+    assert events[-1]["resolved_mode"] == "stock"
+    assert events[-1]["code"] == "600519"
+    assert events[-1]["data_materials"]["max_selected"] == 4
 
 
 @pytest.mark.asyncio

@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { onBeforeUnmount, ref } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import AppIcon from './AppIcon.vue'
-import type { PendingStockImage } from '../types/stockAsk'
+import type { PendingStockImage, StockAskMode } from '../types/stockAsk'
 
 const props = defineProps<{
   modelValue: string
@@ -9,6 +9,7 @@ const props = defineProps<{
   streaming: boolean
   disabled: boolean
   error: string
+  mode: StockAskMode
 }>()
 
 const emit = defineEmits<{
@@ -25,7 +26,7 @@ const fileError = ref('')
 const readers = new Set<FileReader>()
 let alive = true
 
-const presets = [
+const stockPresets = [
   '能否继续持有？',
   '冲高回落怎么应对？',
   '现在放量是进攻还是出货？',
@@ -35,6 +36,13 @@ const presets = [
   '当前处于什么交易阶段？',
   '失效条件和风险边界是什么？',
 ]
+const freePresets = [
+  '今天市场的主要风险是什么？',
+  '当前最强的板块方向有哪些？',
+  '如何理解放量但股价滞涨？',
+  '今天更适合进攻还是防守？',
+]
+const presets = computed(() => props.mode === 'free' ? freePresets : stockPresets)
 
 function choosePreset(value: string) {
   emit('update:modelValue', value)
@@ -113,7 +121,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="stock-ask-composer">
-    <div class="stock-ask-presets" tabindex="0" aria-label="推荐问题，两行排列，可横向滚动">
+    <div class="stock-ask-presets" :class="{ 'is-free': mode === 'free' }" tabindex="0" :aria-label="mode === 'free' ? '自由问答推荐问题' : '推荐问题，两行排列，可横向滚动'">
       <button v-for="item in presets" :key="item" type="button" :disabled="streaming" @click="choosePreset(item)">{{ item }}</button>
     </div>
 
@@ -137,15 +145,15 @@ onBeforeUnmount(() => {
         title="上传图片，支持粘贴或拖入"
         @click="fileInput?.click()"
       ><AppIcon name="upload" :size="20" /></button>
-      <input ref="fileInput" class="sr-only" type="file" accept="image/*" multiple aria-label="选择本轮问股图片" @change="onFileChange">
+      <input ref="fileInput" class="sr-only" type="file" accept="image/*" multiple :aria-label="mode === 'free' ? '选择本轮自由问答图片' : '选择本轮问股图片'" @change="onFileChange">
       <textarea
         id="stock-ask-prompt"
         ref="promptInput"
         :value="modelValue"
         rows="1"
         :disabled="disabled"
-        aria-label="问股问题"
-        placeholder="针对当前股票提问；Enter 发送，Shift+Enter 换行"
+        :aria-label="mode === 'free' ? '自由问答问题' : '问股问题'"
+        :placeholder="mode === 'free' ? '直接提问；也可输入六位股票代码或完整名称' : '针对当前股票提问；Enter 发送，Shift+Enter 换行'"
         @input="emit('update:modelValue', ($event.target as HTMLTextAreaElement).value)"
         @keydown="onKeydown"
         @paste="onPaste"
@@ -162,7 +170,7 @@ onBeforeUnmount(() => {
         type="button"
         class="stock-ask-send"
         :disabled="disabled"
-        aria-label="发送问股问题"
+        :aria-label="mode === 'free' ? '发送自由问答问题' : '发送问股问题'"
         @click="emit('send')"
       ><AppIcon name="send" :size="19" /><span>发送</span></button>
     </div>
@@ -173,6 +181,7 @@ onBeforeUnmount(() => {
 <style scoped>
 .stock-ask-composer { --composer-control-height: 52px; display: grid; gap: 6px; padding: 8px 12px 10px; border-top: 1px solid var(--border); background: color-mix(in srgb, var(--surface) 96%, var(--bg)); }
 .stock-ask-presets { display: grid; grid-auto-flow: column; grid-template-rows: repeat(2, 40px); grid-auto-columns: minmax(138px, 1fr); gap: 4px; max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; padding: 1px 1px 2px; scrollbar-width: thin; }
+.stock-ask-presets.is-free { grid-template-rows: 40px; grid-auto-columns: minmax(138px, 1fr); }
 .stock-ask-presets button { height: 40px; min-height: 40px; padding: 3px 7px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); color: var(--text-2); font-size: 13px; line-height: 1.25; text-align: left; cursor: pointer; }
 .stock-ask-presets button:hover { border-color: var(--border-strong); color: var(--text); }
 .stock-ask-presets button:disabled { cursor: wait; opacity: .55; }
@@ -195,6 +204,7 @@ onBeforeUnmount(() => {
 @media (max-width: 800px) {
   .stock-ask-composer { position: static; }
   .stock-ask-presets { grid-template-rows: repeat(2, 44px); grid-auto-columns: minmax(140px, 1fr); }
+  .stock-ask-presets.is-free { grid-template-rows: 44px; }
   .stock-ask-presets button { height: 44px; min-height: 44px; }
 }
 

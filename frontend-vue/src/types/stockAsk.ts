@@ -2,6 +2,8 @@ export type StockAskRequestKey =
   | 'core'
   | 'enrichment'
   | 'perspectiveCatalog'
+  | 'materialCatalog'
+  | 'materialPreselect'
   | 'conversationList'
   | 'conversationDetail'
   | 'conversationCreate'
@@ -110,6 +112,58 @@ export interface ConversationMessagePayload {
   ts?: string
   has_image?: boolean
   perspectives?: StockPerspectiveSummary[]
+  data_materials?: DataMaterialReport
+}
+
+export type StockAskMode = 'stock' | 'free'
+
+export interface DataMaterialDefinition {
+  id: string
+  name: string
+  description: string
+  availability: 'supported' | 'unavailable' | string
+  slow: boolean
+}
+
+export interface RequiredMaterialDefinition {
+  id: string
+  name: string
+}
+
+export interface DataMaterialResult {
+  id: string
+  name: string
+  selected?: boolean
+  state: 'pending' | 'complete' | 'degraded' | 'missing' | 'not_selected' | string
+  injected: boolean
+  data_date?: string | null
+  source?: string | null
+  stale?: boolean | null
+  reason?: string | null
+}
+
+export interface DataMaterialReport {
+  selected_ids: string[]
+  max_selected: number
+  model_used: boolean
+  required: DataMaterialResult[]
+  optional: DataMaterialResult[]
+}
+
+export interface DataMaterialCatalogResponse {
+  ok?: boolean
+  max_selected?: number
+  max_auto_selected?: number
+  required?: RequiredMaterialDefinition[]
+  materials?: DataMaterialDefinition[]
+  error?: string
+}
+
+export interface DataMaterialPreselectResponse {
+  ok?: boolean
+  preselected_ids?: string[]
+  max_selected?: number
+  error?: string
 }
 
 export interface StockPerspectiveSummary {
@@ -160,6 +214,7 @@ export interface StockAskMessage {
   code?: string
   imageCount?: number
   perspectives?: StockPerspectiveSummary[]
+  dataMaterials?: DataMaterialReport
   state: StockAskMessageState
 }
 

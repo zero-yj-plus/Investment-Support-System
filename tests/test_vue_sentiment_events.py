@@ -85,6 +85,28 @@ def test_vue_sentiment_events_uses_safe_nodes_links_and_native_interactions() ->
     assert 'aria-live="polite"' in sources
 
 
+def test_vue_sentiment_events_can_archive_each_event_with_local_feedback() -> None:
+    composable = _read("src/composables/useSentimentEvents.ts")
+    page = _read("src/components/SentimentEventsPage.vue")
+    feed = _read("src/components/SentimentEventFeed.vue")
+    card = _read("src/components/SentimentEventCard.vue")
+    knowledge_types = _read("src/types/knowledge.ts")
+
+    assert "postJson<SentimentArchiveResponse>" in composable
+    assert "'/news/a-share/archive'" in composable
+    assert "archiveControllers.forEach((controller) => controller.abort())" in composable
+    assert ':archive-states="archiveStates"' in page
+    assert '@archive="archiveEvent"' in page
+    assert ":archive-state=" in feed
+    assert "留档到知识库" in card
+    assert "archiveStatus === 'archiving'" in card
+    assert "archiveStatus === 'archived'" in card
+    assert "role=\"alert\"" not in card
+    assert ":role=\"archiveStatus === 'error' ? 'alert' : 'status'\"" in card
+    assert "min-height: 44px" in card
+    assert "'舆情留档'" in knowledge_types
+
+
 def test_vue_sentiment_events_responsive_contract_and_audit_scenarios() -> None:
     page = _read("src/components/SentimentEventsPage.vue")
     feed = _read("src/components/SentimentEventFeed.vue")

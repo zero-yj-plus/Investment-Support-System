@@ -1,10 +1,14 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import SentimentEventCard from './SentimentEventCard.vue'
-import type { SentimentEvent, SentimentEventFilter } from '../types/sentimentEvents'
-import { eventMatchesFilter, eventTitle } from '../utils/sentimentFormat'
+import type { SentimentArchiveState, SentimentEvent, SentimentEventFilter } from '../types/sentimentEvents'
+import { eventArchiveKey, eventMatchesFilter, eventTitle } from '../utils/sentimentFormat'
 
-const props = defineProps<{ events: SentimentEvent[] }>()
+const props = defineProps<{
+  events: SentimentEvent[]
+  archiveStates: Record<string, SentimentArchiveState>
+}>()
+const emit = defineEmits<{ archive: [event: SentimentEvent] }>()
 const selectedFilter = ref<SentimentEventFilter>('related')
 const query = ref('')
 const shown = ref(24)
@@ -75,6 +79,8 @@ function chooseFilter(filter: SentimentEventFilter) {
         :key="event.event_id || `${event.published_at || event.time || 'event'}-${index}`"
         :event="event"
         :index="index"
+        :archive-state="archiveStates[eventArchiveKey(event)]"
+        @archive="emit('archive', event)"
       />
     </div>
 

@@ -31,16 +31,27 @@ chmod 600 config.yaml .env
 ### Windows 部署包
 
 Windows 部署包已包含 `frontend-vue/dist/`，目标机不需要安装 Node.js 或运行 npm。
-使用 64 位 Python 3.10+，在 PowerShell 中依次运行：
+使用 64 位 Python 3.10+，在命令提示符或 PowerShell 中依次运行：
 
-```powershell
-.\install.ps1
-.\start.ps1
+```bat
+install.bat
+start.bat
 ```
 
 如使用本机通达信 TQ HTTP 服务，先在 `.env` 中配置桥接密钥和地址，再在独立
-PowerShell 窗口运行 `.\start-tdx-bridge.ps1`。服务启动后运行 `.\check.ps1`
+窗口运行 `start-tdx-bridge.bat`。服务启动后运行 `check.bat`
 检查首页、核心 API 和已配置的本地桥。
+
+已有 Windows 客户升级时，把新版部署 ZIP、同名 `.sha256` 和打包时生成的
+`WUDI-版本-Windows-upgrade-时间.bat` 放到原安装目录，双击升级 BAT。升级器
+会从已校验的新版 ZIP 中加载最新升级助手，只替换程序、预构建前端和部署文件，保留现有
+`config.yaml`、`.env`、`data/` 与 `.venv`；它会先校验压缩包、停止属于当前
+安装目录的服务、备份客户状态，升级后执行 HTTP 健康检查，失败则恢复旧程序。
+如目录中有多个部署 ZIP，应显式指定新版文件：
+
+```bat
+upgrade.bat WUDI-1.4.1-Windows-deploy-20260810-120000.zip
+```
 
 ### 客户品牌配置
 

@@ -3,10 +3,24 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+GUARD_ROOT = ROOT / "scripts" / "tdx-login-guard"
+GUARD_FILES = (
+    "tdx-login-guard.ps1",
+    "tdx-login-guard.config.example.json",
+    "set-tdx-login-credential.ps1",
+    "install-tdx-login-guard.ps1",
+    "uninstall-tdx-login-guard.ps1",
+)
 
 
 def _text(name: str) -> str:
-    return (ROOT / name).read_text(encoding="utf-8")
+    return (GUARD_ROOT / name).read_text(encoding="utf-8")
+
+
+def test_tdx_login_guard_files_live_in_a_dedicated_directory():
+    for name in GUARD_FILES:
+        assert (GUARD_ROOT / name).is_file()
+        assert not (ROOT / name).exists()
 
 
 def test_tdx_login_guard_files_and_config_are_portable():
@@ -69,6 +83,8 @@ def test_guard_installer_uses_interactive_current_user_task_and_safe_uninstall()
     installer = _text("install-tdx-login-guard.ps1")
     uninstaller = _text("uninstall-tdx-login-guard.ps1")
     assert "$PSScriptRoot" in installer
+    assert "Join-Path $PSScriptRoot '..\\..'" in installer
+    assert "Join-Path $ProjectRoot '.env'" in installer
     assert "New-ScheduledTaskPrincipal" in installer
     assert "-LogonType Interactive" in installer
     assert "-RunLevel Limited" in installer
