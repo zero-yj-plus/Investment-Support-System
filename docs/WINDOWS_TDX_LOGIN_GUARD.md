@@ -9,7 +9,53 @@
 - 自动登录凭据使用当前 Windows 用户的 DPAPI 加密；更换电脑或 Windows 用户后必须重新设置。
 - 更换通达信版本后，必须重新校准账号和密码控件 ID。
 
-## 2. 准备路径
+## 2. 推荐：双击 BAT 管理
+
+Windows 交付包根目录提供：
+
+```text
+tdx-login-guard.bat
+```
+
+直接双击后通过数字菜单完成以下操作，不需要复制或转义 PowerShell 命令：
+
+- 安装或更新守护，并启用自动启动和自动登录；
+- 保存或更换当前 Windows 用户的 DPAPI 加密凭据；
+- 只读扫描登录控件；
+- 执行一次真实自动登录测试；
+- 启动、停止和检查计划任务；
+- 编辑配置或卸载计划任务。
+
+首次选择“安装或更新”时输入 `TdxW.exe` 的完整路径。安装器会把守护复制到
+`%LOCALAPPDATA%\HermesTrader\TdxLoginGuard`。如果没有可用凭据，会弹出安全凭据输入；
+已经存在且属于当前 Windows 用户的 DPAPI 凭据会被保留。
+
+安装操作会自动设置：
+
+```json
+{
+  "recovery_mode": "login_then_close",
+  "start_tdx_if_missing": true
+}
+```
+
+安装后依次运行“只读扫描登录控件”和“一次真实自动登录测试”。真实测试会填写凭据并点击登录按钮，菜单会在执行前再次确认。
+
+也可以在 CMD 中直接调用，不经过菜单：
+
+```bat
+tdx-login-guard.bat setup "C:\new_tdx64\TdxW.exe"
+tdx-login-guard.bat credential
+tdx-login-guard.bat inspect
+tdx-login-guard.bat test
+tdx-login-guard.bat status
+```
+
+BAT 优先调用 PowerShell 7，找不到时才回退到 Windows PowerShell 5.1。PowerShell 仅作为现有守护的内部运行时，不再要求客户手工编写命令。
+
+以下章节保留直接 PowerShell 操作方式，供高级排障使用。
+
+## 3. 高级用法：准备路径
 
 把示例路径替换为本机实际路径：
 
@@ -27,7 +73,7 @@ Test-Path "$projectRoot\scripts\tdx-login-guard\install-tdx-login-guard.ps1"
 
 两项都应返回 `True`。如果安装脚本不存在，当前部署包不包含自动登录守护，需要从同版本完整项目复制整个 `scripts\tdx-login-guard` 目录。
 
-## 3. 安装守护
+## 4. 高级用法：安装守护
 
 在需要操作通达信界面的 Windows 用户下执行：
 
@@ -46,7 +92,7 @@ pwsh.exe -NoProfile -ExecutionPolicy Bypass `
 
 默认配置不会保存凭据，也不会在通达信进程不存在时主动启动客户端。
 
-## 4. 保存自动登录凭据
+## 5. 高级用法：保存自动登录凭据
 
 ```powershell
 $guardRoot = Join-Path $env:LOCALAPPDATA 'HermesTrader\TdxLoginGuard'
@@ -69,7 +115,7 @@ Test-Path "$guardRoot\tdx-login-credential.clixml"
 
 返回 `True` 只表示密文文件存在，不代表登录控件和权限配置已经正确。
 
-## 5. 启用自动启动和自动登录
+## 6. 高级用法：启用自动启动和自动登录
 
 打开配置文件：
 
@@ -98,7 +144,7 @@ notepad "$guardRoot\tdx-login-guard.json"
 
 `1443/1058` 是已经校准的通达信 V7.73 示例。客户端版本或登录页变化后不能盲目沿用。
 
-## 6. 校准登录控件
+## 7. 高级用法：校准登录控件
 
 先停止守护，再手动打开通达信并停留在账号密码登录页面：
 
@@ -125,7 +171,7 @@ id=1443 class=SafeEdit  账号框
 
 如果实际扫描结果不同，把新的账号、密码 ID 分别写入 `username_control_id` 和 `password_control_id`。
 
-## 7. 前台测试自动登录
+## 8. 高级用法：前台测试自动登录
 
 保持登录页可见，在普通、非管理员 PowerShell 中执行一次恢复测试：
 
@@ -147,7 +193,7 @@ Get-Content "$guardRoot\tdx-login-guard.log" -Encoding utf8 -Tail 50
 
 前台测试成功后再启动长期守护任务。
 
-## 8. 启动、停止和检查守护
+## 9. 高级用法：启动、停止和检查守护
 
 启动：
 
@@ -187,7 +233,7 @@ Get-Content "$guardRoot\tdx-login-guard.log" -Encoding utf8 -Tail 50
 
 任务显示 `Running` 只表示守护脚本进程存在，不能证明通达信已经成功启动或登录。
 
-## 9. 通达信或项目迁移目录
+## 10. 通达信或项目迁移目录
 
 通达信或项目目录改变后，优先从新项目目录重新运行安装器：
 
@@ -212,7 +258,7 @@ notepad "$guardRoot\tdx-login-guard.json"
 
 把 `tdx_exe` 改为新的绝对路径，然后重新启动计划任务。
 
-## 10. 常见故障
+## 11. 常见故障
 
 ### 通达信没有自动启动
 
@@ -257,7 +303,7 @@ Get-Content "$guardRoot\tdx-login-guard.log" -Encoding utf8 -Tail 50
 
 当前守护版本在通达信进程列表恰好为空时存在未处理分支，可能导致守护退出。这不是路径、控件或凭据配置错误。临时处理是重新启动计划任务；正式处理需要更新守护脚本，在读取进程 `.Id` 前处理空列表。
 
-## 11. 卸载守护
+## 12. 卸载守护
 
 从包含卸载脚本的完整项目目录运行：
 

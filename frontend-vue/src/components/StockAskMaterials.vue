@@ -138,7 +138,7 @@ function resultDetail(item: DataMaterialDefinition) {
       <p v-else-if="report && !report.model_used">本轮使用确定性答复，未调用模型；已采集材料不会标成“已注入”。</p>
       <p v-else-if="atLimit">已达到 {{ maxSelected }} 项上限；如需更换，请先取消一个已选材料。</p>
       <p v-else-if="selectedIds.length">发送时将采集并注入：{{ items.filter((item) => selectedSet.has(item.id)).map((item) => item.name).join('、') }}。</p>
-      <p v-else>当前未选择可选材料；发送时只使用三个系统必需底座。</p>
+      <p v-else>当前未选择可选材料；发送时只使用四个系统必需底座。</p>
     </footer>
   </aside>
 </template>

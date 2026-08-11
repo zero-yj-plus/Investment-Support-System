@@ -550,7 +550,7 @@ code 为 6 位数字（自动识别沪深）。
 }
 ```
 
-自由问答始终执行行情与数据时点、风险边界与失效条件、缺失/过期/降级状态三个不可取消底座。输入一只六位代码或证券名录中的完整名称时，服务端先核验标的，再进入同一受治理单股问股链路；同时识别到多只股票、名称歧义或完整名录中的未知代码时只返回确认提示，不猜测标的、不启动可选材料采集。模型不可用时返回确定性市场答复，并在 `done.data_materials.model_used=false` 中明确标记未调用模型。
+自由问答始终执行行情与数据时点、风险边界与失效条件、缺失/过期/降级状态、用户持仓四个不可取消底座。用户持仓读取当前客户实例已保存的最多 20 条持仓，并批量补充行情来源、时点、新鲜度与缺失状态；行情失败时仍保留持仓事实并标记 `degraded`，未录入持仓时标记 `missing`，不得猜测。输入一只六位代码或证券名录中的完整名称时，服务端先核验标的，再进入同一受治理单股问股链路；同时识别到多只股票、名称歧义或完整名录中的未知代码时只返回确认提示，不猜测标的、不启动可选材料采集。模型不可用时返回确定性市场答复，并在 `done.data_materials.model_used=false` 中明确标记未调用模型。
 
 未识别到单股时，`fundamental` 不启动个股财务源并标记 `missing`；`technical` 只能使用市场指数行情、`fund_flow` 只能使用全市场资金方向时均标记 `degraded`，上下文同时携带 scope 警告，禁止把它们表述成某只股票的分时/日 K/指标或今日个股资金流。
 
@@ -562,7 +562,7 @@ code 为 6 位数字（自动识别沪深）。
 
 ### GET /api/chat/data-materials
 
-返回自由问答材料目录、三个系统必需底座以及上限：`max_auto_selected=3`、`max_selected=4`。第一版可选 ID 固定为 `technical | fund_flow | sector | market_context | fundamental | events`；分时、日 K 和技术指标归入 `technical`，公告、互动和新闻归入 `events`，不暴露原始字段级复选框。目录中的 `availability` 只表示发送前支持状态，不表示本轮数据已经可用。
+返回自由问答材料目录、四个系统必需底座以及上限：`max_auto_selected=3`、`max_selected=4`。必需底座 ID 为 `quote_time | risk_boundary | quality_state | holdings`；第一版可选 ID 固定为 `technical | fund_flow | sector | market_context | fundamental | events`。分时、日 K 和技术指标归入 `technical`，公告、互动和新闻归入 `events`，不暴露原始字段级复选框。目录中的 `availability` 只表示发送前支持状态，不表示本轮数据已经可用。
 
 ### POST /api/chat/data-materials/preselect
 

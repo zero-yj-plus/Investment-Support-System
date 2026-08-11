@@ -73,9 +73,11 @@ try {
         'install.bat',
         'start.bat',
         'start-tdx-bridge.bat',
+        'tdx-login-guard.bat',
         'check.bat',
         'upgrade.bat',
-        'docs\TQ_TDX_BRIDGE.md'
+        'docs\TQ_TDX_BRIDGE.md',
+        'docs\WINDOWS_TDX_LOGIN_GUARD.md'
     )
 
     $ReleaseDirectories = @(
@@ -118,15 +120,18 @@ try {
         'install.bat',
         'start.bat',
         'start-tdx-bridge.bat',
+        'tdx-login-guard.bat',
         'scripts\tdx-login-guard\tdx-login-guard.ps1',
         'scripts\tdx-login-guard\tdx-login-guard.config.example.json',
         'scripts\tdx-login-guard\set-tdx-login-credential.ps1',
         'scripts\tdx-login-guard\install-tdx-login-guard.ps1',
         'scripts\tdx-login-guard\uninstall-tdx-login-guard.ps1',
+        'scripts\tdx-login-guard\manage-tdx-login-guard.ps1',
         'check.bat',
         'upgrade.bat',
         'scripts\windows_upgrade.py',
         'docs\TQ_TDX_BRIDGE.md',
+        'docs\WINDOWS_TDX_LOGIN_GUARD.md',
         'requirements.txt'
     )
 

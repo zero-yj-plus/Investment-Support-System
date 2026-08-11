@@ -38,9 +38,11 @@ const dataStamp = computed(() => {
 const healthLabel = computed(() => {
   if (mode.value === 'free') {
     if (!materialReport.value) return `待发送 · 已选 ${selectedDataMaterialIds.value.length}/${maxSelectedDataMaterials.value}`
+    const requiredInjected = materialReport.value.required.filter((item) => item.injected).length
     const injected = materialReport.value.optional.filter((item) => item.injected).length
-    const degraded = materialReport.value.optional.some((item) => item.state === 'degraded' || item.state === 'missing')
-    return `${materialReport.value.model_used ? `已注入 ${injected} 项` : '未调用模型'}${degraded ? ' · 部分缺失/降级' : ''}`
+    const degraded = [...materialReport.value.required, ...materialReport.value.optional]
+      .some((item) => item.state === 'degraded' || item.state === 'missing')
+    return `${materialReport.value.model_used ? `已注入 ${requiredInjected} 项底座 + ${injected} 项可选材料` : '未调用模型'}${degraded ? ' · 部分缺失/降级' : ''}`
   }
   if (!selectedCode.value) return '等待查询'
   if (core.value?.recognized === false || core.value?.state === 'not_found') return '代码未通过核验'

@@ -415,7 +415,7 @@ function Invoke-Win32NamedButton {
                 continue
             }
             if ($DryRun) {
-                Write-GuardLog INFO "DRY-RUN：将调用 Win32 按钮“$($Child.Text)” id=$($Child.ControlId) visible=$($Child.Visible)"
+                Write-GuardLog INFO "DRY-RUN：将调用 Win32 按钮[$($Child.Text)] id=$($Child.ControlId) visible=$($Child.Visible)"
                 return $true
             }
             if ($Child.Visible) {
@@ -615,7 +615,7 @@ function Invoke-UiElement {
     param([Parameter(Mandatory = $true)][System.Windows.Automation.AutomationElement]$Element)
 
     if ($DryRun) {
-        Write-GuardLog INFO "DRY-RUN：将调用控件“$(Get-ElementName $Element)”"
+        Write-GuardLog INFO "DRY-RUN：将调用控件[$(Get-ElementName $Element)]"
         return $true
     }
     try {
@@ -645,7 +645,7 @@ function Invoke-KeyFallback {
         return $false
     }
     if ($DryRun) {
-        Write-GuardLog INFO "DRY-RUN：将向窗口“$(Get-ElementName $Window)”发送 $Keys"
+        Write-GuardLog INFO "DRY-RUN：将向窗口[$(Get-ElementName $Window)]发送 $Keys"
         return $true
     }
     try {
@@ -702,7 +702,7 @@ function Invoke-LoginAction {
     foreach ($Window in $Candidates) {
         $Button = Find-NamedButton -Root $Window -Names @($script:Settings.login_button_names)
         if ($null -ne $Button) {
-            Write-GuardLog WARN "发现登录控件“$(Get-ElementName $Button)”，准备调用。"
+            Write-GuardLog WARN "发现登录控件[$(Get-ElementName $Button)]，准备调用。"
             return Invoke-UiElement -Element $Button
         }
     }
@@ -727,11 +727,11 @@ function Close-LoginDialog {
             continue
         }
         if ($DryRun) {
-            Write-GuardLog INFO "DRY-RUN：将关闭登录对话框“$(Get-ElementName $Window)” class=$($Window.Current.ClassName)"
+            Write-GuardLog INFO "DRY-RUN：将关闭登录对话框[$(Get-ElementName $Window)] class=$($Window.Current.ClassName)"
             return $true
         }
         if ([TdxLoginGuard.NativeMethods]::PostMessage($Handle, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)) {
-            Write-GuardLog WARN "已关闭登录/扫码页面“$(Get-ElementName $Window)”。"
+            Write-GuardLog WARN "已关闭登录/扫码页面[$(Get-ElementName $Window)]。"
             return $true
         }
     }
@@ -754,26 +754,26 @@ function Dismiss-PostLoginPopup {
         }
         $RootHandle = [IntPtr]$Window.Current.NativeWindowHandle
         if ($RootHandle -ne [IntPtr]::Zero -and (Invoke-Win32NamedButton -RootHandle $RootHandle -Names @($script:Settings.dismiss_button_names))) {
-            Write-GuardLog WARN "发现登录后弹窗“$WindowName”的 Win32 关闭按钮，已调用。"
+            Write-GuardLog WARN "发现登录后弹窗[$WindowName]的 Win32 关闭按钮，已调用。"
             return $true
         }
         $Button = Find-NamedButton -Root $Window -Names @($script:Settings.dismiss_button_names)
         if ($null -ne $Button) {
-            Write-GuardLog WARN "发现登录后弹窗“$WindowName”，调用“$(Get-ElementName $Button)”。"
+            Write-GuardLog WARN "发现登录后弹窗[$WindowName]，调用[$(Get-ElementName $Button)]。"
             return Invoke-UiElement -Element $Button
         }
         if ($ClassMatches -and $RootHandle -ne [IntPtr]::Zero) {
             if ($DryRun) {
-                Write-GuardLog INFO "DRY-RUN：TQ 恢复后将关闭对话框“$WindowName” class=$WindowClass"
+                Write-GuardLog INFO "DRY-RUN：TQ 恢复后将关闭对话框[$WindowName] class=$WindowClass"
                 return $true
             }
             if ([TdxLoginGuard.NativeMethods]::PostMessage($RootHandle, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)) {
-                Write-GuardLog WARN "TQ 恢复后已关闭登录/扫码对话框“$WindowName” class=$WindowClass。"
+                Write-GuardLog WARN "TQ 恢复后已关闭登录/扫码对话框[$WindowName] class=$WindowClass。"
                 return $true
             }
         }
         if (Invoke-KeyFallback -Window $Window -Keys '{ESC}') {
-            Write-GuardLog WARN "登录后弹窗“$WindowName”未暴露关闭控件，已使用受限 Esc 回退。"
+            Write-GuardLog WARN "登录后弹窗[$WindowName]未暴露关闭控件，已使用受限 Esc 回退。"
             return $true
         }
     }
@@ -934,7 +934,7 @@ try {
         }
         Write-GuardLog WARN "TQ 登录会话不可用：$script:LastTqError"
         if ([string]$script:Settings.recovery_mode -eq 'close_dialog') {
-            Write-GuardLog ERROR 'close_dialog 单次模式未观察到“健康后失效”转换，拒绝关闭窗口。'
+            Write-GuardLog ERROR 'close_dialog 单次模式未观察到[健康后失效]转换，拒绝关闭窗口。'
             exit 2
         }
         if (Invoke-TdxRecovery) { exit 0 }

@@ -195,6 +195,8 @@ def test_vue_free_chat_material_selector_matches_contract() -> None:
     assert "<StockAskMaterials" in page
     assert "本轮数据材料" in materials
     assert "系统必需" in materials and "不可取消" in materials
+    assert "四个系统必需底座" in materials
+    assert "requiredInjected" in _read("src/components/StockAskPage.vue")
     assert "selectedIds.length" in materials and "maxSelected" in materials
     assert "selectedIds.length >= props.maxSelected" in materials
     assert "恢复系统预选" in materials

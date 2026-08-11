@@ -82,9 +82,82 @@ class _MultiReportStore(_ReportStore):
         return self.reports.get(rtype)
 
 
+class _HoldingReportStore(_ReportStore):
+    @staticmethod
+    def holdings() -> list:
+        return [{
+            "code": "600519",
+            "name": "贵州茅台",
+            "cost": 100.0,
+            "shares": 100.0,
+            "industry": "酿酒",
+        }]
+
+
 async def _minimal_market_context(*, full: bool = True) -> dict:
     assert full is True
     return {"市场总览": {"index": "real-close-snapshot"}}
+
+
+def test_morning_context_injects_holdings_with_batched_quote_metadata(monkeypatch) -> None:
+    fixed_now = datetime(2026, 8, 11, 8, 50, tzinfo=ZoneInfo("Asia/Shanghai"))
+    monkeypatch.setattr(engine_module, "now_cn", lambda: fixed_now)
+    monkeypatch.setattr(engine_module, "prev_trade_day", lambda: "2026-08-10")
+    monkeypatch.setattr(engine_module.news, "us_market", lambda: {"ok": True})
+    monkeypatch.setattr(engine_module.news, "cn_news", lambda: {"items": []})
+    monkeypatch.setattr(engine_module.news, "hk_indexes", lambda: [])
+    monkeypatch.setattr(engine_module.market, "market_limitup", lambda _date: {"stocks": []})
+    monkeypatch.setattr(engine_module.market, "market_sectors", lambda: {"sectors": [], "missing": []})
+    from hermes_trader.analysis import premarket_brief
+    monkeypatch.setattr(premarket_brief, "buyable_pool", lambda _limit: {"ok": True, "stocks": []})
+
+    quote_calls: list[list[str]] = []
+
+    def quick_quotes(codes: list[str]) -> dict[str, dict]:
+        quote_calls.append(codes)
+        return {
+            "600519": {
+                "code": "600519",
+                "name": "贵州茅台",
+                "price": 1297.41,
+                "change_pct": None,
+                "source": "腾讯财经",
+                "as_of": "2026-08-11T08:50:00+08:00",
+                "stale": True,
+                "quote_note": "盘前仅有上一交易日收盘行情",
+            }
+        }
+
+    monkeypatch.setattr(engine_module.stock, "quick_quotes", quick_quotes)
+    engine = Engine(config=None, store=_HoldingReportStore(None), hermes=None)
+
+    ctx = asyncio.run(engine._context_for_report("morning"))
+
+    assert list(ctx)[:2] == ["今日日期", "用户持仓"]
+    assert quote_calls == [["600519"]]
+    assert ctx["用户持仓"][0]["name"] == "贵州茅台"
+    assert ctx["用户持仓"][0]["实时行情"] == {
+        "code": "600519",
+        "name": "贵州茅台",
+        "price": 1297.41,
+        "change_pct": None,
+        "source": "腾讯财经",
+        "as_of": "2026-08-11T08:50:00+08:00",
+        "stale": True,
+        "quote_note": "盘前仅有上一交易日收盘行情",
+    }
+
+
+def test_report_holdings_keep_user_fact_when_quote_is_missing(monkeypatch) -> None:
+    monkeypatch.setattr(engine_module.stock, "quick_quotes", lambda _codes: {})
+    engine = Engine(config=None, store=_HoldingReportStore(None), hermes=None)
+
+    holdings = asyncio.run(engine._enriched_holdings_context())
+
+    assert holdings[0]["code"] == "600519"
+    assert holdings[0]["cost"] == 100.0
+    assert holdings[0]["实时行情"]["price"] is None
+    assert holdings[0]["实时行情"]["missing"] == ["持仓行情获取失败"]
 
 
 def test_close_context_injects_original_morning_plan_and_cockpit(monkeypatch) -> None:

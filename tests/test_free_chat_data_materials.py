@@ -50,6 +50,12 @@ def test_material_selection_is_allowlisted_deduplicated_and_capped() -> None:
         chat_materials.resolve_material_ids(["raw_minute_fields"])
 
 
+def test_free_chat_required_materials_include_holdings() -> None:
+    assert [item["id"] for item in chat_materials.REQUIRED_MATERIALS] == [
+        "quote_time", "risk_boundary", "quality_state", "holdings",
+    ]
+
+
 @pytest.mark.asyncio
 async def test_free_context_only_calls_selected_optional_collectors(monkeypatch) -> None:
     calls: list[str] = []
@@ -66,7 +72,7 @@ async def test_free_context_only_calls_selected_optional_collectors(monkeypatch)
         lambda: calls.append("fund_flow") or {"main_flow_sectors": []},
     )
     engine = engine_mod.Engine.__new__(engine_mod.Engine)
-    engine.store = SimpleNamespace()
+    engine.store = SimpleNamespace(holdings=lambda: [])
     report = chat_materials.empty_report(("sector",))
 
     context = await engine._free_chat_material_context(("sector",), report)
@@ -85,7 +91,7 @@ async def test_generic_fund_flow_is_explicitly_degraded_to_market_scope(monkeypa
         lambda: {"main_flow_sectors": [{"name": "银行", "main_net": 1}]},
     )
     engine = engine_mod.Engine.__new__(engine_mod.Engine)
-    engine.store = SimpleNamespace()
+    engine.store = SimpleNamespace(holdings=lambda: [])
     report = chat_materials.empty_report(("fund_flow",))
 
     context = await engine._free_chat_material_context(("fund_flow",), report)
@@ -94,6 +100,70 @@ async def test_generic_fund_flow_is_explicitly_degraded_to_market_scope(monkeypa
     assert flow_result["state"] == "degraded"
     assert "不作为个股资金流" in flow_result["reason"]
     assert context["个股资金流"]["scope"] == "market_fallback_no_single_stock"
+
+
+@pytest.mark.asyncio
+async def test_free_context_injects_saved_holdings_and_truthful_quote_status(monkeypatch) -> None:
+    monkeypatch.setattr(
+        engine_mod.market, "market_overview",
+        lambda: {"data_date": "2026-08-11", "indexes": [], "source": "test"},
+    )
+    monkeypatch.setattr(
+        engine_mod.stock, "quick_quotes",
+        lambda codes: {
+            "600519": {
+                "code": "600519", "name": "贵州茅台", "price": 1297.41,
+                "source": "腾讯财经", "as_of": "2026-08-11T11:30:00+08:00",
+                "stale": False,
+            }
+        } if codes == ["600519"] else {},
+    )
+    engine = engine_mod.Engine.__new__(engine_mod.Engine)
+    engine.store = SimpleNamespace(holdings=lambda: [{
+        "code": "600519", "name": "贵州茅台", "cost": 100.0, "shares": 100.0,
+    }])
+    report = chat_materials.empty_report(())
+
+    context = await engine._free_chat_material_context((), report)
+    chat_materials.finalize_report(report, model_used=True)
+
+    assert context["用户持仓"][0]["code"] == "600519"
+    assert context["用户持仓"][0]["实时行情"]["price"] == 1297.41
+    holdings_result = next(row for row in report["required"] if row["id"] == "holdings")
+    assert holdings_result["state"] == "complete"
+    assert holdings_result["injected"] is True
+    assert holdings_result["data_date"] == "2026-08-11T11:30:00+08:00"
+    assert "客户持仓存储" in holdings_result["source"]
+
+
+def test_holdings_material_is_degraded_without_quote_but_keeps_user_fact() -> None:
+    fields = chat_materials.holdings_result_fields([{
+        "code": "000001",
+        "name": "平安银行",
+        "cost": 10.0,
+        "shares": 100.0,
+        "实时行情": {
+            "code": "000001", "price": None, "missing": ["持仓行情获取失败"],
+        },
+    }])
+
+    assert fields["state"] == "degraded"
+    assert fields["stale"] is None
+    assert fields["reason"] == "已注入 1 条持仓，其中 1 条行情缺失"
+
+
+def test_holdings_material_marks_stale_quote_as_degraded() -> None:
+    fields = chat_materials.holdings_result_fields([{
+        "code": "600519",
+        "实时行情": {
+            "code": "600519", "price": 1297.41, "source": "腾讯财经",
+            "as_of": "2026-08-11T08:50:00+08:00", "stale": True,
+        },
+    }])
+
+    assert fields["state"] == "degraded"
+    assert fields["stale"] is True
+    assert "非交易时段沿用值" in fields["reason"]
 
 
 @pytest.mark.asyncio

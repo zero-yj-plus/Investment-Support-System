@@ -2362,6 +2362,11 @@ def _populate_stock_material_report(card: dict, report: dict) -> None:
             "stale": bool(quote.get("stale")),
             "reason": "；".join(missing[:3]) if missing else "缺失、过期与降级状态已核验",
         })
+    chat_materials_mod.update_required_result(
+        report,
+        "holdings",
+        **chat_materials_mod.holdings_result_fields(card.get("用户持仓")),
+    )
 
     payloads = card.get("material_payloads") or {}
     technical = payloads.get("technical") if isinstance(payloads, dict) else None
@@ -2661,6 +2666,7 @@ async def _governed_stock_chat_stream(
     )
     explanation_card["selected_perspectives"] = selected_perspectives
     if material_report is not None:
+        explanation_card["用户持仓"] = await _chat_holdings_context(st)
         _populate_stock_material_report(explanation_card, material_report)
     if holding_only_action:
         # 只调整这一轮问答的表达上下文；原始诊断卡和 RiskGate 回执
@@ -2810,6 +2816,27 @@ async def _governed_position_chat_stream(
     yield "\n".join(sections)
 
 
+async def _chat_holdings_context(st) -> list[dict]:
+    """自由问答统一读取当前客户持仓；兼容旧测试桩与降级运行态。"""
+    loader = getattr(getattr(st, "engine", None), "_enriched_holdings_context", None)
+    if callable(loader):
+        try:
+            value = await loader()
+            return value if isinstance(value, list) else []
+        except Exception:  # noqa: BLE001 — 持仓缺失不拖垮自由问答
+            log.exception("自由问答读取持仓上下文失败")
+
+    getter = getattr(getattr(st, "store", None), "holdings", None)
+    if not callable(getter):
+        return []
+    try:
+        rows = await asyncio.to_thread(getter)
+    except Exception:  # noqa: BLE001
+        log.exception("自由问答读取持仓快照失败")
+        return []
+    return [dict(row) for row in (rows or [])[:20] if isinstance(row, dict)]
+
+
 async def _market_bundle_for_chat(
     store,
     data_material_ids: tuple[str, ...] | None = None,
@@ -2906,9 +2933,17 @@ async def _governed_free_chat_stream(
     material_report: dict | None = None,
 ):
     """模型未连接时的自由问答：只回答可由当前市场数据支持的部分。"""
-    bundle = await _market_bundle_for_chat(
-        st.store, data_material_ids, material_report
+    bundle, holdings = await asyncio.gather(
+        _market_bundle_for_chat(st.store, data_material_ids, material_report),
+        _chat_holdings_context(st),
     )
+    bundle["holdings"] = holdings
+    if material_report is not None:
+        chat_materials_mod.update_required_result(
+            material_report,
+            "holdings",
+            **chat_materials_mod.holdings_result_fields(holdings),
+        )
     overview = bundle.get("overview") or {}
     sectors = bundle.get("sectors") or {}
     flow = bundle.get("flow") or {}

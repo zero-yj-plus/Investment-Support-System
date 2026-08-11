@@ -1121,6 +1121,50 @@ class Engine:
             })
         return ctx
 
+    async def _enriched_holdings_context(self) -> list[dict]:
+        """读取当前客户持仓并批量补行情，供各类报告共用。
+
+        持仓是用户事实；行情是可降级证据。报价失败时保留完整持仓，并用结构化
+        missing 明示缺失，不能因为行情源异常把已有持仓误写成“未注入”。
+        """
+        try:
+            holdings = self.store.holdings()
+        except Exception:  # noqa: BLE001 — 读取失败按缺失降级，不拖垮报告/问答
+            log.exception("读取用户持仓失败")
+            return []
+        if not holdings:
+            return []
+
+        def enrich() -> list[dict]:
+            selected = holdings[:20]
+            codes = [
+                str(item.get("code") or "").strip().split(".", 1)[0].zfill(6)
+                for item in selected
+            ]
+            try:
+                quotes = stock.quick_quotes(codes)
+            except Exception:  # noqa: BLE001 — 行情失败不能抹掉用户持仓事实
+                log.exception("报告持仓批量行情获取失败")
+                quotes = {}
+
+            enriched: list[dict] = []
+            for item, code in zip(selected, codes):
+                quote = quotes.get(code)
+                if not isinstance(quote, dict):
+                    quote = {
+                        "code": code,
+                        "price": None,
+                        "change_pct": None,
+                        "source": None,
+                        "as_of": None,
+                        "stale": None,
+                        "missing": ["持仓行情获取失败"],
+                    }
+                enriched.append({**item, "code": code, "实时行情": quote})
+            return enriched
+
+        return await asyncio.to_thread(enrich)
+
     async def _context_for_report(self, rtype: str) -> dict:
         today = now_cn().strftime("%Y-%m-%d")
         if rtype == "morning":
@@ -1160,7 +1204,15 @@ class Engine:
                     ctx["港股辅助"] = []
                 return ctx
 
-            return await asyncio.to_thread(gather)
+            ctx = await asyncio.to_thread(gather)
+            holdings = await self._enriched_holdings_context()
+            # 用户持仓是盘前“持仓处理”章节的直接事实，放在大体量新闻/行情之前，
+            # 避免提示词 60k 注入预算把它从尾部截掉。
+            return {
+                "今日日期": ctx.pop("今日日期"),
+                "用户持仓": holdings,
+                **ctx,
+            }
 
         ctx = await self._market_context(full=True)
         if rtype == "close":
@@ -1284,18 +1336,10 @@ class Engine:
                 sources=(report_ref(draft),),
             )
         if rtype in ("close", "evening"):
-            # 持仓逐只补实时价：收盘复盘/次日策略要给「高开冲X元减、回踩Y元持有」价格条件，
-            # 仅注入原始持仓(代码/成本/股数)而无今日行情，AI 只能写「数据不全」。quick_quote
-            # 走腾讯单票(绕东财、本机可达)，丢线程池避免阻塞事件循环；取不到才标缺失(铁律)。
-            holds = self.store.holdings()
-            if holds:
-                def _enrich_holdings():
-                    return [
-                        {**h, "实时行情": stock.quick_quote(h.get("code", "")) or "数据不全"}
-                        for h in holds[:20]
-                    ]
-                enriched = await asyncio.to_thread(_enrich_holdings)
-                ctx["用户持仓"] = enriched
+            # 与盘前共用同一条持仓事实/批量行情链路，避免不同报告读取口径漂移。
+            enriched = await self._enriched_holdings_context()
+            ctx["用户持仓"] = enriched
+            if enriched:
                 if rtype == "close":
                     # 策略自证：今日处理倾向(规则)落库快照 + 注入；昨日建议用今日真实价回检后注入。
                     # 数字全程走规则/真实价、AI 不参与评分——客户最在意的"策略准不准"由数据自答。
@@ -1316,8 +1360,6 @@ class Engine:
                         if review.get("rows")
                         else "未注入昨日持仓建议快照，无法回检（收盘复盘生成后次日起可对账）"
                     )
-            else:
-                ctx["用户持仓"] = []
             ctx["情绪历史(近10日)"] = self.store.sentiment_history(10)
             # 公开盘后池增强(kpl_list，涨跌停池 + 同花顺公开原因字段)：
             # ① 炸板时间轴(首封→炸板时刻)——早盘炸=承接弱、尾盘炸=获利兑现，复盘情绪节奏的关键证据；
@@ -2092,7 +2134,8 @@ class Engine:
         jobs = {
             "overview": _bounded_thread_call(
                 market.market_overview, timeout=5.0, default={}
-            )
+            ),
+            "holdings": self._enriched_holdings_context(),
         }
         if "sector" in selected:
             jobs["sector"] = _bounded_thread_call(
@@ -2114,6 +2157,7 @@ class Engine:
         values = await asyncio.gather(*(jobs[key] for key in keys))
         collected = dict(zip(keys, values))
         overview = collected.get("overview") or {}
+        holdings = collected.get("holdings") or []
         data_date = overview.get("data_date") or overview.get("ts")
         if material_report is not None:
             required = material_report.get("required") or []
@@ -2138,6 +2182,11 @@ class Engine:
                     "reason": "；".join(str(item) for item in (overview.get("missing") or [])[:3])
                     or "缺失、过期与降级状态已核验",
                 })
+            chat_materials.update_required_result(
+                material_report,
+                "holdings",
+                **chat_materials.holdings_result_fields(holdings),
+            )
             for material_id, key, source_label in (
                 ("technical", "overview", "市场指数行情"),
                 ("fund_flow", "fund_flow", "市场资金方向"),
@@ -2184,6 +2233,7 @@ class Engine:
                 "缺失过期和降级状态": overview.get("missing") or [],
             },
             "本轮材料状态": (material_report or {}).get("optional") or [],
+            "用户持仓": holdings,
         }
         if "technical" in selected:
             context["深度技术与量价"] = {
@@ -2968,6 +3018,8 @@ class Engine:
             "missing": card.get("missing") or [],
             "material_status": (material_report or {}).get("optional") or [],
         }
+        if selected_materials is not None:
+            packet["user_holdings"] = card.get("用户持仓") or []
         if selected_materials is None:
             packet.update({
                 "technical_analysis": card.get("technical_analysis") or {},
@@ -3025,6 +3077,11 @@ class Engine:
                 "未选择的材料没有启动采集，也没有注入，绝不能凭常识补写其事实或数字。"
             )
         )
+        if selected_materials is not None:
+            material_scope_prompt += (
+                "user_holdings 是自由问答的系统必需底座：非空时可结合持仓成本、数量和已核验行情回答；"
+                "为空时只说明未录入持仓，不得猜测用户持有什么。"
+            )
         system = (
             prompts.system_prompt(self.store.knowledge_digest())
             + "\n\n【问股最终成稿·最高优先级】\n"

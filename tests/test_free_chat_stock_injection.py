@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from hermes_trader.analysis import engine as engine_module
+from hermes_trader.analysis import chat_materials
 from hermes_trader.analysis.engine import Engine
 from hermes_trader.api import routes
 
@@ -217,3 +218,61 @@ async def test_api_ambiguous_free_stock_question_requests_clarification(
     assert "平安银行（000001）" in body
     assert "贵州茅台（600519）" in body
     assert "本次不猜测标的" in body
+
+
+@pytest.mark.asyncio
+async def test_free_stock_governed_path_passes_saved_holdings_to_model_card(
+    monkeypatch,
+) -> None:
+    async def fake_card(_state, _code, **_kwargs):
+        return {
+            "code": "600519", "name": "贵州茅台", "recognized": True,
+            "action": "观望", "signal_action": "观望",
+            "market_quote": {
+                "code": "600519", "name": "贵州茅台", "price": 1297.41,
+                "source": "腾讯财经", "as_of": "2026-08-11T11:30:00+08:00",
+            },
+            "trade_plan": {"entry_trigger": "等待确认", "stop": "结构失效"},
+            "risk_decision": {"decision": "watch"},
+        }
+
+    received: dict = {}
+
+    async def holdings_context():
+        return [{
+            "code": "600519", "name": "贵州茅台", "cost": 100.0, "shares": 100.0,
+            "实时行情": {
+                "code": "600519", "price": 1297.41, "source": "腾讯财经",
+                "as_of": "2026-08-11T11:30:00+08:00", "stale": False,
+            },
+        }]
+
+    async def explain(_message, card, **_kwargs):
+        received.update(card)
+        yield ""
+
+    monkeypatch.setattr(routes, "_governed_and_record_diagnosis", fake_card)
+    monkeypatch.setattr(routes, "build_market_context", lambda: {"market_session": "intraday"})
+    state = SimpleNamespace(
+        engine=SimpleNamespace(
+            _enriched_holdings_context=holdings_context,
+            governed_stock_explanation_stream=explain,
+        ),
+        store=SimpleNamespace(),
+    )
+    report = chat_materials.empty_report(())
+
+    _ = "".join([
+        chunk async for chunk in routes._governed_stock_chat_stream(
+            state,
+            "600519",
+            "我的贵州茅台怎么看？",
+            data_material_ids=(),
+            material_report=report,
+        )
+    ])
+
+    assert received["用户持仓"][0]["cost"] == 100.0
+    holdings_result = next(row for row in report["required"] if row["id"] == "holdings")
+    assert holdings_result["state"] == "complete"
+    assert "1 条持仓" in holdings_result["reason"]

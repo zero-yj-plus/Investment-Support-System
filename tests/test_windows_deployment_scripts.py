@@ -73,9 +73,11 @@ def test_windows_packager_includes_all_deployment_entrypoints():
         "install.bat",
         "start.bat",
         "start-tdx-bridge.bat",
+        "tdx-login-guard.bat",
         "check.bat",
         "upgrade.bat",
         "docs\\TQ_TDX_BRIDGE.md",
+        "docs\\WINDOWS_TDX_LOGIN_GUARD.md",
     ):
         assert text.count(f"'{name}'") >= 2
 
@@ -86,6 +88,7 @@ def test_windows_packager_includes_all_deployment_entrypoints():
         "scripts\\tdx-login-guard\\set-tdx-login-credential.ps1",
         "scripts\\tdx-login-guard\\install-tdx-login-guard.ps1",
         "scripts\\tdx-login-guard\\uninstall-tdx-login-guard.ps1",
+        "scripts\\tdx-login-guard\\manage-tdx-login-guard.ps1",
     ):
         assert f"'{name}'" in text
 

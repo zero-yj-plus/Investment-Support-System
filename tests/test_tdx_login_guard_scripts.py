@@ -10,6 +10,7 @@ GUARD_FILES = (
     "set-tdx-login-credential.ps1",
     "install-tdx-login-guard.ps1",
     "uninstall-tdx-login-guard.ps1",
+    "manage-tdx-login-guard.ps1",
 )
 
 
@@ -77,6 +78,10 @@ def test_guard_uses_uia_state_and_real_tq_bridge_verification():
     assert "ConvertTo-SecureString" not in guard
     assert "Get-Credential" not in guard
     assert "[REDACTED]" in guard
+    assert "“" not in guard
+    assert "”" not in guard
+    assert "‘" not in guard
+    assert "’" not in guard
 
 
 def test_guard_installer_uses_interactive_current_user_task_and_safe_uninstall():
@@ -94,3 +99,32 @@ def test_guard_installer_uses_interactive_current_user_task_and_safe_uninstall()
     assert "SupportsShouldProcess" in uninstaller
     assert "-RemoveFiles" in uninstaller
     assert "LOCALAPPDATA" in uninstaller
+
+
+def test_bat_manager_wraps_guard_operations_and_preserves_dpapi_storage():
+    bat = (ROOT / "tdx-login-guard.bat").read_text(encoding="utf-8")
+    manager = _text("manage-tdx-login-guard.ps1")
+
+    assert "%~dp0" in bat
+    assert "manage-tdx-login-guard.ps1" in bat
+    assert "pwsh.exe" in bat
+    assert "powershell.exe" in bat
+    for action in (
+        "Setup",
+        "SetCredential",
+        "Inspect",
+        "Test",
+        "Start",
+        "Stop",
+        "Status",
+        "EditConfig",
+        "Uninstall",
+    ):
+        assert action in manager
+    assert "Import-Clixml" in manager
+    assert "tdx-login-credential.clixml" in manager
+    assert "login_then_close" in manager
+    assert "start_tdx_if_missing = $true" in manager
+    assert "$PowerShellExecutable" in manager
+    assert "Invoke-InstalledGuard" in manager
+    assert "-LogonType Interactive" in _text("install-tdx-login-guard.ps1")

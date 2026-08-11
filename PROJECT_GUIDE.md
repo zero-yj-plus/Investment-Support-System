@@ -485,7 +485,7 @@ FastAPI `/api`，不依赖旧前端。旧版默认不可访问，仅配置开启
 | `run_restricted_hermes.sh` | 校验客户 profile 未漂移后启动受限代理。 |
 | `tdx_dataset_probe.py` | 凭据安全的 TDX 数据集探针；只输出计数、日期、覆盖率和一致性，不打印 URL/key/完整行。 |
 | `tq_tdx_bridge.py` | 仅监听本机的 TQ HTTP → TDX API v2.8 只读兼容桥；固定方法白名单并拒绝交易/账户能力。 |
-| `tdx-login-guard/` | Windows 当前用户 TDX 登录守护组件：主程序、配置模板、DPAPI 凭据设置及计划任务安装/卸载脚本。 |
+| `tdx-login-guard/` | Windows 当前用户 TDX 登录守护组件：主程序、配置模板、DPAPI 凭据设置、计划任务安装/卸载脚本，以及供根目录 BAT 调用的统一管理入口。 |
 
 ## 10. 文档与示例
 

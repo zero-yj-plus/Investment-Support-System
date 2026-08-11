@@ -57,6 +57,7 @@ REQUIRED_MATERIALS: tuple[dict, ...] = (
     {"id": "quote_time", "name": "行情与数据时点"},
     {"id": "risk_boundary", "name": "风险边界与失效条件"},
     {"id": "quality_state", "name": "缺失、过期和降级状态"},
+    {"id": "holdings", "name": "用户持仓"},
 )
 
 _BY_ID = {item["id"]: item for item in MATERIALS}
@@ -170,6 +171,58 @@ def update_result(report: dict, material_id: str, **fields) -> None:
         if item.get("id") == material_id:
             item.update({key: value for key, value in fields.items() if value is not None})
             return
+
+
+def update_required_result(report: dict, material_id: str, **fields) -> None:
+    for item in report.get("required") or []:
+        if item.get("id") == material_id:
+            item.update({key: value for key, value in fields.items() if value is not None})
+            return
+
+
+def holdings_result_fields(holdings) -> dict:
+    """把已读取的持仓上下文归纳为可展示、可审计的材料状态。"""
+    rows = [item for item in (holdings or []) if isinstance(item, dict) and item.get("code")]
+    if not rows:
+        return {
+            "state": "missing",
+            "source": "客户持仓存储",
+            "stale": False,
+            "reason": "用户尚未录入持仓",
+        }
+
+    quotes = [
+        item.get("实时行情")
+        for item in rows
+        if isinstance(item.get("实时行情"), dict)
+    ]
+    usable_quotes = [quote for quote in quotes if quote.get("price") is not None]
+    missing_count = len(rows) - len(usable_quotes)
+    sources = list(dict.fromkeys(
+        str(quote.get("source") or "").strip()
+        for quote in usable_quotes
+        if str(quote.get("source") or "").strip()
+    ))
+    as_of = next((
+        str(quote.get("as_of"))
+        for quote in usable_quotes
+        if quote.get("as_of")
+    ), None)
+    stale = any(bool(quote.get("stale")) for quote in usable_quotes) if usable_quotes else None
+    return {
+        "state": "complete" if missing_count == 0 and not stale else "degraded",
+        "data_date": as_of,
+        "source": "客户持仓存储" + (f" + {' / '.join(sources)}" if sources else ""),
+        "stale": stale,
+        "reason": (
+            f"已注入 {len(rows)} 条持仓，其中 {missing_count} 条行情缺失"
+            if missing_count
+            else (
+                f"已注入 {len(rows)} 条持仓，行情为过期或非交易时段沿用值"
+                if stale else f"已读取并注入 {len(rows)} 条持仓"
+            )
+        ),
+    }
 
 
 def finalize_report(report: dict, *, model_used: bool) -> dict:
