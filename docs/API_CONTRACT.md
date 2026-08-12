@@ -1024,11 +1024,27 @@ status ∈ {ok, down, idle(尚未采集)}；`idle` 不代表不可用，只代�
 
 ## 17. 模拟执行 simulation
 
-模拟执行只写客户数据目录下的本地 SQLite/WAL 账本，不包含券商适配器、账户凭据或真实委托接口。页面和接口始终返回 `simulation_only=true`、`broker_connected=false`。
+模拟执行只写客户数据目录下的本地 SQLite/WAL 账本，不包含券商适配器、账户凭据或真实委托接口。每个系统实例只有一个独立模拟账户，与 `/holdings` 及 `holdings.json` 完全分离。页面和接口始终返回 `simulation_only=true`、`broker_connected=false`。
+
+### GET /api/simulation/account?curve_limit=365
+
+返回账户初始化状态、初始资金、现金、持仓市值、总资产、已实现/未实现/累计盈亏、累计费用、收益率、费用设置、T+1 持仓和向前采集的资产曲线。持仓估值缺少任一真实报价时，`market_value / total_assets / unrealized_pnl / total_pnl / return_pct` 保持 `null`，并返回 `valuation_state=missing` 与 `missing_symbols`，不得用 0 或旧价伪装完整估值。该 GET 只做当前展示估值，不追加曲线点。
+
+### POST /api/simulation/account
+
+创建唯一模拟账户。请求体：`client_request_id`、`initial_cash`、`commission_rate_pct`、`minimum_commission`、`stamp_duty_rate_pct`、`transfer_fee_rate_pct`、可选 `slippage_bps`。所有 `*_rate_pct` 的单位都是百分比，例如万三佣金填写 `0.03`；滑点单位为 bp。初始资金创建后不能直接覆盖，重复创建返回 `409 account_already_initialized`。
+
+### POST /api/simulation/account/settings
+
+按相同单位更新佣金、最低佣金、卖出印花税、双边过户费和模拟滑点。设置只对后续成交生效；每笔成交会保存当时的费用配置和费用分项，不重算历史。
+
+### POST /api/simulation/account/valuation
+
+请求体只需 `client_request_id`。服务端批量读取当前持仓报价并追加一个资产曲线点；缺行情的标的按缺失语义保存，不用旧报价或 0 补齐。资产曲线从账户创建时开始向前记录，不回填迁移前订单或历史行情。
 
 ### GET /api/simulation/status
 
-返回模式、紧急停止、各状态订单数量和最近事件。`manual_approval_required` 固定为 `true`。
+返回模式、账户是否初始化、`A_SHARE_T_PLUS_1` 交收规则、紧急停止、各状态订单数量和最近事件。`manual_approval_required` 固定为 `true`。
 
 ### GET /api/simulation/orders?limit=100&status=proposed
 
@@ -1036,7 +1052,7 @@ status ∈ {ok, down, idle(尚未采集)}；`idle` 不代表不可用，只代�
 
 ### POST /api/simulation/orders
 
-请求体仅接受订单意图：`client_request_id`、`symbol`、`side`、`order_type`、`quantity`、可选 `limit_price`。风险等级、参考价、行情时点和缺失状态由服务端实时读取；即使客户端伪造同名字段也会被忽略。买入缺风险、缺行情、行情陈旧、风险等级不低于 4 或不满足 100 股整手时拒绝。
+请求体仅接受订单意图：`client_request_id`、`symbol`、`side`、`order_type`、`quantity`、可选 `limit_price`。风险等级、参考价、行情时点和缺失状态由服务端读取；即使客户端伪造同名字段也会被忽略。交易时段使用服务端盘中行情 `price_mode=live`；非交易时段允许使用服务端核验的最近交易日收盘快照 `price_mode=latest_close`，并保留 `data_stale=true`、`trade_date`、来源和时点标记。无法核验收盘交易日仍然拒绝。买入缺风险、缺行情、盘中行情陈旧、风险等级不低于 4 或不满足 100 股整手时拒绝。
 
 ### POST /api/simulation/orders/{order_id}/approve
 
@@ -1044,7 +1060,7 @@ status ∈ {ok, down, idle(尚未采集)}；`idle` 不代表不可用，只代�
 
 ### POST /api/simulation/orders/{order_id}/fill
 
-请求体只需要 `client_request_id`。成交价、行情时点和来源均由服务端重新读取，客户端传入的 `market_price / as_of / market_source` 不参与成交。只有已人工批准且未触发紧急停止的订单可模拟成交，并记录滑点。
+请求体只需要 `client_request_id`。成交价、行情时点和来源均由服务端重新读取，客户端传入的 `market_price / as_of / market_source` 不参与成交。只有账户已初始化、已人工批准且未触发紧急停止的订单可模拟成交。买入按成交金额和费用检查现金；卖出按持仓批次执行 A 股 T+1 与 FIFO 成本核算。当日买入批次不可卖，分别返回 `t1_position_locked / insufficient_position / insufficient_cash`。成交价应用账户当前 `slippage_bps` 后还必须满足限价，随后在同一 SQLite 事务中更新现金、批次、费用、已实现盈亏、订单事件和资产快照。
 
 ### POST /api/simulation/orders/{order_id}/cancel
 

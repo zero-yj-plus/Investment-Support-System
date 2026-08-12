@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 import inspect
 import ipaddress
 import json
@@ -26,7 +26,10 @@ from ..data import (market, stock, news, sources, capital_tracker, xverify as xv
                     overseas_source as overseas, deriv_source, mainforce_source as mainforce,
                     free_source as public_data, tdx_api_source as tdx_api,
                     official_disclosure, official_interaction, official_longhu_source)
-from ..data.base import now_cn, prev_trade_day, relay_proxy, trade_day_status, ttl_cache
+from ..data.base import (
+    is_trade_day, next_trade_day, now_cn, prev_trade_day,
+    relay_proxy, trade_day_status, ttl_cache,
+)
 from ..delivery import (
     DELIVERY_RECEIPT_SCHEMA_VERSION,
     MAX_RECEIPT_LIMIT,
@@ -218,12 +221,33 @@ async def _simulation_server_snapshot(request: Request, symbol: str, *, include_
     if not quote:
         missing.append("server_quick_quote")
 
-    # quick_quote currently exposes an exact date for stale/close snapshots and
-    # a freshness flag.  For a live quote, the authoritative receipt timestamp
-    # is the server ledger clock; for a stale quote preserve its source as_of so
-    # the SimulationStore rejects it deterministically.
+    # Price mode A: a fresh in-session quote is live; outside the session the
+    # server may use quick_quote's latest trading-day close.  The close remains
+    # explicitly stale as market data, but is an allowed simulation price mode.
     quote_as_of = quote.get("as_of")
-    as_of = quote_as_of if stale else simulation.current_time()
+    cn_now = now_cn()
+    price_mode = "live"
+    trade_date = cn_now.date().isoformat()
+    as_of = simulation.current_time()
+    source_id = "server_stock_quick_quote_live"
+    if stale:
+        price_mode = "latest_close"
+        source_id = "server_stock_latest_close"
+        quote_date_text = str(quote_as_of or "")[:10]
+        try:
+            quote_date = date.fromisoformat(quote_date_text)
+            same_day_close_ready = quote_date < cn_now.date() or (
+                quote_date == cn_now.date() and (cn_now.hour, cn_now.minute) >= (15, 0)
+            )
+            valid_close_date = same_day_close_ready and is_trade_day(quote_date)
+        except (TypeError, ValueError):
+            valid_close_date = False
+        if valid_close_date:
+            trade_date = quote_date_text
+            as_of = f"{quote_date_text}T15:00:00+08:00"
+        else:
+            missing.append("server_close_trade_date")
+            as_of = None
     if not as_of:
         missing.append("server_market_as_of")
     return {
@@ -232,8 +256,46 @@ async def _simulation_server_snapshot(request: Request, symbol: str, *, include_
         "as_of": as_of,
         "stale": stale,
         "missing": list(dict.fromkeys(missing)),
-        "source_id": "server_stock_quick_quote",
+        "source_id": source_id,
+        "price_mode": price_mode,
+        "trade_date": trade_date,
+        "quote_note": quote.get("quote_note"),
+        "upstream_source": quote.get("source"),
     }
+
+
+def _simulation_trade_date() -> str:
+    today = now_cn().date()
+    if is_trade_day(today):
+        return today.isoformat()
+    return prev_trade_day(today) or today.isoformat()
+
+
+async def _simulation_account_quotes(request: Request) -> dict[str, dict]:
+    symbols = await asyncio.to_thread(_simulation_store(request).account_symbols)
+    if not symbols:
+        return {}
+    try:
+        value = await asyncio.to_thread(stock.quick_quotes, symbols)
+        rows = value if isinstance(value, dict) else {}
+    except Exception:  # noqa: BLE001 - missing valuations stay explicit
+        log.exception("模拟账户批量估值失败 symbols=%s", symbols)
+        rows = {}
+    normalized: dict[str, dict] = {}
+    for symbol in symbols:
+        quote = rows.get(symbol)
+        if not isinstance(quote, dict):
+            continue
+        price = quote.get("price")
+        if not isinstance(price, (int, float)) or isinstance(price, bool) or price <= 0:
+            continue
+        normalized[symbol] = {
+            "price": float(price),
+            "price_mode": "latest_close" if quote.get("stale") else "live",
+            "as_of": quote.get("as_of"),
+            "source": quote.get("source") or "server_stock_quick_quotes",
+        }
+    return normalized
 
 
 _ENTRY_ACTIONS = {"buy", "add", "open", "candidate", "long", "买入", "加仓", "建仓", "候选"}
@@ -1172,6 +1234,105 @@ async def agent_runs(request: Request, limit: int = 30):
 
 # ---------------------------------------------------------------- 模拟执行（只写本地账本，绝不连接券商）
 
+@router.get("/simulation/account")
+async def simulation_account(request: Request, curve_limit: int = 365):
+    try:
+        quotes = await _simulation_account_quotes(request)
+        account = await asyncio.to_thread(
+            _simulation_store(request).account_view,
+            quotes=quotes,
+            trade_date=_simulation_trade_date(),
+            curve_limit=max(1, min(int(curve_limit), 2000)),
+        )
+        return {"ok": True, **account}
+    except SimulationError as exc:
+        return _simulation_error(exc)
+
+
+@router.post("/simulation/account")
+async def simulation_account_initialize(request: Request):
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise SimulationError("invalid_json", "请求体必须是 JSON 对象")
+        result = await asyncio.to_thread(
+            _simulation_store(request).initialize_account,
+            client_request_id=body.get("client_request_id"),
+            initial_cash=body.get("initial_cash"),
+            commission_rate_pct=body.get("commission_rate_pct"),
+            minimum_commission=body.get("minimum_commission"),
+            stamp_duty_rate_pct=body.get("stamp_duty_rate_pct"),
+            transfer_fee_rate_pct=body.get("transfer_fee_rate_pct"),
+            slippage_bps=body.get("slippage_bps", 0),
+        )
+        account = await asyncio.to_thread(
+            _simulation_store(request).account_view,
+            trade_date=_simulation_trade_date(),
+        )
+        return {"ok": True, "simulation_only": True, **result, "account": account}
+    except SimulationError as exc:
+        return _simulation_error(exc)
+    except Exception as exc:
+        if isinstance(exc, (json.JSONDecodeError, UnicodeDecodeError, ValueError)):
+            return _simulation_error(SimulationError("invalid_json", "无效 JSON 请求体"))
+        raise
+
+
+@router.post("/simulation/account/settings")
+async def simulation_account_settings(request: Request):
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise SimulationError("invalid_json", "请求体必须是 JSON 对象")
+        result = await asyncio.to_thread(
+            _simulation_store(request).update_account_settings,
+            client_request_id=body.get("client_request_id"),
+            commission_rate_pct=body.get("commission_rate_pct"),
+            minimum_commission=body.get("minimum_commission"),
+            stamp_duty_rate_pct=body.get("stamp_duty_rate_pct"),
+            transfer_fee_rate_pct=body.get("transfer_fee_rate_pct"),
+            slippage_bps=body.get("slippage_bps", 0),
+        )
+        account = await asyncio.to_thread(
+            _simulation_store(request).account_view,
+            trade_date=_simulation_trade_date(),
+        )
+        return {"ok": True, "simulation_only": True, **result, "account": account}
+    except SimulationError as exc:
+        return _simulation_error(exc)
+    except Exception as exc:
+        if isinstance(exc, (json.JSONDecodeError, UnicodeDecodeError, ValueError)):
+            return _simulation_error(SimulationError("invalid_json", "无效 JSON 请求体"))
+        raise
+
+
+@router.post("/simulation/account/valuation")
+async def simulation_account_valuation(request: Request):
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise SimulationError("invalid_json", "请求体必须是 JSON 对象")
+        quotes = await _simulation_account_quotes(request)
+        trade_date = _simulation_trade_date()
+        result = await asyncio.to_thread(
+            _simulation_store(request).record_account_valuation,
+            client_request_id=body.get("client_request_id"),
+            quotes=quotes,
+            trade_date=trade_date,
+        )
+        account = await asyncio.to_thread(
+            _simulation_store(request).account_view,
+            quotes=quotes,
+            trade_date=trade_date,
+        )
+        return {"ok": True, "simulation_only": True, **result, "account": account}
+    except SimulationError as exc:
+        return _simulation_error(exc)
+    except Exception as exc:
+        if isinstance(exc, (json.JSONDecodeError, UnicodeDecodeError, ValueError)):
+            return _simulation_error(SimulationError("invalid_json", "无效 JSON 请求体"))
+        raise
+
 @router.get("/simulation/status")
 async def simulation_status(request: Request):
     try:
@@ -1220,6 +1381,8 @@ async def simulation_propose_order(request: Request):
             data_as_of=authority["as_of"],
             data_stale=authority["stale"],
             data_missing=authority["missing"],
+            price_mode=authority["price_mode"],
+            trade_date=authority["trade_date"],
         )
         return {"ok": True, "simulation_only": True, **result}
     except SimulationError as exc:
@@ -1262,6 +1425,7 @@ async def simulation_fill_order(order_id: str, request: Request):
         authority = await _simulation_server_snapshot(
             request, str(order.get("symbol") or ""), include_risk=False,
         )
+        valuation_quotes = await _simulation_account_quotes(request)
         result = await asyncio.to_thread(
             simulation.fill,
             order_id,
@@ -1271,6 +1435,13 @@ async def simulation_fill_order(order_id: str, request: Request):
             market_source=authority["source_id"],
             market_stale=authority["stale"],
             market_missing=authority["missing"],
+            price_mode=authority["price_mode"],
+            trade_date=authority["trade_date"],
+            unlock_trade_date=(
+                next_trade_day(date.fromisoformat(authority["trade_date"]))
+                if order.get("side") == "buy" else None
+            ),
+            valuation_quotes=valuation_quotes,
         )
         return {"ok": True, "simulation_only": True, **result}
     except SimulationError as exc:

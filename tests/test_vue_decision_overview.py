@@ -253,7 +253,7 @@ def test_vue_sidebar_rebuilds_the_grouped_desktop_workspace_contract() -> None:
     for child in (
         "决策总览", "盘前报告", "尾盘决策", "今日复盘", "次日策略",
         "涨停题材", "主线深研", "资金追踪", "资金择时", "舆情事件",
-        "我的持仓", "观察池", "问股", "个股诊断", "条件选股",
+        "我的持仓", "观察池", "模拟执行", "问股", "个股诊断", "条件选股",
         "事件掘金", "产业链分析", "公司研究", "全部报告", "知识库",
     ):
         assert f"label: '{child}'" in navigation
@@ -266,11 +266,10 @@ def test_vue_sidebar_rebuilds_the_grouped_desktop_workspace_contract() -> None:
     ):
         assert retired_child not in navigation
         assert f"tab: '{retired_tab}'" not in navigation
-    assert "模拟执行" not in navigation
-    assert "tab: 'simulation'" not in navigation
-    assert "requestedTab === 'simulation'" in app
-    assert "window.history.replaceState(null, '', '#/risk?tab=holdings')" in app
-    assert "retiredSimulationAbsent" in _read("scripts/audit-ui.mjs")
+    assert "tab: 'simulation'" in navigation
+    assert "isSimulation" in app
+    assert "<SimulationPage" in app
+    assert "simulationNavigationPresent" in _read("scripts/audit-ui.mjs")
     assert "tab: 'mainforce'" not in navigation
     assert "主力结构" not in navigation
     assert "更多功能" in sidebar

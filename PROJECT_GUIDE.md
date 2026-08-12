@@ -88,7 +88,7 @@ flowchart LR
 - 产业链/公司研究：Vue 创建 `/api/research/runs` → `research_runs.py` 持有后台协程并按客户落盘 → Engine 生成与治理 → Vue 轮询任务；切页不取消，失败时保留最近成功正文。
 - 个股诊断：`/api/diagnose` → `analysis/diagnosis.py` → `data/stock.py` 与证据网关 → 结构化决策卡；深度解释可调用模型，快速路径不依赖模型。
 - 推荐闭环：建议草案 → 风险闸/人工批准 → append-only 推荐事件 → 到期真实价格回验 → T0/T1/T2/T5 统计。
-- 模拟执行：前端意图 → 服务端重新取风险和行情 → 人工批准 → 本地模拟成交事件；客户端传来的“市场价格”不会被信任。
+- 模拟执行：前端意图 → 服务端重新取风险和行情（盘中实时、盘外最近交易日收盘）→ 人工批准 → 单机完整模拟账户按费用、滑点和 A 股 T+1 本地成交；客户端传来的“市场价格”不会被信任。
 
 ## 4. 推荐阅读顺序
 
@@ -176,7 +176,9 @@ flowchart LR
 | `notify.py` | `GatewaySender`，通过 Hermes `/sethome` 绑定的唯一 home channel 推送。 |
 | `product_state.py` | 北京时间交易阶段、推荐路由和旧路由重定向的确定性状态机。 |
 | `research_runs.py` | 产业链/单公司持久化后台任务；原子保存状态和正文、去重活跃任务、显式取消及启动期中断收口。 |
-| `simulation.py` | 无券商连接的 SQLite 模拟订单状态机、幂等和追加式审计事件。 |
+| `simulation.py` | 无券商连接的 SQLite 模拟订单状态机、幂等、服务端定价模式和追加式审计事件。 |
+| `simulation_account.py` | 单实例完整模拟账户：初始资金、可配置费用/滑点、A 股 T+1 批次、FIFO 盈亏投影与资产曲线。 |
+| `simulation_types.py` | 模拟订单与账户模块共享的稳定哈希小工具。 |
 
 ### 7.2 `agent/`：模型接入层
 
@@ -435,6 +437,7 @@ FastAPI `/api`，不依赖旧前端。旧版默认不可访问，仅配置开启
 | `src/components/MainlineResearchPage.vue`、`MainlineMoneyEffect.vue`、`MainlineCrowdedness.vue`、`MainlineContinuity.vue`、`MainlineLeaders.vue` | 主线深研结论边界、四类结构化证据和各模块独立状态。 |
 | `src/components/HoldingsPage.vue`、`HoldingEditor.vue`、`HoldingsTable.vue` | 我的持仓标题操作、自动成本/市值汇总边界、账本编辑和桌面宽表/移动卡片明细。 |
 | `src/components/WatchlistPage.vue`、`WatchlistItemRow.vue`、`WatchlistEditor.vue`、`WatchlistImportDialog.vue` | 观察池紧凑单行列表、服务端双周期价格边界、逐项数据健康、显式核验编辑及 TXT 批量导入预览。 |
+| `src/components/SimulationPage.vue`、`SimulationActionDialog.vue` | 本地模拟订单、人工批准、服务端行情模拟成交、撤单、紧急停止与追加式事件链；不连接券商。 |
 | `src/components/TomorrowStrategyPage.vue`、`TomorrowDecisionSummary.vue`、`TomorrowWatchlist.vue`、`TomorrowDataHealth.vue` | 次日策略的风险底座、观察池触发条件、依据健康和安全报告工作区。 |
 | `src/components/StockAsk*.vue` | 盘中问股/自由问答的模式切换、隔离历史、对话、安全消息节点、标的证据、本轮材料选择与等高输入区。 |
 | `src/components/Diagnosis*.vue` | 个股诊断的代码查询、确定性结论、风险/价格边界、结构化证据与数据治理。 |
@@ -454,6 +457,7 @@ FastAPI `/api`，不依赖旧前端。旧版默认不可访问，仅配置开启
 | `src/composables/useMainlineResearch.ts` | 主线深研四路有界请求、共享底座预热、局部降级、自动刷新和卸载清理。 |
 | `src/composables/useHoldings.ts` | 持仓、批量报价、单票核验与整体保存的独立请求控制、覆盖保护、自动刷新和卸载清理。 |
 | `src/composables/useWatchlist.ts` | 观察池读取、代码核验、逐条 CRUD、原子批量追加、区间重算排队、自动刷新与独立请求卸载清理；`utils/watchlistImport.ts` 负责东方财富/同花顺 TXT 的本地解码、解析和预去重。 |
+| `src/composables/useSimulation.ts` | 模拟状态与订单读取、幂等请求 ID、人工批准/成交/撤单/紧停写操作、服务端模拟边界校验和卸载中止。 |
 | `src/composables/useTomorrowStrategy.ts` | 次日策略报告与观察池的独立请求、SSE 生成、推送提交语义、自动刷新和卸载清理。 |
 | `src/composables/useStockAsk.ts` | 问股模式隔离、材料预选、核心/增强证据、会话、SSE、附件和生命周期资源的独立控制与局部降级。 |
 | `src/composables/useDiagnosis.ts` | 快速报价与正式诊断的独立请求控制、跨页代码意图、刷新保留和卸载清理。 |
@@ -468,6 +472,7 @@ FastAPI `/api`，不依赖旧前端。旧版默认不可访问，仅配置开启
 | `src/styles.css` | 深浅主题、响应式断点、焦点和 reduced-motion 规则。 |
 | `scripts/audit-ui.mjs` | 使用本机 Chrome + axe-core 检查已迁移页面的 375/768/1024/1440 布局、深浅主题、关键状态和 WCAG。 |
 | `scripts/audit-watchlist-import.mjs` | 对观察池 TXT 导入预览执行桌面/375px 布局、格式识别、跳过语义和 axe-core 无障碍门禁。 |
+| `scripts/audit-simulation-ui.mjs` | 对模拟执行页执行 1440px 暗/亮主题、375px 移动布局、完整批准/成交/紧停恢复交互和 axe-core 门禁。 |
 
 设计来源见 `design-system/wudi-decision-console/MASTER.md` 和页面覆盖文件。
 构建运行 `npm run build`；自动 UI 审计运行 `npm run audit:ui`。
@@ -581,7 +586,8 @@ FastAPI `/api`，不依赖旧前端。旧版默认不可访问，仅配置开启
 | `test_restricted_client_runtime.py` | 单/多客户上下文解析和显式客户要求。 |
 | `test_settings_product_semantics.py` | 交付状态、就绪度和真实重试动作。 |
 | `test_settings_security.py` | 模型端点 SSRF 防护和飞书官方域名校验。 |
-| `test_simulation.py` | 人工批准、整手、风险、成交、幂等和紧急停止。 |
+| `test_simulation.py` | 人工批准、整手、风险、成交、账户资金、费用、T+1、FIFO 盈亏、幂等和紧急停止。 |
+| `test_vue_simulation.py` | Vue 模拟账户、持仓盈亏、资产曲线、服务端权威边界、订单生命周期、请求清理和定向 UI 审计契约。 |
 
 ### 11.4 前端、研究功能与业务闭环
 

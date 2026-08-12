@@ -1411,7 +1411,7 @@ try {
         configuredBrandVisible: document.querySelector('.brand__copy strong')?.textContent?.trim() === '审计白标'
           && document.querySelector('.brand__copy > span')?.textContent?.trim() === 'A 股决策支持'
           && document.title.endsWith('· 审计白标'),
-        retiredSimulationAbsent: !document.querySelector('#primary-navigation')?.textContent?.includes('模拟执行'),
+        simulationNavigationPresent: document.querySelector('#primary-navigation')?.textContent?.includes('模拟执行') === true,
         heatmapFallbackVisible: document.body.innerText.includes('面积改用 |涨跌幅|')
           && document.querySelectorAll('.sector-treemap rect').length === 9,
         heatmapLabelHierarchy: {
@@ -3840,7 +3840,7 @@ const failed = report.some((item) =>
   (item.layout?.overflow || 0) > 0
   || item.layout?.mainContentPresent === false
   || item.layout?.configuredBrandVisible === false
-  || item.layout?.retiredSimulationAbsent === false
+  || item.layout?.simulationNavigationPresent === false
   || (item.layout && item.layout.mainContentHeight < 500)
   || item.layout?.heatmapFallbackVisible === false
   || (item.scrollResetOnNavigation && Object.values(item.scrollResetOnNavigation).some((value) => value !== true))

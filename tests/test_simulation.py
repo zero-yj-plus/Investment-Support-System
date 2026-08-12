@@ -30,11 +30,21 @@ def clock() -> Clock:
 
 @pytest.fixture
 def store(tmp_path, clock: Clock) -> SimulationStore:
-    return SimulationStore(
+    value = SimulationStore(
         tmp_path / "simulation.sqlite3",
         clock=clock,
         max_market_age_seconds=120,
     )
+    value.initialize_account(
+        client_request_id="req-fixture-account",
+        initial_cash=1_000_000,
+        commission_rate_pct=0.03,
+        minimum_commission=5,
+        stamp_duty_rate_pct=0.05,
+        transfer_fee_rate_pct=0.002,
+        slippage_bps=0,
+    )
+    return value
 
 
 def proposal(clock: Clock, request_id: str, **overrides):
@@ -87,6 +97,8 @@ def test_manual_approval_is_required_before_fill_and_slippage_is_recorded(
         market_price=10.1,
         as_of=clock().isoformat(),
         market_source="tencent_quote",
+        trade_date="2026-07-13",
+        unlock_trade_date="2026-07-14",
     )["order"]
 
     assert filled["status"] == "filled"
@@ -104,6 +116,8 @@ def test_manual_approval_is_required_before_fill_and_slippage_is_recorded(
         market_price=10.1,
         as_of=clock().isoformat(),
         market_source="tencent_quote",
+        trade_date="2026-07-13",
+        unlock_trade_date="2026-07-14",
     )
     assert fill_replay["idempotent_replay"] is True
     assert [event["event_type"] for event in fill_replay["order"]["events"]].count("filled") == 1
@@ -193,6 +207,8 @@ def test_fill_rejects_stale_future_or_untrusted_market_evidence(
             market_price=10.1 + index * 0.01,
             as_of=as_of,
             market_source=source,
+            trade_date="2026-07-13",
+            unlock_trade_date="2026-07-14",
         )["order"]
         assert rejected["status"] == "rejected"
         assert reason in rejected["rejection_reason"]
@@ -213,6 +229,8 @@ def test_limit_price_must_be_marketable(store: SimulationStore, clock: Clock) ->
         market_price=10.0,
         as_of=clock().isoformat(),
         market_source="tencent_quote",
+        trade_date="2026-07-13",
+        unlock_trade_date="2026-07-14",
     )["order"]
 
     assert rejected["status"] == "rejected"
@@ -237,10 +255,147 @@ def test_market_order_can_fill_after_manual_approval(store: SimulationStore, clo
         market_price=10.02,
         as_of=clock().isoformat(),
         market_source="tdx_api_quote",
+        trade_date="2026-07-13",
+        unlock_trade_date="2026-07-14",
     )["order"]
 
     assert order["status"] == "filled"
     assert order["order_type"] == "market"
+
+
+def test_full_account_applies_fees_t1_fifo_pnl_and_equity_curve(
+    store: SimulationStore, clock: Clock,
+) -> None:
+    buy_id = store.propose(**proposal(clock, "req-account-buy"))["order"]["order_id"]
+    store.approve(buy_id, client_request_id="req-account-buy-ok", approved_by="operator")
+    bought = store.fill(
+        buy_id,
+        client_request_id="req-account-buy-fill",
+        market_price=10.0,
+        as_of=clock().isoformat(),
+        market_source="tencent_quote",
+        trade_date="2026-07-13",
+        unlock_trade_date="2026-07-14",
+    )["order"]
+
+    assert bought["total_fee"] == pytest.approx(5.02)
+    assert bought["net_cash_change"] == pytest.approx(-1005.02)
+    missing_valuation = store.account_view(quotes={}, trade_date="2026-07-13")
+    assert missing_valuation["valuation_state"] == "missing"
+    assert missing_valuation["total_assets"] is None
+    assert missing_valuation["missing_symbols"] == ["600519"]
+    same_day_sell = store.propose(**proposal(
+        clock, "req-account-sell-t0", side="sell", limit_price=9.5,
+    ))["order"]
+    store.approve(
+        same_day_sell["order_id"],
+        client_request_id="req-account-sell-t0-ok",
+        approved_by="operator",
+    )
+    locked = store.fill(
+        same_day_sell["order_id"],
+        client_request_id="req-account-sell-t0-fill",
+        market_price=11.0,
+        as_of=clock().isoformat(),
+        market_source="tencent_quote",
+        trade_date="2026-07-13",
+    )["order"]
+    assert locked["status"] == "rejected"
+    assert locked["rejection_reason"] == "t1_position_locked"
+
+    same_day_view = store.account_view(trade_date="2026-07-13")
+    assert same_day_view["positions"][0]["available_quantity"] == 0
+    assert same_day_view["positions"][0]["t1_locked_quantity"] == 100
+
+    clock.advance(24 * 60 * 60)
+    sell_id = store.propose(**proposal(
+        clock, "req-account-sell-t1", side="sell", limit_price=10.5,
+    ))["order"]["order_id"]
+    store.approve(sell_id, client_request_id="req-account-sell-t1-ok", approved_by="operator")
+    sold = store.fill(
+        sell_id,
+        client_request_id="req-account-sell-t1-fill",
+        market_price=11.0,
+        as_of=clock().isoformat(),
+        market_source="tencent_quote",
+        trade_date="2026-07-14",
+    )["order"]
+    assert sold["status"] == "filled"
+    assert sold["commission_fee"] == pytest.approx(5.0)
+    assert sold["stamp_duty_fee"] == pytest.approx(0.55)
+    assert sold["transfer_fee"] == pytest.approx(0.02)
+    assert sold["realized_pnl"] == pytest.approx(89.41)
+
+    account = store.account_view(trade_date="2026-07-14")
+    assert account["cash"] == pytest.approx(1_000_089.41)
+    assert account["total_assets"] == pytest.approx(1_000_089.41)
+    assert account["realized_pnl"] == pytest.approx(89.41)
+    assert account["total_pnl"] == pytest.approx(89.41)
+    assert account["total_fees"] == pytest.approx(10.59)
+    assert account["positions"] == []
+    assert len(account["equity_curve"]) == 3
+
+
+def test_account_settings_are_prospective_and_initial_cash_is_immutable(
+    store: SimulationStore,
+) -> None:
+    changed = store.update_account_settings(
+        client_request_id="req-settings-update",
+        commission_rate_pct=0.02,
+        minimum_commission=0,
+        stamp_duty_rate_pct=0.05,
+        transfer_fee_rate_pct=0.002,
+        slippage_bps=3,
+    )
+    replay = store.update_account_settings(
+        client_request_id="req-settings-update",
+        commission_rate_pct=0.02,
+        minimum_commission=0,
+        stamp_duty_rate_pct=0.05,
+        transfer_fee_rate_pct=0.002,
+        slippage_bps=3,
+    )
+    assert changed["idempotent_replay"] is False
+    assert replay["idempotent_replay"] is True
+    assert store.account_view(trade_date="2026-07-13")["fee_settings"]["slippage_bps"] == 3
+
+    with pytest.raises(SimulationError) as exc_info:
+        store.initialize_account(
+            client_request_id="req-account-second",
+            initial_cash=2_000_000,
+            commission_rate_pct=0.03,
+            minimum_commission=5,
+            stamp_duty_rate_pct=0.05,
+            transfer_fee_rate_pct=0.002,
+        )
+    assert exc_info.value.code == "account_already_initialized"
+
+
+def test_fill_rejects_insufficient_cash_without_mutating_account(
+    store: SimulationStore, clock: Clock,
+) -> None:
+    order_id = store.propose(**proposal(
+        clock,
+        "req-cash-create",
+        reference_price=20_000,
+        limit_price=21_000,
+    ))["order"]["order_id"]
+    store.approve(order_id, client_request_id="req-cash-approve", approved_by="operator")
+    rejected = store.fill(
+        order_id,
+        client_request_id="req-cash-fill",
+        market_price=20_000,
+        as_of=clock().isoformat(),
+        market_source="tencent_quote",
+        trade_date="2026-07-13",
+        unlock_trade_date="2026-07-14",
+    )["order"]
+    assert rejected["status"] == "rejected"
+    assert rejected["rejection_reason"] == "insufficient_cash"
+    account = store.account_view(trade_date="2026-07-13")
+    assert account["cash"] == pytest.approx(1_000_000)
+    assert account["positions"] == []
+    assert len(account["equity_curve"]) == 1
 
 
 def test_all_successful_writes_are_idempotent_and_conflicts_are_blocked(
@@ -443,11 +598,61 @@ def _install_server_authority(monkeypatch, clock: Clock, quote_state: dict, *, r
         return {"risk_level": risk_level, "missing": []}
 
     monkeypatch.setattr(routes, "_pulse_locked", pulse)
+    monkeypatch.setattr(
+        routes,
+        "now_cn",
+        lambda: clock().astimezone(timezone(timedelta(hours=8))),
+    )
+    monkeypatch.setattr(routes, "is_trade_day", lambda value: value.weekday() < 5)
+    monkeypatch.setattr(routes, "next_trade_day", lambda _value: "2026-07-14")
     monkeypatch.setattr(routes.stock, "quick_quote", lambda _symbol: {
         "price": quote_state["price"],
-        "as_of": clock().isoformat(),
+        "as_of": quote_state.get("as_of", clock().isoformat()),
         "stale": quote_state.get("stale", False),
     })
+
+
+def test_simulation_account_api_initializes_updates_and_records_curve(
+    tmp_path, clock: Clock, monkeypatch,
+) -> None:
+    ledger = SimulationStore(tmp_path / "account-api.sqlite3", clock=clock)
+    monkeypatch.setattr(
+        routes,
+        "now_cn",
+        lambda: clock().astimezone(timezone(timedelta(hours=8))),
+    )
+    monkeypatch.setattr(routes, "is_trade_day", lambda value: value.weekday() < 5)
+
+    before = asyncio.run(routes.simulation_account(Request(ledger)))
+    assert before["initialized"] is False
+
+    created = asyncio.run(routes.simulation_account_initialize(Request(ledger, {
+        "client_request_id": "req-api-account-create",
+        "initial_cash": 500_000,
+        "commission_rate_pct": 0.03,
+        "minimum_commission": 5,
+        "stamp_duty_rate_pct": 0.05,
+        "transfer_fee_rate_pct": 0.002,
+        "slippage_bps": 1,
+    })))
+    assert created["account"]["cash"] == pytest.approx(500_000)
+    assert created["account"]["fee_settings"]["slippage_bps"] == 1
+
+    settings = asyncio.run(routes.simulation_account_settings(Request(ledger, {
+        "client_request_id": "req-api-account-settings",
+        "commission_rate_pct": 0.02,
+        "minimum_commission": 0,
+        "stamp_duty_rate_pct": 0.05,
+        "transfer_fee_rate_pct": 0.002,
+        "slippage_bps": 2,
+    })))
+    assert settings["account"]["fee_settings"]["commission_rate_pct"] == pytest.approx(0.02)
+
+    valued = asyncio.run(routes.simulation_account_valuation(Request(ledger, {
+        "client_request_id": "req-api-account-value",
+    })))
+    assert valued["account"]["valuation_state"] == "exact"
+    assert len(valued["account"]["equity_curve"]) == 2
 
 
 def test_simulation_api_exposes_lifecycle_without_broker(
@@ -494,7 +699,7 @@ def test_simulation_api_exposes_lifecycle_without_broker(
     ))
     assert filled["order"]["status"] == "filled"
     assert filled["order"]["market_price"] == 10.1
-    assert filled["order"]["market_source"] == "server_stock_quick_quote"
+    assert filled["order"]["market_source"] == "server_stock_quick_quote_live"
     clock.advance(30)
     quote_state.update(price=99.0, stale=True)
     fill_replay = asyncio.run(routes.simulation_fill_order(
@@ -572,7 +777,7 @@ def test_network_retry_replays_first_proposal_when_server_snapshot_changes_but_i
     assert payload["error_code"] == "idempotency_conflict"
 
 
-def test_simulation_api_fill_fails_closed_on_server_stale_quote(
+def test_simulation_api_accepts_server_verified_latest_close_outside_session(
     store: SimulationStore, clock: Clock, monkeypatch,
 ) -> None:
     quote_state = {"price": 10.0, "stale": False}
@@ -585,7 +790,7 @@ def test_simulation_api_fill_fails_closed_on_server_stale_quote(
         order_id,
         Request(store, {"client_request_id": "req-stale-api-approve", "approved_by": "operator"}),
     ))
-    quote_state["stale"] = True
+    quote_state.update(stale=True, as_of="2026-07-10")
 
     filled = asyncio.run(routes.simulation_fill_order(
         order_id,
@@ -597,8 +802,10 @@ def test_simulation_api_fill_fails_closed_on_server_stale_quote(
         }),
     ))
 
-    assert filled["order"]["status"] == "rejected"
-    assert "market_data_stale" in filled["order"]["rejection_reason"]
+    assert filled["order"]["status"] == "filled"
+    assert filled["order"]["price_mode"] == "latest_close"
+    assert filled["order"]["trade_date"] == "2026-07-10"
+    assert filled["order"]["market_source"] == "server_stock_latest_close"
 
 
 def test_simulation_api_returns_stable_manual_approval_error(

@@ -18,6 +18,8 @@ import threading
 from typing import Any, Callable
 import uuid
 
+from .simulation_account import SimulationAccountLedger
+
 
 ORDER_STATES = {"proposed", "approved", "filled", "rejected", "cancelled"}
 TERMINAL_STATES = {"filled", "rejected", "cancelled"}
@@ -176,6 +178,26 @@ class SimulationStore:
             for column in ("last_reset_by", "last_reset_reason", "last_reset_at"):
                 if column not in state_columns:
                     conn.execute(f"ALTER TABLE simulation_state ADD COLUMN {column} TEXT")
+            order_columns = {
+                row["name"] for row in conn.execute("PRAGMA table_info(simulation_orders)").fetchall()
+            }
+            order_migrations = {
+                "price_mode": "TEXT",
+                "trade_date": "TEXT",
+                "raw_quote_price": "REAL",
+                "gross_amount": "REAL",
+                "commission_fee": "REAL",
+                "stamp_duty_fee": "REAL",
+                "transfer_fee": "REAL",
+                "total_fee": "REAL",
+                "net_cash_change": "REAL",
+                "realized_pnl": "REAL",
+                "account_applied": "INTEGER NOT NULL DEFAULT 0",
+            }
+            for column, definition in order_migrations.items():
+                if column not in order_columns:
+                    conn.execute(f"ALTER TABLE simulation_orders ADD COLUMN {column} {definition}")
+            SimulationAccountLedger.init_schema(conn)
         try:
             os.chmod(self.path, 0o600)
         except OSError:
@@ -253,6 +275,10 @@ class SimulationStore:
             data_missing = []
         order = dict(row)
         order["data_stale"] = bool(order.get("data_stale"))
+        order["account_applied"] = bool(order.get("account_applied"))
+        order["price_mode"] = order.get("price_mode") or (
+            "latest_close" if order["data_stale"] else "live"
+        )
         order["data_missing"] = data_missing if isinstance(data_missing, list) else []
         order.pop("data_missing_json", None)
         order["simulation_only"] = True
@@ -346,6 +372,8 @@ class SimulationStore:
         data_as_of: Any = None,
         data_stale: Any = False,
         data_missing: Any = None,
+        price_mode: Any = "live",
+        trade_date: Any = None,
     ) -> dict[str, Any]:
         request_id = self._validate_request_id(client_request_id)
         symbol_text = str(symbol or "").strip()
@@ -376,6 +404,8 @@ class SimulationStore:
         valid_quantity = isinstance(quantity, int) and not isinstance(quantity, bool) and quantity > 0
         valid_risk = isinstance(risk_level, int) and not isinstance(risk_level, bool)
         derived_data_stale = bool(data_stale)
+        price_mode_text = str(price_mode or "").strip().lower()
+        trade_date_text = str(trade_date or "").strip()[:10]
 
         reasons: list[str] = []
         if not _SYMBOL_RE.fullmatch(symbol_text):
@@ -394,25 +424,30 @@ class SimulationStore:
             reasons.append("invalid_limit_price")
         if type_text == "market" and limit_price is not None:
             reasons.append("market_order_cannot_have_limit_price")
+        if price_mode_text not in {"live", "latest_close"}:
+            reasons.append("invalid_price_mode")
+        if price_mode_text == "latest_close" and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", trade_date_text):
+            reasons.append("trade_date_missing_or_invalid")
 
         if side_text == "buy":
             if not valid_risk:
                 reasons.append("risk_level_missing_or_invalid")
             elif risk_level >= 4:
                 reasons.append("risk_level_gte_4")
-            if bool(data_stale):
+            if bool(data_stale) and price_mode_text != "latest_close":
                 reasons.append("data_stale")
             if missing:
                 reasons.append("data_missing")
             if data_time is None:
                 reasons.append("data_as_of_missing_or_invalid")
             else:
-                age = (now - data_time).total_seconds()
-                if age < 0:
-                    reasons.append("data_as_of_future")
-                elif age > self.max_market_age_seconds:
-                    reasons.append("data_stale")
-                    derived_data_stale = True
+                if price_mode_text == "live":
+                    age = (now - data_time).total_seconds()
+                    if age < 0:
+                        reasons.append("data_as_of_future")
+                    elif age > self.max_market_age_seconds:
+                        reasons.append("data_stale")
+                        derived_data_stale = True
 
         reasons = list(dict.fromkeys(reasons))
         with self._lock, self._connect() as conn:
@@ -431,16 +466,17 @@ class SimulationStore:
             conn.execute(
                 """INSERT INTO simulation_orders(
                        order_id,symbol,side,order_type,quantity,limit_price,reference_price,
-                       risk_level,data_as_of,data_stale,data_missing_json,status,rejection_reason,
-                       created_at,updated_at
-                   ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                       risk_level,data_as_of,data_stale,data_missing_json,price_mode,trade_date,
+                       status,rejection_reason,created_at,updated_at
+                   ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     order_id, symbol_text, side_text, type_text,
                     quantity if valid_quantity else None, normalized_limit, ref_price,
                     risk_level if valid_risk else None,
                     _iso(data_time) if data_time else None,
                     1 if derived_data_stale else 0,
-                    json.dumps(missing, ensure_ascii=False), status, rejection,
+                    json.dumps(missing, ensure_ascii=False), price_mode_text, trade_date_text or None,
+                    status, rejection,
                     now_text, now_text,
                 ),
             )
@@ -511,6 +547,10 @@ class SimulationStore:
         market_source: Any,
         market_stale: Any = False,
         market_missing: Any = None,
+        price_mode: Any = "live",
+        trade_date: Any = None,
+        unlock_trade_date: Any = None,
+        valuation_quotes: dict[str, dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         request_id = self._validate_request_id(client_request_id)
         source = str(market_source or "").strip()
@@ -522,21 +562,29 @@ class SimulationStore:
         now_text = _iso(now)
         price = _positive_price(market_price)
         market_time = _parse_time(as_of)
+        price_mode_text = str(price_mode or "").strip().lower()
+        trade_date_text = str(trade_date or "").strip()[:10]
+        unlock_date_text = str(unlock_trade_date or "").strip()[:10]
         reasons: list[str] = []
         if price is None:
             reasons.append("invalid_market_price")
         if market_time is None:
             reasons.append("market_as_of_missing_or_invalid")
         else:
-            age = (now - market_time).total_seconds()
-            if age < 0:
-                reasons.append("market_as_of_future")
-            elif age > self.max_market_age_seconds:
-                reasons.append("market_data_stale")
+            if price_mode_text == "live":
+                age = (now - market_time).total_seconds()
+                if age < 0:
+                    reasons.append("market_as_of_future")
+                elif age > self.max_market_age_seconds:
+                    reasons.append("market_data_stale")
         if source.lower() in _UNTRUSTED_MARKET_SOURCES:
             reasons.append("real_market_source_required")
-        if bool(market_stale):
+        if bool(market_stale) and price_mode_text != "latest_close":
             reasons.append("market_data_stale")
+        if price_mode_text not in {"live", "latest_close"}:
+            reasons.append("invalid_price_mode")
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", trade_date_text):
+            reasons.append("trade_date_missing_or_invalid")
         if isinstance(market_missing, list) and any(str(item).strip() for item in market_missing):
             reasons.append("market_data_missing")
         elif market_missing not in (None, [], ""):
@@ -558,11 +606,21 @@ class SimulationStore:
                 )
             if self._is_emergency_stopped(conn):
                 reasons.append("emergency_stop_active")
+            account_plan: dict[str, Any] = {}
+            if not reasons:
+                account_plan, account_reasons = SimulationAccountLedger.plan_fill(
+                    conn,
+                    order=order,
+                    quote_price=float(price),
+                    trade_date=trade_date_text,
+                )
+                reasons.extend(account_reasons)
+            execution_price = float(account_plan.get("execution_price") or price or 0)
             if not reasons and order["order_type"] == "limit":
                 limit_price = float(order["limit_price"])
-                if order["side"] == "buy" and price > limit_price:
+                if order["side"] == "buy" and execution_price > limit_price:
                     reasons.append("buy_limit_not_marketable")
-                if order["side"] == "sell" and price < limit_price:
+                if order["side"] == "sell" and execution_price < limit_price:
                     reasons.append("sell_limit_not_marketable")
 
             if reasons:
@@ -581,17 +639,44 @@ class SimulationStore:
                 )
                 return {"idempotent_replay": False, "order": self._order_in_conn(conn, order_id)}
 
+            if valuation_quotes is not None:
+                SimulationAccountLedger.replace_position_prices(
+                    conn,
+                    valuation_quotes,
+                    updated_at=now_text,
+                    preserve_symbols={str(order["symbol"])},
+                )
+            financial = SimulationAccountLedger.apply_fill(
+                conn,
+                order=order,
+                plan=account_plan,
+                client_request_id=request_id,
+                quote_price=float(price),
+                price_mode=price_mode_text,
+                market_as_of=_iso(market_time),
+                market_source=source,
+                trade_date=trade_date_text,
+                unlock_trade_date=unlock_date_text or None,
+                created_at=now_text,
+            )
             reference = float(order["reference_price"])
-            adverse_per_share = price - reference if order["side"] == "buy" else reference - price
+            adverse_per_share = execution_price - reference if order["side"] == "buy" else reference - execution_price
             slippage_bps = adverse_per_share / reference * 10_000
             slippage_value = adverse_per_share * int(order["quantity"])
             conn.execute(
                 """UPDATE simulation_orders SET
-                       status='filled',market_price=?,market_as_of=?,market_source=?,
+                       status='filled',market_price=?,raw_quote_price=?,market_as_of=?,market_source=?,
+                       price_mode=?,trade_date=?,gross_amount=?,commission_fee=?,stamp_duty_fee=?,
+                       transfer_fee=?,total_fee=?,net_cash_change=?,realized_pnl=?,account_applied=1,
                        slippage_per_share=?,slippage_bps=?,slippage_value=?,filled_at=?,updated_at=?
                    WHERE order_id=? AND status='approved'""",
                 (
-                    price, _iso(market_time), source,
+                    execution_price, price, _iso(market_time), source,
+                    price_mode_text, trade_date_text, financial["gross_amount"],
+                    financial["commission_fee"], financial["stamp_duty_fee"],
+                    financial["transfer_fee"], financial["total_fee"],
+                    round(financial["cash_after"] - float(account_plan["cash_before"]), 2),
+                    financial["realized_pnl"],
                     round(adverse_per_share, 6), round(slippage_bps, 4), round(slippage_value, 4),
                     now_text, now_text, order_id,
                 ),
@@ -602,8 +687,16 @@ class SimulationStore:
                 from_status="approved", to_status="filled",
                 client_request_id=request_id, request_hash=request_hash,
                 detail={
-                    "market_price": price, "market_as_of": _iso(market_time),
-                    "market_source": source, "slippage_bps": round(slippage_bps, 4),
+                    "market_price": execution_price, "raw_quote_price": price,
+                    "market_as_of": _iso(market_time), "market_source": source,
+                    "price_mode": price_mode_text, "trade_date": trade_date_text,
+                    "slippage_bps": round(slippage_bps, 4),
+                    "fees": {
+                        "commission": financial["commission_fee"],
+                        "stamp_duty": financial["stamp_duty_fee"],
+                        "transfer": financial["transfer_fee"],
+                        "total": financial["total_fee"],
+                    },
                 },
                 created_at=now_text,
             )
@@ -779,6 +872,106 @@ class SimulationStore:
                 ).fetchall()
             return [self._order_from_row(conn, row) for row in rows]
 
+    def initialize_account(
+        self,
+        *,
+        client_request_id: str,
+        initial_cash: Any,
+        commission_rate_pct: Any,
+        minimum_commission: Any,
+        stamp_duty_rate_pct: Any,
+        transfer_fee_rate_pct: Any,
+        slippage_bps: Any = 0,
+    ) -> dict[str, Any]:
+        request_id = self._validate_request_id(client_request_id)
+        now_text = _iso(self._now())
+        settings = {
+            "commission_rate_pct": commission_rate_pct,
+            "minimum_commission": minimum_commission,
+            "stamp_duty_rate_pct": stamp_duty_rate_pct,
+            "transfer_fee_rate_pct": transfer_fee_rate_pct,
+            "slippage_bps": slippage_bps,
+        }
+        with self._lock, self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            replay = SimulationAccountLedger.initialize(
+                conn,
+                client_request_id=request_id,
+                initial_cash=initial_cash,
+                settings=settings,
+                created_at=now_text,
+            )
+            return {"idempotent_replay": replay}
+
+    def update_account_settings(
+        self,
+        *,
+        client_request_id: str,
+        commission_rate_pct: Any,
+        minimum_commission: Any,
+        stamp_duty_rate_pct: Any,
+        transfer_fee_rate_pct: Any,
+        slippage_bps: Any = 0,
+    ) -> dict[str, Any]:
+        request_id = self._validate_request_id(client_request_id)
+        now_text = _iso(self._now())
+        settings = {
+            "commission_rate_pct": commission_rate_pct,
+            "minimum_commission": minimum_commission,
+            "stamp_duty_rate_pct": stamp_duty_rate_pct,
+            "transfer_fee_rate_pct": transfer_fee_rate_pct,
+            "slippage_bps": slippage_bps,
+        }
+        with self._lock, self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            replay = SimulationAccountLedger.update_settings(
+                conn,
+                client_request_id=request_id,
+                settings=settings,
+                created_at=now_text,
+            )
+            return {"idempotent_replay": replay}
+
+    def account_symbols(self) -> list[str]:
+        with self._lock, self._connect() as conn:
+            return SimulationAccountLedger.symbols(conn)
+
+    def account_view(
+        self,
+        *,
+        quotes: dict[str, dict[str, Any]] | None = None,
+        trade_date: str | None = None,
+        curve_limit: int = 365,
+    ) -> dict[str, Any]:
+        with self._lock, self._connect() as conn:
+            return SimulationAccountLedger.view(
+                conn,
+                quotes=quotes,
+                trade_date=trade_date,
+                updated_at=_iso(self._now()),
+                curve_limit=curve_limit,
+            )
+
+    def record_account_valuation(
+        self,
+        *,
+        client_request_id: str,
+        quotes: dict[str, dict[str, Any]],
+        trade_date: str,
+    ) -> dict[str, Any]:
+        request_id = self._validate_request_id(client_request_id)
+        now_text = _iso(self._now())
+        with self._lock, self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            replay = SimulationAccountLedger.record_valuation(
+                conn,
+                client_request_id=request_id,
+                quotes=quotes,
+                trade_date=trade_date,
+                created_at=now_text,
+            )
+            return {"idempotent_replay": replay}
+
     def _status_in_conn(self, conn: sqlite3.Connection) -> dict[str, Any]:
         state = conn.execute(
             """SELECT emergency_stop,emergency_reason,updated_at,
@@ -805,12 +998,14 @@ class SimulationStore:
                 latest_event.pop("detail_json", None)
                 latest_event["detail"] = {}
         return {
-            "schema_version": "simulation-status.v1",
+            "schema_version": "simulation-status.v2",
             "mode": "simulation_only",
             "simulation_only": True,
             "broker_connected": False,
             "broker_interface_present": False,
             "manual_approval_required": True,
+            "account_initialized": SimulationAccountLedger.account_exists(conn),
+            "settlement_rule": "A_SHARE_T_PLUS_1",
             "emergency_stop": {
                 "active": bool(state and state["emergency_stop"]),
                 "reason": state["emergency_reason"] if state else None,

@@ -21,6 +21,7 @@ import ReportCenterPage from './components/ReportCenterPage.vue'
 import RiskOverview from './components/RiskOverview.vue'
 import ScreenerPage from './components/ScreenerPage.vue'
 import SentimentEventsPage from './components/SentimentEventsPage.vue'
+import SimulationPage from './components/SimulationPage.vue'
 import SettingsPage from './components/SettingsPage.vue'
 import SidebarNavigation from './components/SidebarNavigation.vue'
 import StockAskPage from './components/StockAskPage.vue'
@@ -56,6 +57,7 @@ const companyResearchPage = ref<InstanceType<typeof CompanyResearchPage> | null>
 const capitalTrackingPage = ref<InstanceType<typeof CapitalTrackingPage> | null>(null)
 const hotboardPage = ref<InstanceType<typeof HotboardPage> | null>(null)
 const holdingsPage = ref<InstanceType<typeof HoldingsPage> | null>(null)
+const simulationPage = ref<InstanceType<typeof SimulationPage> | null>(null)
 const timingPage = ref<InstanceType<typeof TimingPage> | null>(null)
 const mainlineResearchPage = ref<InstanceType<typeof MainlineResearchPage> | null>(null)
 const sentimentEventsPage = ref<InstanceType<typeof SentimentEventsPage> | null>(null)
@@ -84,6 +86,7 @@ const isDecisionOverview = computed(() => routePath.value === 'today' && routeTa
 const isCapitalTracking = computed(() => routePath.value === 'today' && routeTab.value === 'capital')
 const isHotboard = computed(() => routePath.value === 'today' && routeTab.value === 'hotboard')
 const isHoldings = computed(() => routePath.value === 'risk' && routeTab.value === 'holdings')
+const isSimulation = computed(() => routePath.value === 'risk' && routeTab.value === 'simulation')
 const isTiming = computed(() => routePath.value === 'today' && routeTab.value === 'timing')
 const isMainlineResearch = computed(() => routePath.value === 'today' && routeTab.value === 'mainline')
 const isSentimentEvents = computed(() => routePath.value === 'today' && routeTab.value === 'news')
@@ -107,10 +110,10 @@ const settingsSection = computed<SettingsSection>(() => (
 const activeNavigation = computed(() => findActiveNavigation(routePath.value, routeTab.value))
 const pageTitle = computed(() => activeNavigation.value?.child.label || (routePath.value === 'settings' ? settingsSectionTitles[settingsSection.value] : '页面迁移中'))
 const brandName = computed(() => data.shell?.client?.brand?.trim() || 'Hermes Trader')
-const pageRefreshing = computed(() => isHotboard.value || isHoldings.value || isWatchlist.value || isTiming.value || isMainlineResearch.value || isSentimentEvents.value || isTomorrowStrategy.value || isCapitalTracking.value || isStockAsk.value || isDiagnosis.value || isForecastMining.value || isIndustryChain.value || isCompanyResearch.value || isScreener.value || isTechnicalScreener.value || isReportCenter.value || isKnowledge.value || isSettings.value
+const pageRefreshing = computed(() => isHotboard.value || isHoldings.value || isSimulation.value || isWatchlist.value || isTiming.value || isMainlineResearch.value || isSentimentEvents.value || isTomorrowStrategy.value || isCapitalTracking.value || isStockAsk.value || isDiagnosis.value || isForecastMining.value || isIndustryChain.value || isCompanyResearch.value || isScreener.value || isTechnicalScreener.value || isReportCenter.value || isKnowledge.value || isSettings.value
   ? reportRefreshing.value
   : refreshing.value || reportRefreshing.value)
-const pageBusy = computed(() => isHotboard.value || isHoldings.value || isWatchlist.value || isTiming.value || isMainlineResearch.value || isSentimentEvents.value || isTomorrowStrategy.value || isCapitalTracking.value || isStockAsk.value || isDiagnosis.value || isForecastMining.value || isIndustryChain.value || isCompanyResearch.value || isScreener.value || isTechnicalScreener.value || isReportCenter.value || isKnowledge.value || isSettings.value
+const pageBusy = computed(() => isHotboard.value || isHoldings.value || isSimulation.value || isWatchlist.value || isTiming.value || isMainlineResearch.value || isSentimentEvents.value || isTomorrowStrategy.value || isCapitalTracking.value || isStockAsk.value || isDiagnosis.value || isForecastMining.value || isIndustryChain.value || isCompanyResearch.value || isScreener.value || isTechnicalScreener.value || isReportCenter.value || isKnowledge.value || isSettings.value
   ? reportRefreshing.value
   : loading.value || pageRefreshing.value)
 
@@ -194,12 +197,6 @@ function updateRoute() {
     routeTab.value = directSettingsSection
     return
   }
-  if (path === 'risk' && requestedTab === 'simulation') {
-    window.history.replaceState(null, '', '#/risk?tab=holdings')
-    routePath.value = 'risk'
-    routeTab.value = 'holdings'
-    return
-  }
   routePath.value = path
   routeTab.value = requestedTab
 }
@@ -261,6 +258,10 @@ async function refreshCurrentPage() {
   }
   if (isHoldings.value && holdingsPage.value) {
     await Promise.resolve(holdingsPage.value.refresh())
+    return
+  }
+  if (isSimulation.value && simulationPage.value) {
+    await Promise.resolve(simulationPage.value.refresh())
     return
   }
   if (isCapitalTracking.value && capitalTrackingPage.value) {
@@ -426,6 +427,12 @@ watch([routePath, routeTab], async () => {
         <HoldingsPage
           v-else-if="isHoldings"
           ref="holdingsPage"
+          @refresh-state="reportRefreshing = $event"
+        />
+
+        <SimulationPage
+          v-else-if="isSimulation"
+          ref="simulationPage"
           @refresh-state="reportRefreshing = $event"
         />
 
