@@ -349,9 +349,15 @@ class SimulationAccountLedger:
         raw_price = Decimal(str(quote_price))
         slippage = Decimal(str(account["slippage_bps"])) / Decimal("10000")
         execution = raw_price * (Decimal("1") + slippage if order["side"] == "buy" else Decimal("1") - slippage)
+        if order.get("order_type") == "limit" and order.get("limit_price") is not None:
+            limit_price = Decimal(str(order["limit_price"]))
+            execution = min(execution, limit_price) if order["side"] == "buy" else max(execution, limit_price)
         if execution <= 0:
             raise SimulationError("invalid_account_settings", "模拟滑点导致成交价格无效")
         execution = _price(execution)
+        if order.get("order_type") == "limit" and order.get("limit_price") is not None:
+            limit_price = Decimal(str(order["limit_price"]))
+            execution = min(execution, limit_price) if order["side"] == "buy" else max(execution, limit_price)
         quantity = int(order["quantity"])
         gross = _money(execution * quantity)
         fees = cls._fees(account, str(order["side"]), gross)

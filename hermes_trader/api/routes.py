@@ -63,6 +63,7 @@ from ..jobs.scheduler import JOB_NAMES, apply_schedule, task_center_status  # no
 from ..product_state import build_market_context, route_lifecycle_contract  # noqa: E402
 from ..decision.risk_gate import evaluate_risk_gate  # noqa: E402
 from ..simulation import SimulationError  # noqa: E402
+from ..jobs.simulation_matcher import order_valid_trade_date  # noqa: E402
 from ..research_runs import (  # noqa: E402
     ActiveResearchRunDeleteError,
     ActiveResearchRunError,
@@ -1383,6 +1384,7 @@ async def simulation_propose_order(request: Request):
             data_missing=authority["missing"],
             price_mode=authority["price_mode"],
             trade_date=authority["trade_date"],
+            valid_trade_date=order_valid_trade_date(now_cn()),
         )
         return {"ok": True, "simulation_only": True, **result}
     except SimulationError as exc:

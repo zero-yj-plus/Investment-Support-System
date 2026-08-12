@@ -193,10 +193,16 @@ class SimulationStore:
                 "net_cash_change": "REAL",
                 "realized_pnl": "REAL",
                 "account_applied": "INTEGER NOT NULL DEFAULT 0",
+                "valid_trade_date": "TEXT",
             }
             for column, definition in order_migrations.items():
                 if column not in order_columns:
                     conn.execute(f"ALTER TABLE simulation_orders ADD COLUMN {column} {definition}")
+            conn.execute(
+                """UPDATE simulation_orders
+                   SET valid_trade_date=COALESCE(valid_trade_date,trade_date,substr(created_at,1,10))
+                   WHERE valid_trade_date IS NULL OR valid_trade_date=''"""
+            )
             SimulationAccountLedger.init_schema(conn)
         try:
             os.chmod(self.path, 0o600)
@@ -374,6 +380,7 @@ class SimulationStore:
         data_missing: Any = None,
         price_mode: Any = "live",
         trade_date: Any = None,
+        valid_trade_date: Any = None,
     ) -> dict[str, Any]:
         request_id = self._validate_request_id(client_request_id)
         symbol_text = str(symbol or "").strip()
@@ -406,6 +413,9 @@ class SimulationStore:
         derived_data_stale = bool(data_stale)
         price_mode_text = str(price_mode or "").strip().lower()
         trade_date_text = str(trade_date or "").strip()[:10]
+        valid_trade_date_text = str(
+            valid_trade_date or trade_date_text or now.date().isoformat()
+        ).strip()[:10]
 
         reasons: list[str] = []
         if not _SYMBOL_RE.fullmatch(symbol_text):
@@ -428,6 +438,8 @@ class SimulationStore:
             reasons.append("invalid_price_mode")
         if price_mode_text == "latest_close" and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", trade_date_text):
             reasons.append("trade_date_missing_or_invalid")
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", valid_trade_date_text):
+            reasons.append("valid_trade_date_missing_or_invalid")
 
         if side_text == "buy":
             if not valid_risk:
@@ -461,14 +473,16 @@ class SimulationStore:
                 reasons.append("emergency_stop_active")
                 reasons = list(dict.fromkeys(reasons))
             order_id = f"sim_{uuid.uuid4().hex}"
-            status = "rejected" if reasons else "proposed"
+            # 用户提交订单本身就是确认。沿用旧库允许的 ``approved`` 值表示
+            # “已进入服务端撮合池”，避免重建带 CHECK/FK 的历史 SQLite 表。
+            status = "rejected" if reasons else "approved"
             rejection = ";".join(reasons) or None
             conn.execute(
                 """INSERT INTO simulation_orders(
                        order_id,symbol,side,order_type,quantity,limit_price,reference_price,
                        risk_level,data_as_of,data_stale,data_missing_json,price_mode,trade_date,
-                       status,rejection_reason,created_at,updated_at
-                   ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                       valid_trade_date,status,rejection_reason,approved_at,created_at,updated_at
+                   ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     order_id, symbol_text, side_text, type_text,
                     quantity if valid_quantity else None, normalized_limit, ref_price,
@@ -476,23 +490,38 @@ class SimulationStore:
                     _iso(data_time) if data_time else None,
                     1 if derived_data_stale else 0,
                     json.dumps(missing, ensure_ascii=False), price_mode_text, trade_date_text or None,
-                    status, rejection,
+                    valid_trade_date_text or None, status, rejection,
+                    None,
                     now_text, now_text,
                 ),
             )
-            self._append_event(
-                conn,
-                order_id=order_id, operation="propose", event_type="proposed",
-                from_status=None, to_status="proposed", client_request_id=request_id,
-                request_hash=request_hash,
-                detail={"simulation_only": True}, created_at=now_text,
-            )
             if reasons:
+                self._append_event(
+                    conn,
+                    order_id=order_id, operation="propose", event_type="submitted",
+                    from_status=None, to_status="proposed", client_request_id=request_id,
+                    request_hash=request_hash,
+                    detail={"simulation_only": True, "time_in_force": "DAY"}, created_at=now_text,
+                )
                 self._append_event(
                     conn,
                     order_id=order_id, operation="validation", event_type="rejected",
                     from_status="proposed", to_status="rejected",
                     detail={"reasons": reasons}, created_at=now_text,
+                )
+            else:
+                self._append_event(
+                    conn,
+                    order_id=order_id, operation="propose", event_type="queued",
+                    from_status=None, to_status="approved", client_request_id=request_id,
+                    request_hash=request_hash,
+                    detail={
+                        "simulation_only": True,
+                        "matching_pool": True,
+                        "time_in_force": "DAY",
+                        "valid_trade_date": valid_trade_date_text,
+                    },
+                    created_at=now_text,
                 )
             return {"idempotent_replay": False, "order": self._order_in_conn(conn, order_id)}
 
@@ -606,6 +635,21 @@ class SimulationStore:
                 )
             if self._is_emergency_stopped(conn):
                 reasons.append("emergency_stop_active")
+            if not reasons and order["order_type"] == "limit":
+                limit_price = float(order["limit_price"])
+                marketable = (
+                    float(price) <= limit_price
+                    if order["side"] == "buy"
+                    else float(price) >= limit_price
+                )
+                if not marketable:
+                    # 未触价是挂单的正常状态，不是拒绝，更不能把订单变成终态。
+                    return {
+                        "idempotent_replay": False,
+                        "matched": False,
+                        "order": self._order_in_conn(conn, order_id),
+                    }
+
             account_plan: dict[str, Any] = {}
             if not reasons:
                 account_plan, account_reasons = SimulationAccountLedger.plan_fill(
@@ -616,12 +660,6 @@ class SimulationStore:
                 )
                 reasons.extend(account_reasons)
             execution_price = float(account_plan.get("execution_price") or price or 0)
-            if not reasons and order["order_type"] == "limit":
-                limit_price = float(order["limit_price"])
-                if order["side"] == "buy" and execution_price > limit_price:
-                    reasons.append("buy_limit_not_marketable")
-                if order["side"] == "sell" and execution_price < limit_price:
-                    reasons.append("sell_limit_not_marketable")
 
             if reasons:
                 rejection = ";".join(list(dict.fromkeys(reasons)))
@@ -659,9 +697,9 @@ class SimulationStore:
                 unlock_trade_date=unlock_date_text or None,
                 created_at=now_text,
             )
-            reference = float(order["reference_price"])
-            adverse_per_share = execution_price - reference if order["side"] == "buy" else reference - execution_price
-            slippage_bps = adverse_per_share / reference * 10_000
+            raw_quote = float(price)
+            adverse_per_share = execution_price - raw_quote if order["side"] == "buy" else raw_quote - execution_price
+            slippage_bps = adverse_per_share / raw_quote * 10_000
             slippage_value = adverse_per_share * int(order["quantity"])
             conn.execute(
                 """UPDATE simulation_orders SET
@@ -700,7 +738,70 @@ class SimulationStore:
                 },
                 created_at=now_text,
             )
-            return {"idempotent_replay": False, "order": self._order_in_conn(conn, order_id)}
+            return {
+                "idempotent_replay": False,
+                "matched": True,
+                "order": self._order_in_conn(conn, order_id),
+            }
+
+    def queue_legacy_proposals(self, *, valid_on: str) -> int:
+        """Move old manually-approved proposals into the automatic matching pool."""
+        date_text = str(valid_on or "").strip()[:10]
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_text):
+            raise SimulationError("valid_trade_date_missing_or_invalid", "撮合交易日无效")
+        now_text = _iso(self._now())
+        with self._lock, self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            rows = conn.execute(
+                """SELECT order_id FROM simulation_orders
+                   WHERE status='proposed' AND valid_trade_date>=?""",
+                (date_text,),
+            ).fetchall()
+            for row in rows:
+                conn.execute(
+                    """UPDATE simulation_orders SET status='approved',updated_at=?
+                       WHERE order_id=? AND status='proposed'""",
+                    (now_text, row["order_id"]),
+                )
+                self._append_event(
+                    conn,
+                    order_id=row["order_id"], operation="lifecycle_migration",
+                    event_type="queued", from_status="proposed", to_status="approved",
+                    detail={"matching_pool": True, "reason": "automatic_matching_enabled"},
+                    created_at=now_text,
+                )
+            return len(rows)
+
+    def expire_day_orders(self, *, valid_on: str, after_close: bool = False) -> int:
+        """Cancel unfilled DAY orders once their matching session has ended."""
+        date_text = str(valid_on or "").strip()[:10]
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_text):
+            raise SimulationError("valid_trade_date_missing_or_invalid", "撮合交易日无效")
+        now_text = _iso(self._now())
+        comparator = "<=" if after_close else "<"
+        with self._lock, self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            rows = conn.execute(
+                f"""SELECT order_id,status FROM simulation_orders
+                    WHERE status IN ('proposed','approved')
+                      AND valid_trade_date {comparator} ?""",
+                (date_text,),
+            ).fetchall()
+            for row in rows:
+                conn.execute(
+                    """UPDATE simulation_orders SET status='cancelled',rejection_reason='day_order_expired',
+                           cancelled_at=?,updated_at=?
+                       WHERE order_id=? AND status IN ('proposed','approved')""",
+                    (now_text, now_text, row["order_id"]),
+                )
+                self._append_event(
+                    conn,
+                    order_id=row["order_id"], operation="day_expiry", event_type="expired",
+                    from_status=row["status"], to_status="cancelled",
+                    detail={"reason": "day_order_expired", "valid_trade_date": date_text},
+                    created_at=now_text,
+                )
+            return len(rows)
 
     def cancel(
         self,
@@ -998,12 +1099,15 @@ class SimulationStore:
                 latest_event.pop("detail_json", None)
                 latest_event["detail"] = {}
         return {
-            "schema_version": "simulation-status.v2",
+            "schema_version": "simulation-status.v3",
             "mode": "simulation_only",
             "simulation_only": True,
             "broker_connected": False,
             "broker_interface_present": False,
-            "manual_approval_required": True,
+            "manual_approval_required": False,
+            "automatic_matching": True,
+            "matching_interval_seconds": 5,
+            "order_time_in_force": "DAY",
             "account_initialized": SimulationAccountLedger.account_exists(conn),
             "settlement_rule": "A_SHARE_T_PLUS_1",
             "emergency_stop": {

@@ -51,6 +51,7 @@ export function useSimulation() {
   const actionBusy = ref('')
   let loadController: AbortController | null = null
   let actionController: AbortController | null = null
+  let refreshTimer: number | null = null
   let alive = false
 
   const pageBusy = computed(() => refreshing.value || Boolean(actionBusy.value))
@@ -139,21 +140,9 @@ export function useSimulation() {
     return perform(scope, '/simulation/orders', intent as unknown as Record<string, unknown>, (response) => (
       response.order?.status === 'rejected'
         ? `订单意图已拒绝：${response.order.rejection_reason || '服务端未返回具体原因'}。`
-        : '订单意图已进入待人工批准状态。'
-    ))
-  }
-
-  function approve(order: SimulationOrder, approvedBy: string): Promise<boolean> {
-    return perform(`approve:${order.order_id}`, `/simulation/orders/${encodeURIComponent(order.order_id)}/approve`, {
-      approved_by: approvedBy,
-    }, () => '模拟订单已由人工批准，尚未成交。')
-  }
-
-  function fill(order: SimulationOrder): Promise<boolean> {
-    return perform(`fill:${order.order_id}`, `/simulation/orders/${encodeURIComponent(order.order_id)}/fill`, {}, (response) => (
-      response.order?.status === 'rejected'
-        ? `模拟成交已拒绝：${response.order.rejection_reason || '服务端未返回具体原因'}。`
-        : '订单已按服务端重新读取的行情完成模拟成交。'
+        : response.order?.status === 'filled'
+          ? '订单已自动撮合成交。'
+          : '订单已进入服务端撮合池，触价后将自动成交。'
     ))
   }
 
@@ -202,12 +191,16 @@ export function useSimulation() {
   onMounted(() => {
     alive = true
     void load()
+    refreshTimer = window.setInterval(() => {
+      if (!refreshing.value && !actionBusy.value) void load()
+    }, 5000)
   })
 
   onBeforeUnmount(() => {
     alive = false
     loadController?.abort()
     actionController?.abort()
+    if (refreshTimer != null) window.clearInterval(refreshTimer)
   })
 
   return {
@@ -224,8 +217,6 @@ export function useSimulation() {
     pageBusy,
     load,
     propose,
-    approve,
-    fill,
     cancel,
     emergencyStop,
     resetEmergencyStop,

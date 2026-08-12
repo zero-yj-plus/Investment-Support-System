@@ -28,6 +28,7 @@ from .jobs.scheduler import build_scheduler
 from .jobs.mainline_sampler import register as register_mainline_sampler
 from .jobs.news_event_observer import register as register_news_event_observer
 from .jobs.official_longhu_collector import register as register_official_longhu_collector
+from .jobs.simulation_matcher import SimulationMatcher, register as register_simulation_matcher
 from .knowledge.store import Store
 from .research_runs import ResearchRunManager
 from .simulation import SimulationStore
@@ -184,6 +185,8 @@ def create_app(config_path: str) -> FastAPI:
     from .analysis import technical_screener  # noqa: PLC0415
     technical_screener.init(config.data_dir)
     scheduler = build_scheduler(config, engine)
+    simulation_matcher = SimulationMatcher(simulation_store)
+    register_simulation_matcher(scheduler, simulation_matcher)
     try:
         register_mainline_sampler(scheduler, config)
     except Exception:  # noqa: BLE001 -- 采样任务不得阻断服务启动
@@ -233,6 +236,7 @@ def create_app(config_path: str) -> FastAPI:
     app.state.config = config
     app.state.store = store
     app.state.simulation_store = simulation_store
+    app.state.simulation_matcher = simulation_matcher
     app.state.hermes = hermes
     app.state.agent_runs = hermes.run_store
     app.state.feishu = notifier   # 活动推送器（飞书 webhook 或 Hermes 网关，同接口鸭子类型）

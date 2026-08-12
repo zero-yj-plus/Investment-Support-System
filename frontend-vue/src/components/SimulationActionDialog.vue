@@ -5,6 +5,7 @@ import type {
   SimulationDialogPayload,
   SimulationAccount,
   SimulationOrder,
+  SimulationOrderIntent,
   SimulationOrderSide,
   SimulationOrderType,
 } from '../types/simulation'
@@ -12,6 +13,7 @@ import type {
 const props = defineProps<{
   mode: SimulationDialogMode
   order?: SimulationOrder | null
+  initialIntent?: Partial<SimulationOrderIntent> | null
   account?: SimulationAccount | null
   busy: boolean
   serverError?: string
@@ -23,11 +25,11 @@ const emit = defineEmits<{
 
 const dialog = ref<HTMLDialogElement | null>(null)
 const firstField = ref<HTMLInputElement | null>(null)
-const symbol = ref('')
-const side = ref<SimulationOrderSide>('buy')
-const orderType = ref<SimulationOrderType>('limit')
-const quantity = ref('100')
-const limitPrice = ref('')
+const symbol = ref(props.initialIntent?.symbol ?? '')
+const side = ref<SimulationOrderSide>(props.initialIntent?.side ?? 'buy')
+const orderType = ref<SimulationOrderType>(props.initialIntent?.order_type ?? 'limit')
+const quantity = ref(String(props.initialIntent?.quantity ?? 100))
+const limitPrice = ref(props.initialIntent?.limit_price == null ? '' : String(props.initialIntent.limit_price))
 const approvedBy = ref('')
 const reason = ref('')
 const initialCash = ref('1000000')
@@ -38,23 +40,21 @@ const transferFeeRate = ref(String(props.account?.fee_settings?.transfer_fee_rat
 const slippageBps = ref(String(props.account?.fee_settings?.slippage_bps ?? 0))
 const localError = ref('')
 
-const title = computed(() => ({
+const isPositionSell = computed(() => props.mode === 'create' && props.initialIntent?.side === 'sell' && Boolean(props.initialIntent.symbol))
+
+const title = computed(() => isPositionSell.value ? `卖出 ${symbol.value}` : ({
   'account-create': '创建完整模拟账户',
   'account-settings': '模拟费用与滑点',
   create: '新建模拟订单',
-  approve: '人工批准模拟订单',
-  fill: '确认模拟成交',
   cancel: '取消模拟订单',
   'emergency-stop': '开启紧急停止',
   'emergency-reset': '人工复核后恢复',
 }[props.mode]))
 
-const submitLabel = computed(() => ({
+const submitLabel = computed(() => isPositionSell.value ? '提交卖出挂单' : ({
   'account-create': '创建并锁定初始资金',
   'account-settings': '保存后续成交设置',
   create: '提交订单意图',
-  approve: '确认人工批准',
-  fill: '按服务端行情模拟成交',
   cancel: '确认取消订单',
   'emergency-stop': '立即紧急停止',
   'emergency-reset': '确认人工恢复',
@@ -133,14 +133,6 @@ function submit() {
       quantity: normalizedQuantity,
       limit_price: orderType.value === 'limit' ? normalizedLimit : null,
     })
-    return
-  }
-  if (props.mode === 'approve') {
-    if (!approvedBy.value.trim()) {
-      localError.value = '必须填写可识别的人工批准人。'
-      return
-    }
-    emit('submit', { approved_by: approvedBy.value.trim() })
     return
   }
   if (props.mode === 'emergency-stop') {
@@ -228,11 +220,11 @@ onBeforeUnmount(() => {
           <div class="simulation-dialog__grid">
             <label>
               <span>股票代码</span>
-              <input ref="firstField" v-model="symbol" inputmode="numeric" maxlength="6" autocomplete="off" required placeholder="例如 600519" />
+              <input ref="firstField" v-model="symbol" inputmode="numeric" maxlength="6" autocomplete="off" required placeholder="例如 600519" :readonly="isPositionSell" />
             </label>
             <label>
               <span>买卖方向</span>
-              <select v-model="side"><option value="buy">买入</option><option value="sell">卖出</option></select>
+              <select v-model="side" :disabled="isPositionSell"><option value="buy">买入</option><option value="sell">卖出</option></select>
             </label>
             <label>
               <span>订单类型</span>
@@ -247,21 +239,8 @@ onBeforeUnmount(() => {
               <input v-model="limitPrice" inputmode="decimal" autocomplete="off" required placeholder="必须大于 0" />
             </label>
           </div>
-          <p class="simulation-dialog__note">客户端不能提交或覆盖风险等级、现价、行情时点与数据缺口。</p>
-        </template>
-
-        <template v-else-if="mode === 'approve'">
-          <p>批准 {{ order?.symbol || '该标的' }} 的本地模拟订单。批准后仍需再次确认“模拟成交”。</p>
-          <label>
-            <span>人工批准人</span>
-            <input ref="firstField" v-model="approvedBy" maxlength="120" autocomplete="name" required placeholder="填写真实操作人姓名" />
-          </label>
-          <p class="simulation-dialog__note">AI、Agent、bot、system 或 Hermes 不能作为批准人。</p>
-        </template>
-
-        <template v-else-if="mode === 'fill'">
-          <p>将由服务端重新读取 {{ order?.symbol || '该标的' }} 的行情并尝试模拟成交。客户端不能填写成交价。</p>
-          <p class="simulation-dialog__note">行情陈旧、来源不可核验或限价不可成交时，服务端会拒绝并追加留痕。</p>
+          <p v-if="isPositionSell" class="simulation-dialog__note">已预填当前可卖数量与现价；可调整数量和限价。提交后进入撮合池，不会直接成交。</p>
+          <p v-else class="simulation-dialog__note">客户端不能提交或覆盖风险等级、现价、行情时点与数据缺口。</p>
         </template>
 
         <template v-else-if="mode === 'cancel'">
@@ -269,7 +248,7 @@ onBeforeUnmount(() => {
         </template>
 
         <template v-else-if="mode === 'emergency-stop'">
-          <p>开启后会立即取消全部待批准和已批准订单，并阻止新订单。</p>
+          <p>开启后会立即取消全部挂单，并阻止新订单进入撮合池。</p>
           <label>
             <span>停止原因</span>
             <input ref="firstField" v-model="reason" maxlength="240" autocomplete="off" required placeholder="例如：行情时钟异常" />

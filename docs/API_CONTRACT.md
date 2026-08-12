@@ -1044,23 +1044,25 @@ status ∈ {ok, down, idle(尚未采集)}；`idle` 不代表不可用，只代�
 
 ### GET /api/simulation/status
 
-返回模式、账户是否初始化、`A_SHARE_T_PLUS_1` 交收规则、紧急停止、各状态订单数量和最近事件。`manual_approval_required` 固定为 `true`。
+返回 `simulation-status.v3`：模式、账户是否初始化、`A_SHARE_T_PLUS_1` 交收规则、紧急停止、各状态订单数量和最近事件。`manual_approval_required=false`、`automatic_matching=true`、`matching_interval_seconds=5`、`order_time_in_force=DAY`。
 
-### GET /api/simulation/orders?limit=100&status=proposed
+### GET /api/simulation/orders?limit=100&status=approved
 
-按创建时间倒序返回模拟订单及追加式事件链。状态仅允许 `proposed / approved / filled / rejected / cancelled`。
+按创建时间倒序返回模拟订单及追加式事件链。状态仍兼容 `proposed / approved / filled / rejected / cancelled`；其中 `approved` 在当前自动撮合契约中表示“挂单中/已进入撮合池”，`proposed` 仅用于兼容旧账本并会自动迁移。
 
 ### POST /api/simulation/orders
 
-请求体仅接受订单意图：`client_request_id`、`symbol`、`side`、`order_type`、`quantity`、可选 `limit_price`。风险等级、参考价、行情时点和缺失状态由服务端读取；即使客户端伪造同名字段也会被忽略。交易时段使用服务端盘中行情 `price_mode=live`；非交易时段允许使用服务端核验的最近交易日收盘快照 `price_mode=latest_close`，并保留 `data_stale=true`、`trade_date`、来源和时点标记。无法核验收盘交易日仍然拒绝。买入缺风险、缺行情、盘中行情陈旧、风险等级不低于 4 或不满足 100 股整手时拒绝。
+请求体仅接受订单意图：`client_request_id`、`symbol`、`side`、`order_type`、`quantity`、可选 `limit_price`。用户提交本身即为确认；通过服务端风险与行情校验后，订单直接进入撮合池，不再要求普通订单人工批准或手动成交。交易时段使用服务端盘中行情 `price_mode=live`；非交易时段允许用核验后的最近收盘价建立下一交易日 DAY 挂单。风险等级、参考价、行情时点和缺失状态均由服务端读取，客户端伪造同名字段会被忽略。买入缺风险、缺行情、盘中行情陈旧、风险等级不低于 4 或不满足 100 股整手时拒绝。
+
+服务端每 5 秒批量读取挂单标的行情并撮合，页面关闭不影响。买入限价单在原始市场价 `<= limit_price` 时触发，成交价为 `min(市场价 × (1 + 滑点), limit_price)`；卖出限价单在原始市场价 `>= limit_price` 时触发，成交价为 `max(市场价 × (1 - 滑点), limit_price)`。未触价、行情暂缺或行情陈旧时继续挂单，不写入拒绝终态。市场价单在下一个有效撮合轮次成交。DAY 挂单在有效交易日 15:00 撮合结束后自动撤单，原因 `day_order_expired`。
 
 ### POST /api/simulation/orders/{order_id}/approve
 
-请求体：`client_request_id`、`approved_by`。只有明确的人工身份可批准；`AI / Agent / bot / system / Hermes` 等自动化身份会被拒绝。
+旧账本兼容端点。只用于把历史 `proposed` 订单转为撮合池状态；当前前端和新订单不调用。
 
 ### POST /api/simulation/orders/{order_id}/fill
 
-请求体只需要 `client_request_id`。成交价、行情时点和来源均由服务端重新读取，客户端传入的 `market_price / as_of / market_source` 不参与成交。只有账户已初始化、已人工批准且未触发紧急停止的订单可模拟成交。买入按成交金额和费用检查现金；卖出按持仓批次执行 A 股 T+1 与 FIFO 成本核算。当日买入批次不可卖，分别返回 `t1_position_locked / insufficient_position / insufficient_cash`。成交价应用账户当前 `slippage_bps` 后还必须满足限价，随后在同一 SQLite 事务中更新现金、批次、费用、已实现盈亏、订单事件和资产快照。
+旧客户端兼容端点；当前前端不展示“手动成交”。成交价、行情时点和来源仍由服务端重新读取，客户端传入的 `market_price / as_of / market_source` 不参与成交。未触价返回原挂单且 `matched=false`，不拒绝；触价后按资金、A 股 T+1、FIFO、费用及上述限价内滑点规则成交，并在同一 SQLite 事务中更新账户与追加式事件。
 
 ### POST /api/simulation/orders/{order_id}/cancel
 

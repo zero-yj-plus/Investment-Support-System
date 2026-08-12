@@ -24,22 +24,26 @@ const report = []
 
 function initialOrder() {
   return {
-    order_id: 'sim-audit-001', status: 'proposed', symbol: '600519', side: 'buy', order_type: 'limit',
+    order_id: 'sim-audit-001', status: 'approved', symbol: '600519', side: 'buy', order_type: 'limit',
     quantity: 100, limit_price: 1420, reference_price: 1418.5, risk_level: 2,
     data_as_of: '2026-08-11T10:30:00+08:00', data_stale: false, data_missing: [],
-    price_mode: 'live', trade_date: '2026-08-11', market_price: null, slippage_bps: null,
+    price_mode: 'live', trade_date: '2026-08-11', valid_trade_date: '2026-08-11', market_price: null, slippage_bps: null,
     total_fee: null, rejection_reason: null, simulation_only: true,
-    events: [{ event_id: 1, event_type: 'proposed', from_status: null, to_status: 'proposed', created_at: '2026-08-11T10:30:00+08:00' }],
+    events: [{ event_id: 1, event_type: 'queued', from_status: null, to_status: 'approved', created_at: '2026-08-11T10:30:00+08:00' }],
   }
 }
 
 function initialAccount() {
   return {
     schema_version: 'simulation-account.v1', initialized: true, simulation_only: true,
-    broker_connected: false, initial_cash: 1000000, cash: 1000000, market_value: 0,
-    total_assets: 1000000, realized_pnl: 0, unrealized_pnl: 0, total_pnl: 0,
-    return_pct: 0, total_fees: 0, valuation_state: 'exact', missing_symbols: [],
-    trade_date: '2026-08-11', positions: [], fee_settings: {
+    broker_connected: false, initial_cash: 1000000, cash: 858150, market_value: 141850,
+    total_assets: 1000000, realized_pnl: 0, unrealized_pnl: 850, total_pnl: 850,
+    return_pct: 0.085, total_fees: 0, valuation_state: 'exact', missing_symbols: [],
+    trade_date: '2026-08-11', positions: [{
+      symbol: '600519', quantity: 100, available_quantity: 100, t1_locked_quantity: 0,
+      next_sellable_date: null, average_cost: 1410, market_price: 1418.5, market_value: 141850,
+      unrealized_pnl: 850, price_mode: 'live', valuation_state: 'exact',
+    }], fee_settings: {
       commission_rate_pct: 0.03, minimum_commission: 5, stamp_duty_rate_pct: 0.05,
       transfer_fee_rate_pct: 0.002, slippage_bps: 0,
     },
@@ -70,8 +74,9 @@ try {
 
       if (path === '/api/simulation/status') {
         body = {
-          schema_version: 'simulation-status.v2', mode: 'simulation_only', simulation_only: true,
-          broker_connected: false, broker_interface_present: false, manual_approval_required: true,
+          schema_version: 'simulation-status.v3', mode: 'simulation_only', simulation_only: true,
+          broker_connected: false, broker_interface_present: false, manual_approval_required: false,
+          automatic_matching: true, matching_interval_seconds: 5, order_time_in_force: 'DAY',
           account_initialized: true, settlement_rule: 'A_SHARE_T_PLUS_1',
           emergency_stop: { active: emergencyActive, reason: emergencyReason, updated_at: '2026-08-11T10:31:00+08:00' },
           counts: { proposed: order.status === 'proposed' ? 1 : 0, approved: order.status === 'approved' ? 1 : 0, filled: order.status === 'filled' ? 1 : 0, rejected: 0, cancelled: order.status === 'cancelled' ? 1 : 0 },
@@ -93,20 +98,6 @@ try {
         order = {
           ...initialOrder(), order_id: 'sim-audit-002', symbol: payload.symbol, side: payload.side,
           order_type: payload.order_type, quantity: payload.quantity, limit_price: payload.limit_price,
-        }
-        body = { ok: true, simulation_only: true, order }
-      } else if (path.endsWith('/approve') && method === 'POST') {
-        eventSeed += 1
-        order = { ...order, status: 'approved', approved_by: request.postDataJSON().approved_by, events: [...order.events, { event_id: eventSeed, event_type: 'approved', from_status: 'proposed', to_status: 'approved', created_at: '2026-08-11T10:31:00+08:00' }] }
-        body = { ok: true, simulation_only: true, order }
-      } else if (path.endsWith('/fill') && method === 'POST') {
-        eventSeed += 1
-        order = { ...order, status: 'filled', market_price: 1419, slippage_bps: 3.52, total_fee: 47.58, events: [...order.events, { event_id: eventSeed, event_type: 'filled', from_status: 'approved', to_status: 'filled', created_at: '2026-08-11T10:32:00+08:00' }] }
-        account = {
-          ...account, cash: 858052.42, market_value: 141900, total_assets: 999952.42,
-          unrealized_pnl: -47.58, total_pnl: -47.58, return_pct: -0.0048, total_fees: 47.58,
-          positions: [{ symbol: '600519', quantity: 100, available_quantity: 0, t1_locked_quantity: 100, next_sellable_date: '2026-08-12', average_cost: 1419.4758, market_price: 1419, market_value: 141900, unrealized_pnl: -47.58, price_mode: 'live', valuation_state: 'exact' }],
-          equity_curve: [...account.equity_curve, { snapshot_id: 'eq-audit-fill', reason: 'order_filled', order_id: order.order_id, trade_date: '2026-08-11', cash: 858052.42, market_value: 141900, total_assets: 999952.42, realized_pnl: 0, unrealized_pnl: -47.58, total_pnl: -47.58, total_fees: 47.58, valuation_state: 'exact', missing_symbols: [], created_at: '2026-08-11T10:32:00+08:00' }],
         }
         body = { ok: true, simulation_only: true, order }
       } else if (path.endsWith('/cancel') && method === 'POST') {
@@ -133,13 +124,20 @@ try {
     await page.addScriptTag({ content: axeSource })
 
     if (viewport.width >= 1000 && viewport.theme === 'dark') {
-      await page.getByRole('button', { name: '人工批准' }).click()
-      await page.getByLabel('人工批准人').fill('审计操作员')
-      await page.getByRole('button', { name: '确认人工批准' }).click()
-      await page.getByText('已批准', { exact: true }).first().waitFor()
-      await page.getByRole('button', { name: '模拟成交' }).click()
-      await page.getByRole('button', { name: '按服务端行情模拟成交' }).click()
-      await page.getByText('已模拟成交', { exact: true }).first().waitFor()
+      await page.getByText('挂单中', { exact: true }).first().waitFor()
+      await page.locator('.simulation-table-wrap details summary').first().click()
+      await page.getByText('已进入撮合池', { exact: true }).first().waitFor()
+      await page.getByRole('button', { name: '600519 卖出' }).click()
+      const sellPrefill = {
+        symbol: await page.getByLabel('股票代码').inputValue(),
+        side: await page.getByLabel('买卖方向').inputValue(),
+        quantity: await page.getByLabel('数量（股）').inputValue(),
+        limitPrice: await page.getByLabel('限价（元）').inputValue(),
+      }
+      if (sellPrefill.symbol !== '600519' || sellPrefill.side !== 'sell' || sellPrefill.quantity !== '100' || sellPrefill.limitPrice !== '1418.5') {
+        throw new Error(`持仓卖出预填不正确：${JSON.stringify(sellPrefill)}`)
+      }
+      await page.getByRole('button', { name: '取消', exact: true }).click()
       await page.getByRole('button', { name: '费用设置' }).click()
       await page.getByRole('button', { name: '保存后续成交设置' }).click()
       await page.getByRole('button', { name: '记录当前估值' }).click()
@@ -163,9 +161,10 @@ try {
       return {
         overflow: Math.max(0, document.documentElement.scrollWidth - window.innerWidth),
         title: document.querySelector('#simulation-page-title')?.textContent?.trim(),
-        boundaryVisible: document.body.textContent?.includes('不产生真实委托') === true,
+        heroRemoved: document.querySelector('.simulation-hero') === null,
         brokerBoundaryVisible: document.body.textContent?.includes('无券商连接') === true,
         accountVisible: document.body.textContent?.includes('累计盈亏') === true,
+        sellActionVisible: document.body.textContent?.includes('卖出') === true,
         t1Visible: document.body.textContent?.includes('A 股 T+1') === true,
         equityVisible: document.body.textContent?.includes('资产曲线') === true,
         navigationPresent: document.querySelector('#primary-navigation')?.textContent?.includes('模拟执行') === true,
@@ -192,9 +191,10 @@ try {
 const failed = report.some(({ viewport, checks }) => (
   checks.overflow > 0
   || checks.title !== '模拟执行'
-  || !checks.boundaryVisible
+  || !checks.heroRemoved
   || !checks.brokerBoundaryVisible
   || !checks.accountVisible
+  || !checks.sellActionVisible
   || !checks.t1Visible
   || !checks.equityVisible
   || (viewport.width >= 1000 && (!checks.navigationPresent || !checks.desktopTableVisible))

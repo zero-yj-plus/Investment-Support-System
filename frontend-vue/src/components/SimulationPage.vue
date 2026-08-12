@@ -9,23 +9,25 @@ import type {
   SimulationDialogPayload,
   SimulationOrder,
   SimulationOrderIntent,
+  SimulationPosition,
   SimulationOrderStatus,
 } from '../types/simulation'
 
 const emit = defineEmits<{ refreshState: [refreshing: boolean] }>()
 const {
   status, account, orders, loading, loaded, loadError, actionError, feedback,
-  actionBusy, pageBusy, load, propose, approve, fill, cancel, emergencyStop,
+  actionBusy, pageBusy, load, propose, cancel, emergencyStop,
   resetEmergencyStop, initializeAccount, updateAccountSettings, recordValuation,
   clearActionMessages,
 } = useSimulation()
 
 const dialogMode = ref<SimulationDialogMode | null>(null)
 const dialogOrder = ref<SimulationOrder | null>(null)
+const dialogIntent = ref<Partial<SimulationOrderIntent> | null>(null)
 const emergencyActive = computed(() => status.value?.emergency_stop?.active === true)
 const accountInitialized = computed(() => account.value?.initialized === true)
 const statusRows: Array<{ key: SimulationOrderStatus; label: string }> = [
-  { key: 'proposed', label: '待人工批准' }, { key: 'approved', label: '已批准' },
+  { key: 'proposed', label: '旧挂单迁移中' }, { key: 'approved', label: '挂单中' },
   { key: 'filled', label: '已模拟成交' }, { key: 'rejected', label: '已拒绝' },
   { key: 'cancelled', label: '已取消' },
 ]
@@ -40,11 +42,15 @@ const reasonLabels: Record<string, string> = {
   invalid_market_price: '服务端成交价缺失', market_as_of_missing_or_invalid: '成交行情时点缺失',
   market_as_of_future: '成交行情时点异常', market_data_stale: '盘中成交行情已经过期',
   market_data_missing: '成交行情证据缺失', real_market_source_required: '成交行情来源不可核验',
-  buy_limit_not_marketable: '含滑点成交价高于买入限价', sell_limit_not_marketable: '含滑点成交价低于卖出限价',
   account_not_initialized: '请先创建模拟账户并设置初始资金', insufficient_cash: '模拟账户可用资金不足',
   insufficient_position: '模拟账户持仓数量不足', t1_position_locked: '当日买入仓位受 T+1 限制，当前不可卖',
   trade_date_missing_or_invalid: '服务端交易日期缺失', server_close_trade_date: '收盘价没有可核验的交易日期',
   emergency_stop_active: '紧急停止已开启', operator_cancelled_from_vue: '操作人从 Vue 页面取消',
+  day_order_expired: '当日挂单收盘后自动撤单', valid_trade_date_missing_or_invalid: '挂单有效交易日无效',
+}
+const eventLabels: Record<string, string> = {
+  submitted: '已提交', queued: '已进入撮合池', proposed: '旧流程已提交', approved: '旧流程已批准',
+  filled: '已成交', rejected: '已拒绝', cancelled: '已取消', expired: '当日到期撤单',
 }
 
 watch(pageBusy, (value) => emit('refreshState', value), { immediate: true })
@@ -63,22 +69,34 @@ function formatReason(value: string | null | undefined): string {
   if (!value) return '未记录拒绝或取消原因'
   return String(value).split(';').filter(Boolean).map((reason) => reasonLabels[reason] || reason).join('；')
 }
+function formatEvent(value: string): string { return eventLabels[value] || value }
 function pnlClass(value: number | null | undefined) { return { 'is-profit': Number(value) > 0, 'is-loss': Number(value) < 0 } }
 function priceMode(mode: string | null | undefined): string { return mode === 'latest_close' ? '最近交易日收盘价' : mode === 'live' ? '盘中实时价' : '价格模式缺失' }
 
-function openDialog(mode: SimulationDialogMode, order: SimulationOrder | null = null) {
-  clearActionMessages(); dialogMode.value = mode; dialogOrder.value = order
+function openDialog(
+  mode: SimulationDialogMode,
+  order: SimulationOrder | null = null,
+  intent: Partial<SimulationOrderIntent> | null = null,
+) {
+  clearActionMessages(); dialogMode.value = mode; dialogOrder.value = order; dialogIntent.value = intent
+}
+function openSellDialog(position: SimulationPosition) {
+  openDialog('create', null, {
+    symbol: position.symbol,
+    side: 'sell',
+    order_type: 'limit',
+    quantity: position.available_quantity,
+    limit_price: Number.isFinite(position.market_price) ? position.market_price : null,
+  })
 }
 function closeDialog() {
-  if (!actionBusy.value) { dialogMode.value = null; dialogOrder.value = null }
+  if (!actionBusy.value) { dialogMode.value = null; dialogOrder.value = null; dialogIntent.value = null }
 }
 async function submitDialog(payload: SimulationDialogPayload) {
   let success = false
   if (dialogMode.value === 'account-create') success = await initializeAccount(payload as SimulationAccountPayload)
   else if (dialogMode.value === 'account-settings') success = await updateAccountSettings(payload as SimulationAccountPayload)
   else if (dialogMode.value === 'create') success = await propose(payload as SimulationOrderIntent)
-  else if (dialogMode.value === 'approve' && dialogOrder.value && payload.approved_by) success = await approve(dialogOrder.value, payload.approved_by)
-  else if (dialogMode.value === 'fill' && dialogOrder.value) success = await fill(dialogOrder.value)
   else if (dialogMode.value === 'cancel' && dialogOrder.value) success = await cancel(dialogOrder.value)
   else if (dialogMode.value === 'emergency-stop' && payload.reason) success = await emergencyStop(payload.reason)
   else if (dialogMode.value === 'emergency-reset' && payload.approved_by && payload.reason) success = await resetEmergencyStop(payload.approved_by, payload.reason)
@@ -94,7 +112,7 @@ defineExpose({ refresh: load })
     <header class="simulation-header">
       <div class="page-heading">
         <h1 id="simulation-page-title">模拟执行</h1>
-        <p class="page-subtitle">把买卖意图写入本地订单账本，经过服务端风险核验、人工批准后按服务端行情模拟成交。</p>
+        <p class="page-subtitle">提交即进入服务端撮合池；每 5 秒检查真实行情，触价后自动成交并更新资金、成本与持仓。</p>
       </div>
       <button v-if="accountInitialized" type="button" class="primary-button" :disabled="loading || !!loadError || emergencyActive || !!actionBusy" @click="openDialog('create')">新建模拟订单</button>
       <button v-else type="button" class="primary-button" :disabled="loading || !!loadError || !!actionBusy" @click="openDialog('account-create')">创建模拟账户</button>
@@ -148,14 +166,26 @@ defineExpose({ refresh: load })
               </header>
               <div v-if="!account?.positions.length" class="simulation-positions__empty">暂无持仓。完成第一笔买入成交后显示。</div>
               <div v-else class="simulation-position-list">
-                <article v-for="position in account.positions" :key="position.symbol">
-                  <header><strong class="mono">{{ position.symbol }}</strong><span>{{ priceMode(position.price_mode) }}</span></header>
+                <article v-for="position in account.positions" :key="position.symbol" class="simulation-position-row">
+                  <div class="simulation-position-row__identity">
+                    <strong class="mono">{{ position.symbol }}</strong>
+                    <span>{{ priceMode(position.price_mode) }}</span>
+                    <small v-if="position.t1_locked_quantity > 0">{{ position.t1_locked_quantity }} 股 T+1 冻结<span v-if="position.next_sellable_date"> · {{ position.next_sellable_date }} 可卖</span></small>
+                  </div>
                   <dl>
                     <div><dt>持仓 / 可卖</dt><dd>{{ position.quantity }} / {{ position.available_quantity }} 股</dd></div>
-                    <div><dt>T+1 冻结</dt><dd>{{ position.t1_locked_quantity }} 股<span v-if="position.next_sellable_date"> · {{ position.next_sellable_date }} 可卖</span></dd></div>
-                    <div><dt>成本 / 现价</dt><dd>{{ formatPrice(position.average_cost) }} / {{ formatPrice(position.market_price) }}</dd></div>
+                    <div><dt>平均成本</dt><dd>{{ formatPrice(position.average_cost) }}</dd></div>
+                    <div><dt>现价</dt><dd>{{ formatPrice(position.market_price) }}</dd></div>
                     <div><dt>浮动盈亏</dt><dd :class="pnlClass(position.unrealized_pnl)">{{ formatMoney(position.unrealized_pnl, '估值缺失') }}</dd></div>
                   </dl>
+                  <button
+                    type="button"
+                    class="secondary-button simulation-sell-button"
+                    :disabled="position.available_quantity <= 0 || !!actionBusy || emergencyActive"
+                    :aria-label="`${position.symbol} 卖出`"
+                    :title="position.available_quantity <= 0 ? '当前没有可卖数量' : emergencyActive ? '紧急停止期间不能新建挂单' : `卖出 ${position.symbol}`"
+                    @click="openSellDialog(position)"
+                  >卖出</button>
                 </article>
               </div>
             </section>
@@ -170,29 +200,18 @@ defineExpose({ refresh: load })
           </div>
         </template>
 
-        <div class="simulation-boundary">
-          <section class="panel simulation-hero" aria-labelledby="simulation-boundary-title">
-            <p class="simulation-kicker">SIMULATION ONLY</p>
-            <h2 id="simulation-boundary-title">只验证决策与执行约束，不产生真实委托</h2>
-            <p>系统不读取券商账户，也没有券商委托接口。浏览器只提交股票、方向、数量和可选限价。</p>
-            <dl>
-              <div><dt>服务端定价</dt><dd>盘中实时，盘外最近收盘</dd></div>
-              <div><dt>必须人工批准</dt><dd>自动化身份不能放行</dd></div>
-              <div><dt>追加式留痕</dt><dd>历史状态不被覆盖</dd></div>
-            </dl>
-          </section>
-
-          <section class="panel simulation-stop" :class="{ 'is-active': emergencyActive }" aria-labelledby="simulation-stop-title">
+        <section class="panel simulation-stop" :class="{ 'is-active': emergencyActive }" aria-labelledby="simulation-stop-title">
+          <div class="simulation-stop__copy">
             <div class="simulation-stop__title">
               <h2 id="simulation-stop-title">{{ emergencyActive ? '紧急停止已开启' : '紧急停止未开启' }}</h2>
               <span>无券商连接</span>
             </div>
-            <p v-if="emergencyActive">原因：{{ status?.emergency_stop.reason || '原因未记录' }}。新订单与人工批准已被阻断。</p>
-            <p v-else>任何模拟成交仍需人工批准，且不会发送到券商。账户执行 A 股 T+1。</p>
-            <button v-if="emergencyActive" type="button" class="secondary-button" :disabled="!!actionBusy" @click="openDialog('emergency-reset')">人工复核后恢复</button>
-            <button v-else type="button" class="danger-button" :disabled="!!actionBusy" @click="openDialog('emergency-stop')">紧急停止</button>
-          </section>
-        </div>
+            <p v-if="emergencyActive">原因：{{ status?.emergency_stop.reason || '原因未记录' }}。新订单与自动撮合已被阻断。</p>
+            <p v-else>挂单由服务端自动撮合，不会发送到券商；账户执行 A 股 T+1。</p>
+          </div>
+          <button v-if="emergencyActive" type="button" class="secondary-button" :disabled="!!actionBusy" @click="openDialog('emergency-reset')">人工复核后恢复</button>
+          <button v-else type="button" class="danger-button" :disabled="!!actionBusy" @click="openDialog('emergency-stop')">紧急停止</button>
+        </section>
 
         <section class="simulation-counts" aria-label="模拟订单状态数量">
           <article v-for="row in statusRows" :key="row.key" class="panel">
@@ -205,7 +224,7 @@ defineExpose({ refresh: load })
 
           <div v-if="!orders.length" class="simulation-empty" role="status">
             <h3>当前没有模拟订单</h3>
-            <p>新建订单后，服务端会读取当前风险和行情，再决定进入待批准或直接拒绝。</p>
+            <p>新建订单后，服务端核验风险与行情；有效订单直接进入撮合池，触价后自动成交。</p>
             <button type="button" class="secondary-button" :disabled="!accountInitialized || emergencyActive || !!actionBusy" @click="openDialog('create')">新建第一笔模拟订单</button>
           </div>
 
@@ -221,8 +240,8 @@ defineExpose({ refresh: load })
                     <td><strong class="mono">参考 {{ formatPrice(order.reference_price) }}</strong><span>{{ order.order_type === 'limit' ? `限价 ${formatPrice(order.limit_price)}` : '按服务端现价' }}</span></td>
                     <td><strong>{{ order.risk_level == null ? '风险等级缺失' : `风险 ${order.risk_level} 级` }}</strong><span :class="{ 'is-warning': order.data_stale && order.price_mode !== 'latest_close' }">{{ priceMode(order.price_mode) }} · {{ formatTime(order.data_as_of) }}</span></td>
                     <td><strong class="mono">{{ order.market_price == null ? '尚未成交' : formatPrice(order.market_price) }}</strong><span>{{ order.total_fee == null ? '费用未产生' : `费用 ${formatMoney(order.total_fee)}` }}</span></td>
-                    <td class="simulation-reason"><span>{{ formatReason(order.rejection_reason) }}</span><details v-if="order.events?.length"><summary>查看 {{ order.events.length }} 条事件</summary><ol><li v-for="event in order.events" :key="event.event_id"><b>{{ event.event_type }}</b><time>{{ formatTime(event.created_at) }}</time></li></ol></details></td>
-                    <td><div class="simulation-actions"><button v-if="order.status === 'proposed'" type="button" class="primary-button" :disabled="!!actionBusy || emergencyActive" @click="openDialog('approve', order)">人工批准</button><button v-if="order.status === 'approved'" type="button" class="primary-button" :disabled="!!actionBusy || emergencyActive" @click="openDialog('fill', order)">模拟成交</button><button v-if="order.status === 'proposed' || order.status === 'approved'" type="button" class="secondary-button" :disabled="!!actionBusy" @click="openDialog('cancel', order)">取消</button><span v-if="!['proposed', 'approved'].includes(order.status)">已结束</span></div></td>
+                    <td class="simulation-reason"><span>{{ formatReason(order.rejection_reason) }}</span><details v-if="order.events?.length"><summary>查看 {{ order.events.length }} 条事件</summary><ol><li v-for="event in order.events" :key="event.event_id"><b>{{ formatEvent(event.event_type) }}</b><time>{{ formatTime(event.created_at) }}</time></li></ol></details></td>
+                    <td><div class="simulation-actions"><button v-if="order.status === 'proposed' || order.status === 'approved'" type="button" class="secondary-button" :disabled="!!actionBusy" @click="openDialog('cancel', order)">取消挂单</button><span v-if="!['proposed', 'approved'].includes(order.status)">已结束</span></div></td>
                   </tr>
                 </tbody>
               </table>
@@ -233,8 +252,8 @@ defineExpose({ refresh: load })
                 <header><div><strong class="mono">{{ order.symbol }}</strong><span>{{ order.side === 'buy' ? '买入' : '卖出' }} · {{ order.quantity }} 股 · {{ order.order_type === 'limit' ? '限价单' : '市价单' }}</span></div><span class="simulation-status" :class="`is-${order.status}`">{{ statusLabels[order.status] }}</span></header>
                 <dl><div><dt>参考价格</dt><dd>{{ formatPrice(order.reference_price) }}</dd></div><div><dt>限价</dt><dd>{{ order.order_type === 'limit' ? formatPrice(order.limit_price) : '市价单不设限价' }}</dd></div><div><dt>风险与数据</dt><dd>{{ order.risk_level == null ? '风险等级缺失' : `${order.risk_level} 级` }} · {{ priceMode(order.price_mode) }}</dd></div><div><dt>成交 / 费用</dt><dd>{{ order.market_price == null ? '尚未成交' : `${formatPrice(order.market_price)} / ${formatMoney(order.total_fee)}` }}</dd></div></dl>
                 <p v-if="order.rejection_reason" class="simulation-order-card__reason">{{ formatReason(order.rejection_reason) }}</p>
-                <details v-if="order.events?.length"><summary>查看 {{ order.events.length }} 条追加式事件</summary><ol><li v-for="event in order.events" :key="event.event_id"><b>{{ event.event_type }}</b><time>{{ formatTime(event.created_at) }}</time></li></ol></details>
-                <footer class="simulation-actions"><button v-if="order.status === 'proposed'" type="button" class="primary-button" :disabled="!!actionBusy || emergencyActive" @click="openDialog('approve', order)">人工批准</button><button v-if="order.status === 'approved'" type="button" class="primary-button" :disabled="!!actionBusy || emergencyActive" @click="openDialog('fill', order)">模拟成交</button><button v-if="order.status === 'proposed' || order.status === 'approved'" type="button" class="secondary-button" :disabled="!!actionBusy" @click="openDialog('cancel', order)">取消</button></footer>
+                <details v-if="order.events?.length"><summary>查看 {{ order.events.length }} 条追加式事件</summary><ol><li v-for="event in order.events" :key="event.event_id"><b>{{ formatEvent(event.event_type) }}</b><time>{{ formatTime(event.created_at) }}</time></li></ol></details>
+                <footer class="simulation-actions"><button v-if="order.status === 'proposed' || order.status === 'approved'" type="button" class="secondary-button" :disabled="!!actionBusy" @click="openDialog('cancel', order)">取消挂单</button></footer>
               </li>
             </ul>
           </template>
@@ -244,9 +263,10 @@ defineExpose({ refresh: load })
 
     <SimulationActionDialog
       v-if="dialogMode"
-      :key="`${dialogMode}-${dialogOrder?.order_id || 'global'}`"
+      :key="`${dialogMode}-${dialogOrder?.order_id || dialogIntent?.symbol || 'global'}`"
       :mode="dialogMode"
       :order="dialogOrder"
+      :initial-intent="dialogIntent"
       :account="account"
       :busy="!!actionBusy"
       :server-error="actionError"
@@ -278,37 +298,34 @@ defineExpose({ refresh: load })
 .simulation-account-summary article { display: grid; min-width: 0; gap: 4px; padding: 13px; }
 .simulation-account-summary span, .simulation-account-summary small { color: var(--text-3); }
 .simulation-account-summary strong { overflow-wrap: anywhere; font-family: "SFMono-Regular", Consolas, monospace; font-size: clamp(17px, 1.5vw, 22px); font-variant-numeric: tabular-nums; }
-.simulation-account-grid { display: grid; grid-template-columns: minmax(360px, .9fr) minmax(0, 1.4fr); gap: 14px; }
+.simulation-account-grid { display: grid; grid-template-columns: minmax(560px, 1.2fr) minmax(0, 1fr); gap: 14px; }
 .simulation-positions, .simulation-equity { min-width: 0; overflow: hidden; }
 .simulation-positions > header, .simulation-equity > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 14px; border-bottom: 1px solid var(--border); }
 .simulation-positions h2, .simulation-equity h2 { margin: 0; font-size: 18px; }
 .simulation-positions header p, .simulation-equity header p { margin: 3px 0 0; color: var(--text-3); font-size: 12px; }
 .simulation-positions__empty { display: grid; min-height: 210px; place-content: center; padding: 18px; color: var(--text-3); text-align: center; }
-.simulation-position-list { display: grid; gap: 8px; padding: 10px; }
-.simulation-position-list > article { padding: 11px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); }
-.simulation-position-list article > header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.simulation-position-list article > header span { color: var(--text-3); font-size: 12px; }
-.simulation-position-list dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 10px 0 0; }
+.simulation-position-list { display: grid; padding: 0 14px; }
+.simulation-position-row { display: grid; grid-template-columns: minmax(120px, .8fr) minmax(0, 2.6fr) auto; align-items: center; gap: 16px; min-height: 82px; padding: 12px 0; border-bottom: 1px solid var(--border); }
+.simulation-position-row:last-child { border-bottom: 0; }
+.simulation-position-row__identity { display: grid; min-width: 0; gap: 2px; }
+.simulation-position-row__identity > span, .simulation-position-row__identity > small { color: var(--text-3); font-size: 12px; overflow-wrap: anywhere; }
+.simulation-position-list dl { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 0; }
 .simulation-position-list dt { color: var(--text-3); font-size: 12px; }
 .simulation-position-list dd { margin: 2px 0 0; overflow-wrap: anywhere; font-size: 13px; }
+.simulation-sell-button { min-width: 72px; min-height: 44px; }
 .simulation-equity > :deep(.equity-chart) { padding: 10px 14px 14px; }
 .is-profit { color: var(--down) !important; }
 .is-loss { color: var(--danger) !important; }
-.simulation-boundary { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(280px, .7fr); gap: 14px; }
-.simulation-hero, .simulation-stop { padding: 18px; }
-.simulation-hero { border-left: 3px solid var(--accent); }
 .simulation-kicker { margin: 0; color: var(--accent); font-size: 12px; font-weight: 800; letter-spacing: .08em; }
-.simulation-hero h2, .simulation-stop h2, .simulation-ledger h2 { margin: 5px 0; font-size: 19px; }
-.simulation-hero > p:not(.simulation-kicker), .simulation-stop > p, .simulation-ledger header p { margin: 0; color: var(--text-2); font-size: 13px; }
-.simulation-hero dl { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 14px 0 0; }
-.simulation-hero dl div { padding: 9px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); }
-.simulation-hero dt { font-size: 13px; font-weight: 750; }
-.simulation-hero dd { margin: 2px 0 0; color: var(--text-3); font-size: 12px; }
-.simulation-stop { display: grid; align-content: start; gap: 12px; }
+.simulation-stop h2, .simulation-ledger h2 { margin: 0; font-size: 16px; }
+.simulation-ledger header p { margin: 0; color: var(--text-2); font-size: 13px; }
+.simulation-stop { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 11px 14px; }
 .simulation-stop.is-active { border-color: color-mix(in srgb, var(--danger) 60%, var(--border)); background: color-mix(in srgb, var(--danger) 6%, var(--surface)); }
+.simulation-stop__copy { display: grid; min-width: 0; gap: 3px; }
 .simulation-stop__title { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .simulation-stop__title span { padding: 3px 7px; border: 1px solid var(--border); border-radius: 999px; color: var(--text-3); font-size: 12px; white-space: nowrap; }
-.simulation-stop button { justify-self: start; }
+.simulation-stop p { margin: 0; color: var(--text-2); font-size: 13px; }
+.simulation-stop button { flex: 0 0 auto; min-height: 44px; }
 .simulation-counts { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }
 .simulation-counts article { padding: 12px; }
 .simulation-counts strong { display: block; font-family: "SFMono-Regular", Consolas, monospace; font-size: 22px; }
@@ -342,7 +359,6 @@ defineExpose({ refresh: load })
 @media (max-width: 980px) {
   .simulation-account-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .simulation-account-grid { grid-template-columns: minmax(0, 1fr); }
-  .simulation-boundary { grid-template-columns: minmax(0, 1fr); }
   .simulation-counts { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 @media (max-width: 760px) {
@@ -351,7 +367,10 @@ defineExpose({ refresh: load })
   .simulation-account-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .simulation-positions > header, .simulation-equity > header { align-items: stretch; flex-direction: column; }
   .simulation-positions > header button, .simulation-equity > header button { width: 100%; }
-  .simulation-hero dl { grid-template-columns: minmax(0, 1fr); }
+  .simulation-position-row { grid-template-columns: minmax(0, 1fr) auto; gap: 10px 12px; }
+  .simulation-position-list dl { grid-column: 1 / -1; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .simulation-stop { align-items: stretch; flex-direction: column; }
+  .simulation-stop button { width: 100%; }
   .simulation-counts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .simulation-table-wrap { display: none; }
   .simulation-cards { display: grid; gap: 10px; padding: 10px; }
@@ -367,9 +386,8 @@ defineExpose({ refresh: load })
   .simulation-actions button { flex: 1 1 120px; }
 }
 @media (max-width: 430px) {
-  .simulation-account-summary, .simulation-position-list dl, .simulation-counts, .simulation-order-card dl { grid-template-columns: minmax(0, 1fr); }
+  .simulation-account-summary, .simulation-counts, .simulation-order-card dl { grid-template-columns: minmax(0, 1fr); }
   .simulation-stop__title { align-items: flex-start; flex-direction: column; }
-  .simulation-stop button { width: 100%; }
 }
 @media (prefers-reduced-motion: reduce) {
   .simulation-skeleton { animation: none; }

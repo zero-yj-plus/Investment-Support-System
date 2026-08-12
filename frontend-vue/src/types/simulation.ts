@@ -62,7 +62,10 @@ export interface SimulationStatus {
   simulation_only: true
   broker_connected: false
   broker_interface_present?: false
-  manual_approval_required: true
+  manual_approval_required: false
+  automatic_matching?: true
+  matching_interval_seconds?: number
+  order_time_in_force?: 'DAY'
   account_initialized?: boolean
   settlement_rule?: 'A_SHARE_T_PLUS_1'
   emergency_stop: SimulationEmergencyStop
@@ -106,8 +109,6 @@ export type SimulationDialogMode =
   | 'account-create'
   | 'account-settings'
   | 'create'
-  | 'approve'
-  | 'fill'
   | 'cancel'
   | 'emergency-stop'
   | 'emergency-reset'
