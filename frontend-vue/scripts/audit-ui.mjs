@@ -266,7 +266,7 @@ const fixtures = {
   '/api/status': {
     ok: true,
     client: { name: '审计个人投资者', id: 'audit' },
-    version: '1.4.1-audit',
+    version: '1.4.2-audit',
     date: '2026-07-28',
     data_source: '客户授权 TDX API + 免费公开源',
     model_connection: { configured: true, connected: true, status: 'connected', required_for_core: false },
@@ -318,7 +318,7 @@ const fixtures = {
   '/api/shell-status': {
     ok: true,
     client: { name: '审计个人投资者', id: 'audit', brand: '审计白标', brand_sub: 'A 股决策支持' },
-    version: '1.4.1-audit',
+    version: '1.4.2-audit',
     is_trade_day: true,
     market_session: 'intraday',
     market_context: {

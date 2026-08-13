@@ -50,7 +50,7 @@ start.bat
 如目录中有多个部署 ZIP，应显式指定新版文件：
 
 ```bat
-upgrade.bat WUDI-1.4.1-Windows-deploy-20260810-120000.zip
+upgrade.bat WUDI-1.4.2-Windows-deploy-YYYYMMDD-HHMMSS.zip
 ```
 
 ### 客户品牌配置
