@@ -440,6 +440,104 @@ indexes 至少含：上证指数、深证成指、创业板指、科创50（拿�
 }
 ```
 
+### GET /api/market/limitup-tracker/dates
+
+返回“涨停追踪”最近最多 20 个涨停基准日。`limit` 范围 1—20，默认 20；
+`default_date` 是最近可作为涨停基准日的交易日。日期只来自服务端 A 股交易日历；日历不可用时
+仅可返回已经落盘的真实快照日期，并在 `calendar.state=missing`、`missing[]` 说明，禁止根据浏览器
+日期或简单工作日猜测。
+
+```json
+{
+  "ok": true,
+  "default_date": "2026-08-13",
+  "calendar": {"state": "available", "source": "服务端A股交易日历"},
+  "dates": [
+    {"date": "2026-08-13", "snapshot_state": "intraday", "has_snapshot": false, "missing_label": null},
+    {"date": "2026-08-12", "snapshot_state": "tracking", "has_snapshot": true, "missing_label": null},
+    {"date": "2026-08-11", "snapshot_state": "missing", "has_snapshot": false, "missing_label": "快照缺失"}
+  ],
+  "generated_at": "2026-08-13T10:30:00+08:00",
+  "missing": []
+}
+```
+
+### GET /api/market/limitup-tracker
+
+查询参数 `date=YYYY-MM-DD`；省略时使用上述 `default_date`。响应是一个原子批次：基准日、五项
+统计、T+1/T+2 日期、股票长表、来源、时点、缺失和覆盖必须一起生成。前端不得自行推导交易日、
+重新排序、计算晋级率或用别日快照回填。追踪只到 T+2，不产生 T+3。
+
+```json
+{
+  "ok": true,
+  "selected_date": "2026-08-10",
+  "baseline_date": "2026-08-10",
+  "baseline_count": 2,
+  "tracking_status": "追踪结果已定稿",
+  "t1_date": "2026-08-11",
+  "t2_date": "2026-08-12",
+  "metrics": {
+    "t1_average": {"value": 2.5, "state": "final", "label": "收盘定稿", "sample_size": 2, "total_size": 2, "coverage": 1.0},
+    "t1_red_rate": {"value": 50.0, "state": "final", "label": "收盘定稿", "sample_size": 2, "total_size": 2, "coverage": 1.0},
+    "t1_promotion_rate": {"value": 50.0, "state": "final", "label": "收盘定稿", "sample_size": 2, "total_size": 2, "coverage": 1.0},
+    "t2_average": {"value": 0.0, "state": "final", "label": "收盘定稿", "sample_size": 2, "total_size": 2, "coverage": 1.0},
+    "t2_red_rate": {"value": 50.0, "state": "final", "label": "收盘定稿", "sample_size": 2, "total_size": 2, "coverage": 1.0}
+  },
+  "stocks": [{
+    "position": 1, "code": "000001", "name": "示意名称", "industry": "银行",
+    "lianban": 2, "lianban_label": "2连板", "baseline_change_pct": 10.01,
+    "first_limit_time": "09:31:00",
+    "t1": {"date": "2026-08-11", "change_pct": 10.0, "state": "final", "label": "收盘定稿"},
+    "t2": {"date": "2026-08-12", "change_pct": -5.0, "state": "final", "label": "收盘定稿"}
+  }],
+  "data_date": "2026-08-10",
+  "generated_at": "2026-08-13T18:00:00+08:00",
+  "market_time": "2026-08-10",
+  "sources": ["公开涨跌停池", "腾讯财经·前复权日K＋公开涨跌停池"],
+  "is_intraday": false,
+  "is_final": true,
+  "missing": [],
+  "degraded_reasons": [],
+  "coverage": {"baseline": {"available": 2, "total": 2}, "t1": {"available": 2, "total": 2}, "t2": {"available": 2, "total": 2}}
+}
+```
+
+五项统计全部由服务端计算，百分数字段仍使用“数值即百分点”口径：
+
+- `t1_average`：冻结基准池各股票在 T+1 的当日涨跌幅算术平均；盘中用同批次真实报价的
+  `change_pct`，历史补数用腾讯前复权日 K 的 `T+1 收盘 / 前一交易日收盘 - 1`。
+- `t1_red_rate`：T+1 涨跌幅严格大于 0 的股票数 / 可用样本数。
+- `t1_promotion_rate`：T+1 同一免费公开涨停池中 `lianban >= 2` 的股票数 / 冻结基准日
+  涨停股票数。分子分母同为公开涨停池，沿用 `data.market._promote_rate` 的既有“昨日涨停今日继续板”
+  口径；池为空或任一必要证据缺失时为 `null`。
+- `t2_average`：冻结基准池各股票在 T+2 的**当日**涨跌幅算术平均，不是从基准日累计收益。
+- `t2_red_rate`：T+2 当日涨跌幅严格大于 0 的股票数 / 可用样本数。
+
+指标 `state` 为 `pending/intraday/final/missing/unavailable/not_applicable`，对应显示
+“待收盘 / 盘中快照／未定稿 / 收盘定稿 / 数据暂缺 / 暂不可用 / 无样本”。盘中值不写入历史
+冻结事件；完整收盘证据才记为 `final`。部分历史日 K 可以逐股显示已经确认的收盘涨跌幅，但聚合
+统计在覆盖未完整时仍为 `value=null,state=missing`，绝不用 0 代替缺失。
+
+冻结记录保存在客户 `server.data_dir/limitup-tracker/YYYY-MM-DD.jsonl`。基准池和 T+1/T+2
+窗口都是 append-only 事件；首个完整冻结事件不覆盖，不完整观察只允许追加覆盖率更高的新记录。
+指定历史日期的涨停池缺失时保持快照缺失，不回退到其他日期。当前交易日盘中只返回瞬时观察；
+15:10 后若基准池或到期窗口取得完整收盘证据可冻结，否则仍标数据暂缺。
+
+### POST /api/market/limitup-tracker/backfill
+
+启动最近 20 个交易日的异步补数，返回 HTTP 202 和 `job_id/status=running`。相同实例已有活动任务时
+返回同一活动任务并带 `already_running=true`，不重复启动。补数来源只有：指定交易日免费公开涨停池
+（基准池、T+1 晋级分子）和腾讯财经前复权日 K（T+1/T+2 当日涨跌幅）；不使用示例值，不跨日期
+回填，不把未复权日 K 混入。
+
+### GET /api/market/limitup-tracker/backfill/{job_id}
+
+轮询补数任务。终态：`complete`=所有可补范围完成；`partial`=部分真实数据落盘且仍有缺口；
+`failed`=没有取得可保存的目标数据或任务异常；`noop`=没有已经到期且需要补的数据。响应含
+`summary.completed/partial/failed/noop`、逐日期 `results[]`、`reason` 和 `finished_at`。
+服务重启后内存任务状态不存在返回 404，但已追加的快照事件仍保留。
+
 ### GET /api/market/sectors
 ```json
 {

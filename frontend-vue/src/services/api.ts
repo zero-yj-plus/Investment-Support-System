@@ -1,3 +1,9 @@
+import type {
+  LimitUpBackfillResponse,
+  LimitUpTrackerDatesResponse,
+  LimitUpTrackerSnapshot,
+} from '../types/limitupTracker'
+
 const API_BASE = '/api'
 const EVENT_STREAM_IDLE_TIMEOUT_MS = 240_000
 
@@ -76,6 +82,22 @@ export async function deleteJson<T>(path: string, signal: AbortSignal): Promise<
   }
   if (body == null) throw new ApiError('接口没有返回可读取的数据', response.status)
   return body as T
+}
+
+export function getLimitUpTrackerDates(signal: AbortSignal, limit = 20) {
+  return getJson<LimitUpTrackerDatesResponse>(`/market/limitup-tracker/dates?limit=${Math.min(20, Math.max(1, limit))}`, signal)
+}
+
+export function getLimitUpTrackerSnapshot(date: string, signal: AbortSignal) {
+  return getJson<LimitUpTrackerSnapshot>(`/market/limitup-tracker?date=${encodeURIComponent(date)}`, signal)
+}
+
+export function startLimitUpTrackerBackfill(signal: AbortSignal) {
+  return postJson<LimitUpBackfillResponse>('/market/limitup-tracker/backfill', {}, signal)
+}
+
+export function getLimitUpTrackerBackfill(jobId: string, signal: AbortSignal) {
+  return getJson<LimitUpBackfillResponse>(`/market/limitup-tracker/backfill/${encodeURIComponent(jobId)}`, signal)
 }
 
 export interface EventStreamHandlers {

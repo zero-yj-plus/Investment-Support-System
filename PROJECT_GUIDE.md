@@ -249,6 +249,7 @@ flowchart LR
 | `data/evidence_contract.py` | `data-evidence-v1` 来源、时点、完整性和内容哈希契约。 |
 | `data/evidence_store.py` | SQLite 点时证据库；存来源、原始载荷、标准化点和谱系，支持严格 PIT 读取。 |
 | `data/market.py` | 指数、市场宽度、涨跌停、板块、资金、涨幅榜等市场级聚合与回退。 |
+| `data/limitup_tracker.py` | 涨停基准日 T+1/T+2 服务端追踪；交易日推导、五项统计、JSONL 追加冻结与显式历史补数。 |
 | `data/stock.py` | 个股实时盘口、快速报价、分时、日 K、板块和资金的渐进式详情。 |
 | `data/free_source.py` | 免费数据兼容层；统一腾讯、TDX、AkShare/新浪/同花顺等常用能力。 |
 | `data/tdx_api_source.py` | 客户授权 TDX Data API v2.8 适配；代码表、行情、板块、资金和盘后研究。 |
@@ -413,6 +414,7 @@ FastAPI `/api`，不依赖旧前端。旧版默认不可访问，仅配置开启
 今日复盘页读取 `/api/reports/close`、`/api/holdings/advice-review` 与追加式推荐回验接口，分别呈现收盘风险定格、昨日建议对账和 T0/T1/T2/T5 留痕；各请求独立降级。
 次日策略页读取 `/api/reports/evening` 与 `/api/watchlist`，展示 19:30 风险底座、明日观察池触发条件、尾盘/收盘定稿 lineage 和正式报告；不在浏览器中重算风险、评级或价格区间。
 涨停题材页只读取独立口径 `/api/market/limitup/themes`，展示题材可复核计数和涨停股明细，不与驾驶舱主涨停池混算；加载、真实空数组、降级和接口失败分别呈现。
+涨停追踪页使用 `#/today?tab=limitup`，读取 `/api/market/limitup-tracker/dates` 与指定基准日原子快照；最近20日以浮层选择，补数通过异步任务轮询。T+1/T+2 日期、五项统计、排序、冻结和缺失语义全部由服务端提供，前端只选择日期并原批次切换，不延伸 T+3。
 主线深研页只读取 `/api/features/money-effect`、`/api/features/crowdedness`、`/api/features/mainline` 与 `/api/features/leaders`，保持赚钱效应、拥挤度、跨日持续性和龙头梯队四种口径独立，并显式区分部分因子、样本积累、真实空数组与传输失败。
 资金追踪页读取 `/api/capital/trends?days=1`，并保留 `/api/capital/snapshot` 手动采集动作；行业与热门股按真实数据日期、来源和单位分别展示，`tdx_raw_unverified` 仅显示原始公式值，加载、空数组、陈旧快照和动作失败均显式区分。
 我的持仓页读取 `/api/holdings` 与合并报价 `/api/quotes?codes=...`，新增代码时仅用 `/api/quote/{code}` 核验，并通过 `PUT /api/holdings` 整体保存；页面不消费或提交账户总资产，投入成本按成本价与股数自动汇总，任一现价缺失时不汇总持仓总市值、总盈亏或持仓构成，持仓加载失败时锁定保存以避免空账本覆盖。
@@ -434,6 +436,7 @@ FastAPI `/api`，不依赖旧前端。旧版默认不可访问，仅配置开启
 | `src/components/` | 决策总览卡片、盘前定格快照、安全 Markdown 报告、章节目录和共享图标/状态组件。 |
 | `src/components/CloseReview*.vue`、`CloseAdviceReview.vue`、`CloseRecommendationReview.vue` | 今日复盘的收盘结论、持仓建议对账、推荐留痕和正式报告工作区。 |
 | `src/components/Hotboard*.vue` | 涨停题材结论、题材筛选和响应式涨停股明细。 |
+| `src/components/LimitUp*.vue` | 涨停追踪页、最近3日/20日浮层、五项统计与服务端顺序的固定八列明细。 |
 | `src/components/Capital*.vue` | 资金追踪的数据边界、行业/热门股榜单、日内连续采样趋势和局部动作反馈。 |
 | `src/components/MainlineResearchPage.vue`、`MainlineMoneyEffect.vue`、`MainlineCrowdedness.vue`、`MainlineContinuity.vue`、`MainlineLeaders.vue` | 主线深研结论边界、四类结构化证据和各模块独立状态。 |
 | `src/components/HoldingsPage.vue`、`HoldingEditor.vue`、`HoldingsTable.vue` | 我的持仓标题操作、自动成本/市值汇总边界、账本编辑和桌面宽表/移动卡片明细。 |
@@ -454,6 +457,7 @@ FastAPI `/api`，不依赖旧前端。旧版默认不可访问，仅配置开启
 | `src/composables/usePremarketReport.ts` | 盘前报告读取、资金验证、SSE 生成、推送和独立请求/定时器清理。 |
 | `src/composables/useCloseReview.ts` | 今日复盘报告、策略自证与推荐回验的独立请求、SSE 动作、局部降级和卸载清理。 |
 | `src/composables/useHotboard.ts` | 涨停题材独立请求、刷新、可见性恢复、缺失语义和卸载清理。 |
+| `src/composables/useLimitUpTracker.ts`、`src/types/limitupTracker.ts` | 日期/快照/补数轮询的类型化请求、原子日期提交、竞态隔离、自动刷新和卸载清理。 |
 | `src/composables/useCapitalTracking.ts` | 资金趋势读取、手动快照采集、独立请求控制、可见性刷新和卸载清理。 |
 | `src/composables/useMainlineResearch.ts` | 主线深研四路有界请求、共享底座预热、局部降级、自动刷新和卸载清理。 |
 | `src/composables/useHoldings.ts` | 持仓、批量报价、单票核验与整体保存的独立请求控制、覆盖保护、自动刷新和卸载清理。 |
@@ -548,6 +552,7 @@ FastAPI `/api`，不依赖旧前端。旧版默认不可访问，仅配置开启
 | `test_gdelt_source.py` | 国内部署跳过跨境增强、海外只取元数据。 |
 | `test_interactive_source_budgets.py` | 无本地 TDX SDK、抓取预算和降级。 |
 | `test_intraday_pool_fallbacks.py` | 盘中涨跌停池同一时点回退。 |
+| `test_limitup_tracker.py` | 真实交易日、盘中/待收盘/冻结状态、五项口径、追加日志和缺失不归零。 |
 | `test_longhu_buyable_release_gate.py` | 可买池、龙虎榜完整/回退/结算状态。 |
 | `test_mainline.py` | 主线容量、方向、宽度、涨停和资金不误导。 |
 | `test_market_data_gateway.py` | 证据库 WAL、去重、PIT、回退、冲突和质量。 |
@@ -604,6 +609,7 @@ FastAPI `/api`，不依赖旧前端。旧版默认不可访问，仅配置开启
 | `test_frontend_api_cache.py` | GET 单飞缓存、超时释放和重试。 |
 | `test_frontend_workspace_runtime_contract.py` | 工作台不被后台刷新重挂、导航可达性和默认入口。 |
 | `test_hotboard_frontend.py` | 涨停题材独立口径和懒加载可见性。 |
+| `test_vue_limitup_tracker.py` | Vue 涨停追踪路由、弹出日期、固定八列、竞态清理、状态与接口边界。 |
 | `test_industry_chain_analysis.py` | 真实 TDX 成员、可复算评分和八段研究结构。 |
 | `test_knowledge_governance.py` | 手工知识、自动草稿、审批证据和 digest 隔离。 |
 | `test_mainforce_official_verification_frontend.py` | 主力页官方核验状态与代码集合比较。 |
@@ -628,6 +634,7 @@ data/
 ├─ evidence/market_data.sqlite3
 ├─ delivery_receipts/
 ├─ news_events/
+├─ limitup-tracker/YYYY-MM-DD.jsonl
 └─ 各类 last-good、主线、龙虎榜、任务与缓存文件
 ```
 

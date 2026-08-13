@@ -31,6 +31,7 @@ export const sidebarNavigation: NavigationGroup[] = [
     id: 'market', label: '市场结构', icon: 'market', path: 'today', tab: 'hotboard',
     children: [
       { path: 'today', tab: 'hotboard', label: '涨停题材' },
+      { path: 'today', tab: 'limitup', label: '涨停追踪' },
       { path: 'today', tab: 'mainline', label: '主线深研' },
       { path: 'today', tab: 'capital', label: '资金追踪' },
       { path: 'today', tab: 'timing', label: '资金择时' },

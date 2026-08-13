@@ -32,6 +32,7 @@ from .jobs.simulation_matcher import SimulationMatcher, register as register_sim
 from .knowledge.store import Store
 from .research_runs import ResearchRunManager
 from .simulation import SimulationStore
+from .data.limitup_tracker import LimitUpTracker
 
 log = logging.getLogger("hermes")
 
@@ -179,6 +180,7 @@ def create_app(config_path: str) -> FastAPI:
         notifier = FeishuPusher(config)
     engine = Engine(config, store, hermes, notifier)
     research_runs = ResearchRunManager(config.data_dir)
+    limitup_tracker = LimitUpTracker(config.data_dir)
     # 分析层只消费统一网关契约；不在各页再各自直连行情源。
     engine.market_gateway = market_gateway
     # 技术选股只读客户隔离的本地缓存；网络采集由盘后任务或显式刷新触发。
@@ -242,6 +244,8 @@ def create_app(config_path: str) -> FastAPI:
     app.state.feishu = notifier   # 活动推送器（飞书 webhook 或 Hermes 网关，同接口鸭子类型）
     app.state.engine = engine
     app.state.research_runs = research_runs
+    app.state.limitup_tracker = limitup_tracker
+    app.state.limitup_backfill_jobs = {"active": None, "jobs": {}}
     app.state.scheduler = scheduler
     app.state.market_gateway = market_gateway
     app.state.evidence_store = market_gateway.store if market_gateway is not None else None

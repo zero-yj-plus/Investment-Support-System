@@ -12,6 +12,7 @@ import HotboardPage from './components/HotboardPage.vue'
 import HoldingsPage from './components/HoldingsPage.vue'
 import IndustryChainPage from './components/IndustryChainPage.vue'
 import KnowledgePage from './components/KnowledgePage.vue'
+import LimitUpTrackerPage from './components/LimitUpTrackerPage.vue'
 import MainlineOverview from './components/MainlineOverview.vue'
 import MainlineResearchPage from './components/MainlineResearchPage.vue'
 import MarketEvidence from './components/MarketEvidence.vue'
@@ -56,6 +57,7 @@ const closeReviewPage = ref<InstanceType<typeof CloseReviewPage> | null>(null)
 const companyResearchPage = ref<InstanceType<typeof CompanyResearchPage> | null>(null)
 const capitalTrackingPage = ref<InstanceType<typeof CapitalTrackingPage> | null>(null)
 const hotboardPage = ref<InstanceType<typeof HotboardPage> | null>(null)
+const limitUpTrackerPage = ref<InstanceType<typeof LimitUpTrackerPage> | null>(null)
 const holdingsPage = ref<InstanceType<typeof HoldingsPage> | null>(null)
 const simulationPage = ref<InstanceType<typeof SimulationPage> | null>(null)
 const timingPage = ref<InstanceType<typeof TimingPage> | null>(null)
@@ -85,6 +87,7 @@ const isCloseReview = computed(() => routePath.value === 'review' && routeTab.va
 const isDecisionOverview = computed(() => routePath.value === 'today' && routeTab.value === 'decision')
 const isCapitalTracking = computed(() => routePath.value === 'today' && routeTab.value === 'capital')
 const isHotboard = computed(() => routePath.value === 'today' && routeTab.value === 'hotboard')
+const isLimitUpTracker = computed(() => routePath.value === 'today' && routeTab.value === 'limitup')
 const isHoldings = computed(() => routePath.value === 'risk' && routeTab.value === 'holdings')
 const isSimulation = computed(() => routePath.value === 'risk' && routeTab.value === 'simulation')
 const isTiming = computed(() => routePath.value === 'today' && routeTab.value === 'timing')
@@ -110,10 +113,10 @@ const settingsSection = computed<SettingsSection>(() => (
 const activeNavigation = computed(() => findActiveNavigation(routePath.value, routeTab.value))
 const pageTitle = computed(() => activeNavigation.value?.child.label || (routePath.value === 'settings' ? settingsSectionTitles[settingsSection.value] : '页面迁移中'))
 const brandName = computed(() => data.shell?.client?.brand?.trim() || 'Hermes Trader')
-const pageRefreshing = computed(() => isHotboard.value || isHoldings.value || isSimulation.value || isWatchlist.value || isTiming.value || isMainlineResearch.value || isSentimentEvents.value || isTomorrowStrategy.value || isCapitalTracking.value || isStockAsk.value || isDiagnosis.value || isForecastMining.value || isIndustryChain.value || isCompanyResearch.value || isScreener.value || isTechnicalScreener.value || isReportCenter.value || isKnowledge.value || isSettings.value
+const pageRefreshing = computed(() => isHotboard.value || isLimitUpTracker.value || isHoldings.value || isSimulation.value || isWatchlist.value || isTiming.value || isMainlineResearch.value || isSentimentEvents.value || isTomorrowStrategy.value || isCapitalTracking.value || isStockAsk.value || isDiagnosis.value || isForecastMining.value || isIndustryChain.value || isCompanyResearch.value || isScreener.value || isTechnicalScreener.value || isReportCenter.value || isKnowledge.value || isSettings.value
   ? reportRefreshing.value
   : refreshing.value || reportRefreshing.value)
-const pageBusy = computed(() => isHotboard.value || isHoldings.value || isSimulation.value || isWatchlist.value || isTiming.value || isMainlineResearch.value || isSentimentEvents.value || isTomorrowStrategy.value || isCapitalTracking.value || isStockAsk.value || isDiagnosis.value || isForecastMining.value || isIndustryChain.value || isCompanyResearch.value || isScreener.value || isTechnicalScreener.value || isReportCenter.value || isKnowledge.value || isSettings.value
+const pageBusy = computed(() => isHotboard.value || isLimitUpTracker.value || isHoldings.value || isSimulation.value || isWatchlist.value || isTiming.value || isMainlineResearch.value || isSentimentEvents.value || isTomorrowStrategy.value || isCapitalTracking.value || isStockAsk.value || isDiagnosis.value || isForecastMining.value || isIndustryChain.value || isCompanyResearch.value || isScreener.value || isTechnicalScreener.value || isReportCenter.value || isKnowledge.value || isSettings.value
   ? reportRefreshing.value
   : loading.value || pageRefreshing.value)
 
@@ -272,6 +275,10 @@ async function refreshCurrentPage() {
     await Promise.resolve(hotboardPage.value.refresh())
     return
   }
+  if (isLimitUpTracker.value && limitUpTrackerPage.value) {
+    await Promise.resolve(limitUpTrackerPage.value.refresh())
+    return
+  }
   if (isTiming.value && timingPage.value) {
     await Promise.resolve(timingPage.value.refresh())
     return
@@ -415,6 +422,12 @@ watch([routePath, routeTab], async () => {
         <HotboardPage
           v-else-if="isHotboard"
           ref="hotboardPage"
+          @refresh-state="reportRefreshing = $event"
+        />
+
+        <LimitUpTrackerPage
+          v-else-if="isLimitUpTracker"
+          ref="limitUpTrackerPage"
           @refresh-state="reportRefreshing = $event"
         />
 

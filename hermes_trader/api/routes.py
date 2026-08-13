@@ -1630,6 +1630,84 @@ async def limitup_themes(date: str = ""):
     return await asyncio.to_thread(public_data.ths_limit_up_pool, dc)
 
 
+@router.get("/market/limitup-tracker/dates")
+async def limitup_tracker_dates(request: Request, limit: int = 20):
+    """最近真实交易日与快照可用状态；日期只由服务端日历/已有快照给出。"""
+    tracker = _state(request).limitup_tracker
+    return await asyncio.to_thread(tracker.dates, max(1, min(limit, 20)))
+
+
+@router.get("/market/limitup-tracker")
+async def limitup_tracker_snapshot(request: Request, date: str = ""):
+    """指定涨停基准日的同批次 T+1/T+2 冻结或盘中观察结果。"""
+    tracker = _state(request).limitup_tracker
+    selected = str(date or "").strip()
+    if not selected:
+        dates = await asyncio.to_thread(tracker.dates, 20)
+        selected = str(dates.get("default_date") or "")
+    if not _DATE_RE.fullmatch(selected):
+        return JSONResponse(
+            status_code=400,
+            content={"ok": False, "error": "日期格式应为 YYYY-MM-DD", "selected_date": selected},
+        )
+    result = await asyncio.to_thread(tracker.snapshot, selected)
+    return JSONResponse(status_code=200 if result.get("ok") else 400, content=result)
+
+
+@router.post("/market/limitup-tracker/backfill")
+async def limitup_tracker_backfill(request: Request):
+    """异步补齐最近20日基准池及已经到期的 T+1/T+2；重复触发复用活动任务。"""
+    state = _state(request)
+    registry = state.limitup_backfill_jobs
+    active_id = registry.get("active")
+    active = (registry.get("jobs") or {}).get(active_id) if active_id else None
+    if active and active.get("status") == "running":
+        return JSONResponse(status_code=202, content={**active, "already_running": True})
+
+    job_id = uuid.uuid4().hex
+    started_at = now_cn().isoformat(timespec="seconds")
+    job = {
+        "ok": True,
+        "job_id": job_id,
+        "status": "running",
+        "started_at": started_at,
+        "message": "正在补齐最近20个交易日的真实快照与到期结果",
+    }
+    registry.setdefault("jobs", {})[job_id] = job
+    registry["active"] = job_id
+
+    async def _run() -> None:
+        try:
+            result = await asyncio.to_thread(state.limitup_tracker.backfill_recent, 20)
+            registry["jobs"][job_id] = {**job, **result, "job_id": job_id}
+        except Exception as exc:  # noqa: BLE001 -- 任务失败必须可轮询，不影响 API 进程
+            log.exception("涨停追踪补数据失败")
+            registry["jobs"][job_id] = {
+                **job,
+                "ok": False,
+                "status": "failed",
+                "reason": str(exc)[:240],
+                "finished_at": now_cn().isoformat(timespec="seconds"),
+                "job_id": job_id,
+            }
+        finally:
+            if registry.get("active") == job_id:
+                registry["active"] = None
+
+    task = asyncio.create_task(_run())
+    _bg_tasks.add(task)
+    task.add_done_callback(_bg_tasks.discard)
+    return JSONResponse(status_code=202, content=job)
+
+
+@router.get("/market/limitup-tracker/backfill/{job_id}")
+async def limitup_tracker_backfill_status(request: Request, job_id: str):
+    job = (_state(request).limitup_backfill_jobs.get("jobs") or {}).get(job_id)
+    if job is None:
+        return JSONResponse(status_code=404, content={"ok": False, "status": "failed", "reason": "补数据任务不存在或服务已重启"})
+    return job
+
+
 @router.get("/market/sectors")
 async def sectors():
     return await asyncio.to_thread(market.market_sectors)
