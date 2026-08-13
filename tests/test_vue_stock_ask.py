@@ -23,6 +23,13 @@ def test_vue_stock_ask_route_is_reachable_without_migrating_research_siblings() 
     assert "tab: 'screener', label: '条件选股'" in navigation
 
 
+def test_vue_stock_ask_defaults_to_intraday_stock_mode() -> None:
+    source = _read("src/composables/useStockAsk.ts")
+
+    assert "const mode = ref<StockAskMode>('stock')" in source
+    assert "const mode = ref<StockAskMode>('free')" not in source
+
+
 def test_vue_stock_ask_uses_only_real_stock_chat_and_history_endpoints() -> None:
     source = _read("src/composables/useStockAsk.ts")
 

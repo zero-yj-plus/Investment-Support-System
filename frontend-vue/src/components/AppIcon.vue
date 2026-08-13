@@ -1,6 +1,6 @@
 <script setup lang="ts">
 defineProps<{
-  name: 'dashboard' | 'market' | 'report' | 'shield' | 'research' | 'history' | 'settings' | 'refresh' | 'sun' | 'moon' | 'menu' | 'chevron' | 'print' | 'send' | 'spark' | 'upload' | 'stop' | 'lock'
+  name: 'dashboard' | 'market' | 'report' | 'shield' | 'research' | 'history' | 'settings' | 'refresh' | 'sun' | 'moon' | 'menu' | 'chevron' | 'print' | 'send' | 'spark' | 'upload' | 'stop' | 'lock' | 'plus' | 'close'
   size?: number
 }>()
 </script>
@@ -34,6 +34,8 @@ defineProps<{
     <template v-else-if="name === 'upload'"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9" r="1.5"/><path d="m4 17 5-5 4 4 2-2 5 4"/></template>
     <template v-else-if="name === 'stop'"><rect x="6" y="6" width="12" height="12" rx="1"/></template>
     <template v-else-if="name === 'lock'"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></template>
+    <template v-else-if="name === 'plus'"><path d="M12 5v14M5 12h14"/></template>
+    <template v-else-if="name === 'close'"><path d="m6 6 12 12M18 6 6 18"/></template>
     <template v-else-if="name === 'spark'"><path d="m12 3 1.2 3.8L17 8l-3.8 1.2L12 13l-1.2-3.8L7 8l3.8-1.2Z"/><path d="m18 14 .8 2.2L21 17l-2.2.8L18 20l-.8-2.2L15 17l2.2-.8Z"/><path d="m5 13 .7 1.8 1.8.7-1.8.7L5 18l-.7-1.8-1.8-.7 1.8-.7Z"/></template>
     <template v-else><path d="m9 18 6-6-6-6"/></template>
   </svg>

@@ -63,13 +63,24 @@ def test_recent_20_is_a_popover_with_keyboard_and_outside_close() -> None:
     assert "最近20日" in nav and "补数据" in nav
 
 
-def test_detail_table_has_exact_server_order_columns_and_scoped_mobile_scroll() -> None:
+def test_detail_table_has_exact_columns_t_window_sorting_and_scoped_mobile_scroll() -> None:
     table = _read("components/LimitUpTrackerTable.vue")
     labels = ["代码", "名称", "行业", "连板", "涨停日涨幅", "首封", "次日 T+1", "第三日 T+2"]
     positions = [table.index(f">{label}") for label in labels]
 
     assert positions == sorted(positions)
-    assert ".sort(" not in table
+    assert "const visibleStocks = computed" in table
+    assert "if (!sortKey.value) return props.stocks" in table
+    assert "left.stock[key].change_pct" in table
+    assert "if (leftValue == null) return 1" in table
+    assert "if (rightValue == null) return -1" in table
+    assert "left.index - right.index" in table
+    for key in ["t1", "t2"]:
+        assert f':aria-sort="ariaSort(\'{key}\')"' in table
+        assert f'@click="sortBy(\'{key}\')"' in table
+    assert "sortDirection.value = 'descending'" in table
+    assert "tracker-sort-button.is-active" in table
+    assert "tracker-sort-icon" in table and "'↕'" in table
     assert "table-layout: fixed" in table
     assert ".tracker-table-wrap { overflow-x: auto" in table
     assert ".tracker-table { min-width: 880px" in table

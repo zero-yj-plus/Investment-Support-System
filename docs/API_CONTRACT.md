@@ -1120,6 +1120,31 @@ status ∈ {ok, down, idle(尚未采集)}；`idle` 不代表不可用，只代�
 
 服务端在一次加锁的读改写中按 6 位 A 股代码去重：已有代码和本批次重复代码进入 `duplicate_codes`，非 A 股或格式无效代码进入 `invalid`。返回 `added_count / duplicate_count / invalid_count` 及对应代码；存在新增时 `zone_status=queued`，表示双周期区间已排队而非已经计算完成。
 
+## 16A. ETF观察
+
+ETF观察与 A 股观察池使用独立账本和接口，**不生成、复用或返回双周期买入区间**。普通读取只执行一次批量行情请求并合并已保存的低频 last-good 快照，不按 ETF 逐只访问公开档案或历史接口。
+
+### GET /api/etf-watch
+
+返回 `etf-watch-v1`：`items[]`、`ts`、`low_frequency_refresh=explicit_background` 和 `dual_cycle_zones=false`。每项包含：
+
+- 列表事实：`id/code/name/group/note/created_at`。
+- `quote`：批量行情中的 `price/change_pct/open/high/low/prev_close/volume/amount/turnover_rate/volume_ratio/total_mv/source/as_of/stale/quote_note`，以及由同一快照最高、最低、昨收复算的 `amplitude_pct`。TDX API 有效字段优先，腾讯补齐或灾备；字段单位沿用行情契约：价格为元、涨跌幅/换手率/振幅为百分数、成交额/市值为元、成交量为份。
+- `profile`：低频快照中的基金类型、跟踪标的、管理人、管理费率/托管费率、净资产规模及日期、最近单位净值及日期、申购/赎回状态、5/20/60 日收益、20 日年化波动、60 日区间最大回撤、MA20/MA60 趋势、日线日期/复权说明及各来源。
+- `trade_rule` 只有公开基金类型或跟踪资产足以判定时才返回 `T+0/T+1`；不能仅凭 `1599xx` 等宽代码段猜测，证据不足保持 `null`。
+- `state ∈ {complete,degraded,missing}` 与 `missing[]` 保留逐项缺失。盘后行情可同时 `stale=true` 并附 `quote_note`；前端必须标作盘后/陈旧快照，不能称为实时。
+
+页面主行只长期展示覆盖率较高的行情、流动性、规模/净值、历史趋势/波动、费率/申赎和来源状态。PE/PB、五档盘口、IOPV、资金分单不属于 v1 主行契约；低频整组从未成功时显示“补充中”，不渲染成一排占位符。
+
+### 写接口
+
+- `POST /api/etf-watch`：新增单只，先核验真实报价及公开 ETF 名录；名录临时不可用时只接受报价名称明确包含 ETF 的代码。成功返回 `profile_status=queued`。
+- `POST /api/etf-watch/import`：请求 `{"codes":[...]}`，单次 1—50 个；一次批量报价和一次缓存 ETF 名录核验后追加，返回 `added_codes/duplicate_codes/rejected_codes/profile_status`，不覆盖现有列表。
+- `POST /api/etf-watch/refresh`：显式排队刷新全部低频资料，立即返回 queued；不表示资料已经取得。
+- `PUT /api/etf-watch/{id}`：只更新名称、分组、备注；`DELETE /api/etf-watch/{id}`：移出 ETF 观察列表。
+
+低频刷新调用公开基金档案、同花顺 ETF 净值/申赎表和腾讯前复权日线（不足时使用新浪 ETF 日线备源）。60 日收益需要至少 61 个有效收盘价。刷新失败时保留已有非空字段，只更新降级/缺失说明；从未成功的字段保持 `null/missing`，不以行情、市值或 0 冒充。
+
 ## 17. 模拟执行 simulation
 
 模拟执行只写客户数据目录下的本地 SQLite/WAL 账本，不包含券商适配器、账户凭据或真实委托接口。每个系统实例只有一个独立模拟账户，与 `/holdings` 及 `holdings.json` 完全分离。页面和接口始终返回 `simulation_only=true`、`broker_connected=false`。

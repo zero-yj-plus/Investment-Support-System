@@ -1,11 +1,57 @@
 <script setup lang="ts">
+import { computed, ref } from 'vue'
 import type { LimitUpTrackerStock, TrackerRowState } from '../types/limitupTracker'
 
-defineProps<{
+type SortKey = 't1' | 't2'
+
+const props = defineProps<{
   stocks: LimitUpTrackerStock[]
   t1Date: string | null
   t2Date: string | null
 }>()
+
+const sortKey = ref<SortKey | null>(null)
+const sortDirection = ref<'ascending' | 'descending'>('descending')
+
+function finite(value: unknown): number | null {
+  if (value == null || value === '') return null
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+const visibleStocks = computed(() => {
+  if (!sortKey.value) return props.stocks
+  const key = sortKey.value
+  return props.stocks
+    .map((stock, index) => ({ stock, index }))
+    .sort((left, right) => {
+      const leftValue = finite(left.stock[key].change_pct)
+      const rightValue = finite(right.stock[key].change_pct)
+      if (leftValue == null && rightValue == null) return left.index - right.index
+      if (leftValue == null) return 1
+      if (rightValue == null) return -1
+      const direction = sortDirection.value === 'ascending' ? 1 : -1
+      return direction * (leftValue - rightValue) || left.index - right.index
+    })
+    .map(({ stock }) => stock)
+})
+
+function sortBy(key: SortKey) {
+  if (sortKey.value === key) sortDirection.value = sortDirection.value === 'descending' ? 'ascending' : 'descending'
+  else {
+    sortKey.value = key
+    sortDirection.value = 'descending'
+  }
+}
+
+function ariaSort(key: SortKey): 'none' | 'ascending' | 'descending' {
+  return sortKey.value === key ? sortDirection.value : 'none'
+}
+
+function sortLabel(key: SortKey, label: string): string {
+  if (sortKey.value !== key) return `${label}涨跌幅排序，当前未排序；首次点击按从高到低`
+  return `${label}涨跌幅排序，当前${sortDirection.value === 'descending' ? '降序' : '升序'}`
+}
 
 function percent(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return '—'
@@ -29,7 +75,7 @@ function diagnosisHref(code: string): string {
 <template>
   <section class="panel tracker-table-panel" aria-labelledby="tracker-table-title">
     <header class="tracker-table-heading">
-      <div><h2 id="tracker-table-title">涨停股票明细</h2><p>顺序由服务端冻结，不在浏览器重新排名。</p></div>
+      <div><h2 id="tracker-table-title">涨停股票明细</h2><p>默认沿用服务端冻结顺序，可按 T+1／T+2 涨跌幅切换排序。</p></div>
       <strong class="mono">{{ stocks.length }} 只</strong>
     </header>
     <div v-if="stocks.length" class="tracker-table-wrap" tabindex="0" aria-label="涨停股票 T+1 与 T+2 追踪明细；窄屏时表格区域可横向滚动">
@@ -46,12 +92,22 @@ function diagnosisHref(code: string): string {
             <th scope="col">连板</th>
             <th scope="col">涨停日涨幅</th>
             <th scope="col">首封</th>
-            <th scope="col">次日 T+1<span class="mono">{{ t1Date || '日期暂缺' }}</span></th>
-            <th scope="col">第三日 T+2<span class="mono">{{ t2Date || '日期暂缺' }}</span></th>
+            <th scope="col" :aria-sort="ariaSort('t1')">
+              <button type="button" class="tracker-sort-button" :class="{ 'is-active': sortKey === 't1' }" :aria-label="sortLabel('t1', '次日 T+1')" @click="sortBy('t1')">
+                <span class="tracker-sort-label">次日 T+1<span class="mono">{{ t1Date || '日期暂缺' }}</span></span>
+                <span class="tracker-sort-icon" aria-hidden="true">{{ sortKey === 't1' ? sortDirection === 'descending' ? '↓' : '↑' : '↕' }}</span>
+              </button>
+            </th>
+            <th scope="col" :aria-sort="ariaSort('t2')">
+              <button type="button" class="tracker-sort-button" :class="{ 'is-active': sortKey === 't2' }" :aria-label="sortLabel('t2', '第三日 T+2')" @click="sortBy('t2')">
+                <span class="tracker-sort-label">第三日 T+2<span class="mono">{{ t2Date || '日期暂缺' }}</span></span>
+                <span class="tracker-sort-icon" aria-hidden="true">{{ sortKey === 't2' ? sortDirection === 'descending' ? '↓' : '↑' : '↕' }}</span>
+              </button>
+            </th>
           </tr>
         </thead>
         <tbody>
-          <tr v-for="stock in stocks" :key="stock.code">
+          <tr v-for="stock in visibleStocks" :key="stock.code">
             <td class="mono"><a :href="diagnosisHref(stock.code)">{{ stock.code }}</a></td>
             <td><strong>{{ stock.name || '名称缺失' }}</strong></td>
             <td :aria-label="stock.industry ? undefined : '行业：数据缺失'">{{ stock.industry || '—' }}</td>
@@ -97,6 +153,13 @@ function diagnosisHref(code: string): string {
 .tracker-table th, .tracker-table td { min-width: 0; padding: 9px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; text-align: left; }
 .tracker-table th { background: var(--surface-2); color: var(--text-2); font-size: 12px; font-weight: 750; }
 .tracker-table th > span { display: block; margin-top: 2px; color: var(--text-3); font-size: 10px; font-weight: 500; }
+.tracker-sort-button { display: inline-flex; width: 100%; min-width: 100%; min-height: 44px; align-items: center; justify-content: space-between; gap: 4px; margin: -5px 0; padding: 5px 7px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--surface-3); color: var(--text); font-weight: 750; text-align: left; cursor: pointer; }
+.tracker-sort-button:hover { border-color: var(--accent); color: var(--accent); }
+.tracker-sort-button.is-active { border-color: var(--accent); background: var(--accent-dim); color: var(--accent); }
+.tracker-sort-label { display: grid; min-width: 0; gap: 2px; }
+.tracker-sort-label > span { color: var(--text-3); font-size: 10px; font-weight: 500; }
+.tracker-sort-button.is-active .tracker-sort-label > span { color: currentColor; }
+.tracker-sort-icon { display: inline-grid; width: 20px; height: 20px; flex: 0 0 auto; place-items: center; border: 1px solid currentColor; border-radius: 4px; font-family: "SFMono-Regular", Consolas, monospace; }
 .tracker-table tbody tr:last-child td { border-bottom: 0; }
 .tracker-table tbody tr:hover { background: var(--surface-2); }
 .tracker-table td { overflow-wrap: anywhere; }

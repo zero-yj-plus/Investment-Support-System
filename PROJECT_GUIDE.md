@@ -89,6 +89,7 @@ flowchart LR
 - 个股诊断：`/api/diagnose` → `analysis/diagnosis.py` → `data/stock.py` 与证据网关 → 结构化决策卡；深度解释可调用模型，快速路径不依赖模型。
 - 推荐闭环：建议草案 → 风险闸/人工批准 → append-only 推荐事件 → 到期真实价格回验 → T0/T1/T2/T5 统计。
 - 模拟执行：前端提交即确认 → 服务端重新取风险和行情 → 订单进入 DAY 撮合池 → 后台每 5 秒批量检查真实行情并自动成交；成交价受限价约束，再同步更新费用、成本、现金、A 股 T+1 批次和盈亏。页面关闭不影响撮合，客户端传来的“市场价格”不会被信任。
+- ETF观察：`/api/etf-watch` → 一次批量 `data/stock.py` 行情 + `data/etf.py` 低频 last-good 快照 → 独立 ETF 列表；不进入 A 股观察池，也不计算双周期区间。
 
 ## 4. 推荐阅读顺序
 
@@ -235,7 +236,7 @@ flowchart LR
 - 决策：`/cockpit`、`/pulse`、`/sysrisk`、`/risk/evaluate`、`/diagnose`、`/features/*`、`/timing`、`/quant/*`、`/screen`。
 - 内容：`/chat`、`/reports/*`、`/knowledge/*`、`/archive/*`、`/diy/*`。
 - 闭环：`/recommendations*`、`/advice-proposals`、`/delivery/*`、`/simulation/*`。
-- 管理：`/holdings`、`/watchlist`、`/settings*`、`/datasources`、`/push/test`。
+- 管理：`/holdings`、`/watchlist`、`/etf-watch`、`/settings*`、`/datasources`、`/push/test`。
 
 ### 7.5 `data/`：数据源、质量契约与点时证据
 
@@ -251,6 +252,7 @@ flowchart LR
 | `data/market.py` | 指数、市场宽度、涨跌停、板块、资金、涨幅榜等市场级聚合与回退。 |
 | `data/limitup_tracker.py` | 涨停基准日 T+1/T+2 服务端追踪；交易日推导、五项统计、JSONL 追加冻结与显式历史补数。 |
 | `data/stock.py` | 个股实时盘口、快速报价、分时、日 K、板块和资金的渐进式详情。 |
+| `data/etf.py` | ETF 公开名录核验、基金档案/净值申赎低频快照，以及基于真实日线的 5/20/60 日收益、波动、回撤和均线趋势。 |
 | `data/free_source.py` | 免费数据兼容层；统一腾讯、TDX、AkShare/新浪/同花顺等常用能力。 |
 | `data/tdx_api_source.py` | 客户授权 TDX Data API v2.8 适配；代码表、行情、板块、资金和盘后研究。 |
 | `data/tdx_local_daily.py` | 直接解析本机 `vipdoc/*/lday/*.day`；仅用 TQ 读取本地权息事件并计算前复权，不调用 TQ K 线接口。 |
@@ -419,6 +421,7 @@ FastAPI `/api`，不依赖旧前端。旧版默认不可访问，仅配置开启
 资金追踪页读取 `/api/capital/trends?days=1`，并保留 `/api/capital/snapshot` 手动采集动作；行业与热门股按真实数据日期、来源和单位分别展示，`tdx_raw_unverified` 仅显示原始公式值，加载、空数组、陈旧快照和动作失败均显式区分。
 我的持仓页读取 `/api/holdings` 与合并报价 `/api/quotes?codes=...`，新增代码时仅用 `/api/quote/{code}` 核验，并通过 `PUT /api/holdings` 整体保存；页面不消费或提交账户总资产，投入成本按成本价与股数自动汇总，任一现价缺失时不汇总持仓总市值、总盈亏或持仓构成，持仓加载失败时锁定保存以避免空账本覆盖。
 观察池页读取轻量合并的 `/api/watchlist`，新增时用 `/api/quote/{code}` 核验，并通过逐条 `POST /api/watchlist`、`PUT /api/watchlist/{id}`、`DELETE /api/watchlist/{id}` 管理账本；评级、状态、双周期区间、位置和价格边界完全展示服务端结果，`queued` 只表示区间计算已排队。页面明确区分空数组、报价缺失、降级快照、陈旧数据和传输失败，且不推断接口未提供的仓位上限。
+ETF观察页读取独立 `/api/etf-watch`，将批量 TDX/腾讯行情和显式后台刷新形成的基金档案、净值、历史指标 last-good 快照压缩到单行；新增/批量新增先经真实行情和 ETF 名录核验。页面不请求或生成双周期区间，高缺失的 PE/PB、五档、IOPV 和资金分单不进入主行，从未取得的低频整组标注“补充中”。
 问股页在同一页面提供“盘中问股 / 自由问答”切换，不增加侧栏入口；两类会话按 `mode` 隔离并以 `/api/chat` SSE 生成回答。盘中问股继续通过 `/api/stock/{code}/core` 与 `/api/stock/{code}/enrichment` 展示标的证据，`GET /api/chat/perspectives` 提供 17 个结构化视角，前端每轮最多选择 4 个并保留所用版本。自由问答不要求预选股票，识别到唯一代码或完整名称时自动进入同一受治理单股链路；右侧六类可选材料由确定性规则预选、用户最多四选，并同时控制采集和模型注入，三个风险/质量底座不可取消。视角或材料选择均不改写 RiskGate、动作、价位或缺失语义；标的核心与增强证据独立降级，Markdown 只通过安全 Vue 节点渲染。
 个股诊断页并行读取 `/api/quote/{code}` 与 `/api/diagnose?code={code}`；快速报价只作身份和行情预览，正式动作、仓位上限、价格条件、风险闸与证据链完全展示服务端治理卡。页面区分缺失、降级、冲突、陈旧、真实空数组和局部请求失败，不请求模型或其他研究接口，也不在浏览器中重算交易结论。
 条件选股页仅在用户明确提交时调用 `/api/screen`，展示服务端 80% 全市场覆盖门槛、确定性候选和行业低频补全状态；表单市值/成交额使用亿元入参，结果保持元口径。八个数值列表头使用原生按钮重排当前返回行，缺失值保持末位且不改变候选集合。候选通过真实链接进入个股诊断，加入观察池只准确展示接受与排队状态；页面不把候选包装为推荐、风险或仓位结论。
@@ -441,6 +444,7 @@ FastAPI `/api`，不依赖旧前端。旧版默认不可访问，仅配置开启
 | `src/components/MainlineResearchPage.vue`、`MainlineMoneyEffect.vue`、`MainlineCrowdedness.vue`、`MainlineContinuity.vue`、`MainlineLeaders.vue` | 主线深研结论边界、四类结构化证据和各模块独立状态。 |
 | `src/components/HoldingsPage.vue`、`HoldingEditor.vue`、`HoldingsTable.vue` | 我的持仓标题操作、自动成本/市值汇总边界、账本编辑和桌面宽表/移动卡片明细。 |
 | `src/components/WatchlistPage.vue`、`WatchlistItemRow.vue`、`WatchlistEditor.vue`、`WatchlistImportDialog.vue` | 观察池紧凑单行列表、服务端双周期价格边界、逐项数据健康、显式核验编辑及 TXT 批量导入预览。 |
+| `src/components/EtfWatchPage.vue` | ETF观察高密度单行列表、筛选排序、批量添加、低频资料刷新、分组缺失与移动卡片布局。 |
 | `src/components/SimulationPage.vue`、`SimulationActionDialog.vue` | 本地模拟挂单、5 秒自动撮合、DAY 撤单、紧急停止与追加式事件链；不连接券商。 |
 | `src/components/TomorrowStrategyPage.vue`、`TomorrowDecisionSummary.vue`、`TomorrowWatchlist.vue`、`TomorrowDataHealth.vue` | 次日策略的风险底座、观察池触发条件、依据健康和安全报告工作区。 |
 | `src/components/StockAsk*.vue` | 盘中问股/自由问答的模式切换、隔离历史、对话、安全消息节点、标的证据、本轮材料选择与等高输入区。 |
@@ -462,6 +466,7 @@ FastAPI `/api`，不依赖旧前端。旧版默认不可访问，仅配置开启
 | `src/composables/useMainlineResearch.ts` | 主线深研四路有界请求、共享底座预热、局部降级、自动刷新和卸载清理。 |
 | `src/composables/useHoldings.ts` | 持仓、批量报价、单票核验与整体保存的独立请求控制、覆盖保护、自动刷新和卸载清理。 |
 | `src/composables/useWatchlist.ts` | 观察池读取、代码核验、逐条 CRUD、原子批量追加、区间重算排队、自动刷新与独立请求卸载清理；`utils/watchlistImport.ts` 负责东方财富/同花顺 TXT 的本地解码、解析和预去重。 |
+| `src/composables/useEtfWatch.ts`、`src/types/etfWatch.ts` | ETF列表、资料刷新与批量追加的类型化请求；30 秒行情读取、显式低频轮询、写请求隔离及卸载时定时器/在途请求清理。 |
 | `src/composables/useSimulation.ts` | 模拟状态与订单读取、5 秒展示刷新、幂等请求 ID、挂单/撤单/紧停写操作、服务端模拟边界校验和卸载中止。 |
 | `src/composables/useTomorrowStrategy.ts` | 次日策略报告与观察池的独立请求、SSE 生成、推送提交语义、自动刷新和卸载清理。 |
 | `src/composables/useStockAsk.ts` | 问股模式隔离、材料预选、核心/增强证据、会话、SSE、附件和生命周期资源的独立控制与局部降级。 |
@@ -629,6 +634,8 @@ data/
 ├─ holdings.json
 ├─ watchlist.json
 ├─ watchlist_zones.json
+├─ etf_watchlist.json
+├─ etf_watch_snapshots.json
 ├─ settings.json
 ├─ simulation.sqlite3
 ├─ evidence/market_data.sqlite3

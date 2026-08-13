@@ -46,6 +46,7 @@ const snapshot = (date) => {
     '2026-08-12': { t1: 'intraday', t2: 'pending', tag: '盘中批次', t1v: 1.25, t2v: null },
     '2026-08-11': { t1: 'final', t2: 'missing', tag: '定稿批次', t1v: 2.5, t2v: null },
     '2026-08-10': { t1: 'unavailable', t2: 'unavailable', tag: '不可用批次', t1v: null, t2v: null },
+    '2026-08-07': { t1: 'final', t2: 'final', tag: '双窗定稿', t1v: 1.1, t2v: 0.55 },
   }
   const mode = modes[date] || { t1: 'missing', t2: 'missing', tag: '缺失批次', t1v: null, t2v: null }
   const index = dates.indexOf(date)
@@ -194,9 +195,33 @@ try {
   await page.locator('.tracker-date-button').nth(1).click()
   await page.waitForFunction(() => document.querySelector('.tracker-summary h2')?.textContent?.trim() === '2026-08-12')
   report.checks.intradayState = (await page.locator('.tracker-metrics').textContent()).includes('盘中快照／未定稿')
-  const headers = await page.locator('.tracker-table th').evaluateAll((nodes) => nodes.map((node) => node.childNodes[0]?.textContent?.trim()))
+  const headers = await page.locator('.tracker-table th').evaluateAll((nodes) => nodes.map((node) => {
+    const sortLabel = node.querySelector('.tracker-sort-label')
+    return (sortLabel?.childNodes[0] || node.childNodes[0])?.textContent?.trim()
+  }))
   report.checks.exactColumns = JSON.stringify(headers) === JSON.stringify(['代码', '名称', '行业', '连板', '涨停日涨幅', '首封', '次日 T+1', '第三日 T+2'])
   report.checks.serverOrder = (await page.locator('tbody tr').first().textContent()).includes('000001') && (await page.locator('tbody tr').nth(1).textContent()).includes('000002')
+  const t1Sort = page.getByRole('button', { name: /次日 T\+1涨跌幅排序/ })
+  await t1Sort.click()
+  report.checks.t1DescendingSort = await page.locator('.tracker-table th').nth(6).getAttribute('aria-sort') === 'descending'
+    && (await page.locator('tbody tr').first().textContent()).includes('000003')
+    && (await page.locator('tbody tr').nth(1).textContent()).includes('000006')
+  await t1Sort.click()
+  report.checks.t1AscendingSort = await page.locator('.tracker-table th').nth(6).getAttribute('aria-sort') === 'ascending'
+    && (await page.locator('tbody tr').first().textContent()).includes('000001')
+    && (await page.locator('tbody tr').nth(1).textContent()).includes('000004')
+  await recentButton.click()
+  await page.locator('.tracker-history__grid button').nth(4).click()
+  await page.waitForFunction(() => document.querySelector('.tracker-summary h2')?.textContent?.trim() === '2026-08-07')
+  const t2Sort = page.getByRole('button', { name: /第三日 T\+2涨跌幅排序/ })
+  await t2Sort.click()
+  report.checks.t2DescendingSort = await page.locator('.tracker-table th').nth(7).getAttribute('aria-sort') === 'descending'
+    && (await page.locator('tbody tr').first().textContent()).includes('000003')
+    && (await page.locator('tbody tr').nth(1).textContent()).includes('000006')
+  await t2Sort.click()
+  report.checks.t2AscendingSort = await page.locator('.tracker-table th').nth(7).getAttribute('aria-sort') === 'ascending'
+    && (await page.locator('tbody tr').first().textContent()).includes('000001')
+    && (await page.locator('tbody tr').nth(1).textContent()).includes('000004')
 
   await page.getByRole('button', { name: '补数据', exact: true }).click()
   await page.waitForFunction(() => document.body.innerText.includes('补数据完成'), null, { timeout: 5_000 })

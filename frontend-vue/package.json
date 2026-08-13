@@ -11,6 +11,7 @@
     "audit:limitup-tracker": "node scripts/audit-limitup-tracker-ui.mjs",
     "audit:simulation": "node scripts/audit-simulation-ui.mjs",
     "audit:watchlist-import": "node scripts/audit-watchlist-import.mjs",
+    "audit:etf-watch": "node scripts/audit-etf-watch-ui.mjs",
     "audit:reports": "node scripts/audit-reports-ui.mjs",
     "preview": "vite preview"
   },

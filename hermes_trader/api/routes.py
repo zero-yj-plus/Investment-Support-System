@@ -25,7 +25,8 @@ from ..integrity import summary as _core_summary, core_fingerprint as _core_fp_c
 from ..data import (market, stock, news, sources, capital_tracker, xverify as xverify_mod,
                     overseas_source as overseas, deriv_source, mainforce_source as mainforce,
                     free_source as public_data, tdx_api_source as tdx_api,
-                    official_disclosure, official_interaction, official_longhu_source)
+                    official_disclosure, official_interaction, official_longhu_source,
+                    etf as etf_data)
 from ..data.base import (
     is_trade_day, next_trade_day, now_cn, prev_trade_day,
     relay_proxy, trade_day_status, ttl_cache,
@@ -4474,6 +4475,192 @@ async def delete_watchlist(wid: str, request: Request):
                 store.delete_watchlist_zone(code)
         return {"ok": True}
     return {"ok": False, "error": "条目不存在"}
+
+
+# ---------------------------------------------------------------- ETF 观察
+
+def _queue_etf_watch_refresh(store, code: str | None = None) -> None:
+    """显式后台刷新低频 ETF 资料；普通 GET 只读快照，不触发公开源 N+1。"""
+    async def _run() -> None:
+        codes = [code] if code else [str(row.get("code") or "") for row in store.etf_watchlist()]
+        for raw_code in dict.fromkeys(codes):
+            normalized = etf_data.normalize_etf_code(raw_code)
+            if not normalized:
+                continue
+            try:
+                snapshot = await asyncio.to_thread(etf_data.refresh_etf, normalized)
+                previous = store.etf_watch_snapshots().get(normalized) or {}
+                merged = dict(previous)
+                merged.update({key: value for key, value in snapshot.items() if value is not None})
+                store.upsert_etf_watch_snapshot(normalized, merged)
+            except Exception:  # noqa: BLE001 - 单只公开源失败不影响其余 ETF
+                log.exception("ETF低频资料刷新失败 code=%s", normalized)
+
+    task = asyncio.create_task(_run())
+    _bg_tasks.add(task)
+    task.add_done_callback(_bg_tasks.discard)
+
+
+def _etf_quote_payload(row: dict | None) -> tuple[dict | None, list[str]]:
+    if not isinstance(row, dict) or row.get("price") is None:
+        return None, ["行情"]
+    stable_fields = (
+        "name", "price", "change_pct", "open", "high", "low", "prev_close",
+        "volume", "amount", "turnover_rate", "volume_ratio", "total_mv",
+        "source", "as_of", "stale", "quote_note",
+    )
+    quote = {key: row.get(key) for key in stable_fields}
+    previous = row.get("prev_close")
+    high = row.get("high")
+    low = row.get("low")
+    amplitude = None
+    try:
+        if previous is not None and float(previous) > 0 and high is not None and low is not None:
+            amplitude = round((float(high) - float(low)) / float(previous) * 100, 2)
+    except (TypeError, ValueError):
+        amplitude = None
+    quote["amplitude_pct"] = amplitude
+    missing = [
+        label for key, label in (
+            ("change_pct", "涨跌幅"), ("open", "开盘"), ("high", "最高"),
+            ("low", "最低"), ("prev_close", "昨收"), ("volume", "成交量"),
+            ("amount", "成交额"), ("turnover_rate", "换手率"),
+            ("volume_ratio", "量比"), ("total_mv", "场内市值"),
+        ) if row.get(key) is None
+    ]
+    return quote, missing
+
+
+@router.get("/etf-watch")
+async def get_etf_watch(request: Request):
+    """ETF 观察：一次批量行情 + 独立低频 last-good 快照；不生成双周期区间。"""
+    store = _state(request).store
+    items = store.etf_watchlist()
+    codes = [str(row.get("code") or "") for row in items]
+    quote_map = await asyncio.to_thread(stock.quick_quotes, codes)
+    snapshots = store.etf_watch_snapshots()
+    out = []
+    for item in items:
+        code = str(item.get("code") or "")
+        quote, quote_missing = _etf_quote_payload(quote_map.get(code))
+        profile = snapshots.get(code) if isinstance(snapshots.get(code), dict) else None
+        profile_missing = list((profile or {}).get("missing") or [])
+        if profile is None:
+            profile_missing.append("低频资料快照")
+        out.append({
+            **item,
+            "name": (quote or {}).get("name") or (profile or {}).get("official_name") or item.get("name") or "",
+            "quote": quote,
+            "profile": profile,
+            "state": "complete" if not quote_missing and not profile_missing else (
+                "degraded" if quote is not None or profile is not None else "missing"
+            ),
+            "missing": list(dict.fromkeys(quote_missing + profile_missing)),
+        })
+    return {
+        "ok": True,
+        "schema_version": "etf-watch-v1",
+        "ts": store.now_str(),
+        "items": out,
+        "missing": [],
+        "low_frequency_refresh": "explicit_background",
+        "dual_cycle_zones": False,
+    }
+
+
+@router.post("/etf-watch")
+async def add_etf_watch(request: Request):
+    store = _state(request).store
+    try:
+        body = await request.json()
+        assert isinstance(body, dict)
+    except Exception:
+        return JSONResponse({"ok": False, "error": "无效请求体"}, status_code=400)
+    code = etf_data.normalize_etf_code(body.get("code"))
+    if not code:
+        return JSONResponse({"ok": False, "error": "ETF代码应为沪深交易型基金代码"}, status_code=400)
+    quote = await asyncio.to_thread(stock.quick_quote, code)
+    if not isinstance(quote, dict) or quote.get("price") is None:
+        return JSONResponse(
+            {"ok": False, "error": "当前行情源无法核验该ETF代码，未写入观察列表"},
+            status_code=503,
+        )
+    verified_codes = await asyncio.to_thread(etf_data.verified_etf_codes, [code], {code: quote})
+    if code not in verified_codes:
+        return JSONResponse(
+            {"ok": False, "error": "当前公开ETF名录无法核验该代码，未写入观察列表"},
+            status_code=422,
+        )
+    payload = {**body, "code": code, "name": str(quote.get("name") or body.get("name") or "")}
+    try:
+        wid = store.add_etf_watch(payload)
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    _queue_etf_watch_refresh(store, code)
+    return {"ok": True, "id": wid, "profile_status": "queued"}
+
+
+@router.post("/etf-watch/import")
+async def import_etf_watch(request: Request):
+    store = _state(request).store
+    try:
+        body = await request.json()
+        raw_codes = body.get("codes") if isinstance(body, dict) else None
+    except Exception:
+        raw_codes = None
+    if not isinstance(raw_codes, list) or not raw_codes or len(raw_codes) > _MAX_HOLDINGS:
+        return JSONResponse({"ok": False, "error": "codes应包含1—50个ETF代码"}, status_code=400)
+    codes = list(dict.fromkeys(etf_data.normalize_etf_code(value) for value in raw_codes))
+    codes = [code for code in codes if code]
+    if not codes:
+        return JSONResponse({"ok": False, "error": "没有可识别的沪深ETF代码"}, status_code=400)
+    quote_map = await asyncio.to_thread(stock.quick_quotes, codes)
+    quoted = [code for code in codes if isinstance(quote_map.get(code), dict) and quote_map[code].get("price") is not None]
+    verified_set = await asyncio.to_thread(etf_data.verified_etf_codes, quoted, quote_map)
+    verified = [code for code in codes if code in verified_set]
+    rejected = [code for code in codes if code not in verified]
+    try:
+        result = store.import_etf_watch([
+            {"code": code, "name": quote_map[code].get("name") or ""} for code in verified
+        ]) if verified else {"added_codes": [], "duplicate_codes": []}
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    if result["added_codes"]:
+        _queue_etf_watch_refresh(store)
+    return {
+        "ok": True,
+        "added_codes": result["added_codes"],
+        "duplicate_codes": result["duplicate_codes"],
+        "rejected_codes": rejected,
+        "profile_status": "queued" if result["added_codes"] else None,
+    }
+
+
+@router.post("/etf-watch/refresh")
+async def refresh_etf_watch(request: Request):
+    _queue_etf_watch_refresh(_state(request).store)
+    return {"ok": True, "profile_status": "queued"}
+
+
+@router.put("/etf-watch/{wid}")
+async def update_etf_watch(wid: str, request: Request):
+    store = _state(request).store
+    try:
+        body = await request.json()
+        assert isinstance(body, dict)
+    except Exception:
+        return JSONResponse({"ok": False, "error": "无效请求体"}, status_code=400)
+    try:
+        updated = store.update_etf_watch(wid, body)
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    return {"ok": updated, **({} if updated else {"error": "条目不存在"})}
+
+
+@router.delete("/etf-watch/{wid}")
+async def delete_etf_watch(wid: str, request: Request):
+    deleted = _state(request).store.delete_etf_watch(wid)
+    return {"ok": deleted, **({} if deleted else {"error": "条目不存在"})}
 
 
 # ---------------------------------------------------------------- 推荐留痕与成功率（母文档 §29）

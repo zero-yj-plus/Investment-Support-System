@@ -1748,6 +1748,106 @@ class Store:
         self._write_json(self._watchlist_path, kept)
         return True
 
+    # ---------- ETF 观察（与 A 股观察池隔离，不生成双周期区间） ----------
+
+    @property
+    def _etf_watchlist_path(self) -> Path:
+        return self.root / "etf_watchlist.json"
+
+    @property
+    def _etf_snapshots_path(self) -> Path:
+        return self.root / "etf_watch_snapshots.json"
+
+    def etf_watchlist(self) -> list[dict]:
+        payload = self._read_json(self._etf_watchlist_path, [])
+        return payload if isinstance(payload, list) else []
+
+    @staticmethod
+    def _etf_watch_record(item: dict, wid: str, *, created_at: str | None = None) -> dict:
+        code = str(item.get("code") or "").strip().split(".", 1)[0]
+        if not re.fullmatch(r"(?:5\d{5}|1[56]\d{4})", code):
+            raise ValueError("ETF代码应为沪深交易型基金代码")
+        return {
+            "id": wid,
+            "code": code,
+            "name": str(item.get("name") or "")[:60],
+            "group": str(item.get("group") or "")[:30],
+            "note": str(item.get("note") or "")[:300],
+            "created_at": created_at or now_cn().strftime("%Y-%m-%d %H:%M:%S"),
+        }
+
+    def add_etf_watch(self, item: dict) -> str:
+        if not isinstance(item, dict):
+            raise ValueError("ETF观察条目应为对象")
+        wid = f"etf_{time.time_ns()}"
+        record = self._etf_watch_record(item, wid)
+        with self._lock:
+            items = self.etf_watchlist()
+            if any(str(row.get("code") or "") == record["code"] for row in items if isinstance(row, dict)):
+                raise ValueError("该ETF已在观察列表中")
+            items.append(record)
+            self._write_json(self._etf_watchlist_path, items)
+        return wid
+
+    def import_etf_watch(self, candidates: list[dict]) -> dict:
+        if not isinstance(candidates, list) or not candidates or len(candidates) > 50:
+            raise ValueError("单次添加应包含1—50只ETF")
+        added_codes: list[str] = []
+        duplicate_codes: list[str] = []
+        with self._lock:
+            items = self.etf_watchlist()
+            known = {str(row.get("code") or "") for row in items if isinstance(row, dict)}
+            for index, candidate in enumerate(candidates):
+                record = self._etf_watch_record(candidate, f"etf_{time.time_ns()}_{index}")
+                if record["code"] in known:
+                    duplicate_codes.append(record["code"])
+                    continue
+                items.append(record)
+                known.add(record["code"])
+                added_codes.append(record["code"])
+            if added_codes:
+                self._write_json(self._etf_watchlist_path, items)
+        return {"added_codes": added_codes, "duplicate_codes": duplicate_codes}
+
+    def update_etf_watch(self, wid: str, fields: dict) -> bool:
+        if not isinstance(fields, dict):
+            raise ValueError("更新字段应为对象")
+        with self._lock:
+            items = self.etf_watchlist()
+            hit = next((row for row in items if isinstance(row, dict) and row.get("id") == wid), None)
+            if hit is None:
+                return False
+            merged = {**hit, **{key: fields[key] for key in ("name", "group", "note") if key in fields}}
+            updated = self._etf_watch_record(merged, wid, created_at=str(hit.get("created_at") or ""))
+            hit.clear()
+            hit.update(updated)
+            self._write_json(self._etf_watchlist_path, items)
+        return True
+
+    def delete_etf_watch(self, wid: str) -> bool:
+        with self._lock:
+            items = self.etf_watchlist()
+            kept = [row for row in items if not isinstance(row, dict) or row.get("id") != wid]
+            if len(kept) == len(items):
+                return False
+            self._write_json(self._etf_watchlist_path, kept)
+        return True
+
+    def etf_watch_snapshots(self) -> dict[str, dict]:
+        payload = self._read_json(self._etf_snapshots_path, {})
+        return payload if isinstance(payload, dict) else {}
+
+    def upsert_etf_watch_snapshot(self, code: str, snapshot: dict) -> None:
+        normalized = str(code or "").strip().split(".", 1)[0]
+        if not re.fullmatch(r"(?:5\d{5}|1[56]\d{4})", normalized):
+            raise ValueError("ETF代码应为沪深交易型基金代码")
+        if not isinstance(snapshot, dict):
+            raise ValueError("ETF资料快照应为对象")
+        with self._lock:
+            snapshots = self.etf_watch_snapshots()
+            snapshots[normalized] = dict(snapshot)
+            self._write_json(self._etf_snapshots_path, snapshots)
+
     # ---------- 推荐留痕与成功率（母文档 §29；append-only，历史判断固定不改写）----------
     # 推荐落库即固定（status=active），后续只 append 验证、绝不改写本记录。
 

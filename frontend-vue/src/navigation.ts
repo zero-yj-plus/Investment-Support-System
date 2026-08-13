@@ -43,6 +43,7 @@ export const sidebarNavigation: NavigationGroup[] = [
     children: [
       { path: 'risk', tab: 'holdings', label: '我的持仓' },
       { path: 'risk', tab: 'watchlist', label: '观察池' },
+      { path: 'risk', tab: 'etf-watch', label: 'ETF观察' },
       { path: 'risk', tab: 'simulation', label: '模拟执行' },
     ],
   },

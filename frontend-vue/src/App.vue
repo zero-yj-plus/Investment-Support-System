@@ -7,6 +7,7 @@ import CompanyResearchPage from './components/CompanyResearchPage.vue'
 import DataStatus from './components/DataStatus.vue'
 import DecisionCommand from './components/DecisionCommand.vue'
 import DiagnosisPage from './components/DiagnosisPage.vue'
+import EtfWatchPage from './components/EtfWatchPage.vue'
 import ForecastMiningPage from './components/ForecastMiningPage.vue'
 import HotboardPage from './components/HotboardPage.vue'
 import HoldingsPage from './components/HoldingsPage.vue'
@@ -73,6 +74,7 @@ const screenerPage = ref<InstanceType<typeof ScreenerPage> | null>(null)
 const technicalScreenerPage = ref<InstanceType<typeof TechnicalScreenerPage> | null>(null)
 const tomorrowPage = ref<InstanceType<typeof TomorrowStrategyPage> | null>(null)
 const watchlistPage = ref<InstanceType<typeof WatchlistPage> | null>(null)
+const etfWatchPage = ref<InstanceType<typeof EtfWatchPage> | null>(null)
 const routePath = ref('today')
 const routeTab = ref('decision')
 const sidebarCollapsed = ref(false)
@@ -95,6 +97,7 @@ const isMainlineResearch = computed(() => routePath.value === 'today' && routeTa
 const isSentimentEvents = computed(() => routePath.value === 'today' && routeTab.value === 'news')
 const isTomorrowStrategy = computed(() => routePath.value === 'review' && routeTab.value === 'tomorrow')
 const isWatchlist = computed(() => routePath.value === 'risk' && routeTab.value === 'watchlist')
+const isEtfWatch = computed(() => routePath.value === 'risk' && routeTab.value === 'etf-watch')
 const isStockAsk = computed(() => routePath.value === 'research' && routeTab.value === 'ask')
 const isDiagnosis = computed(() => routePath.value === 'research' && routeTab.value === 'diagnosis')
 const isForecastMining = computed(() => routePath.value === 'research' && routeTab.value === 'events')
@@ -113,10 +116,10 @@ const settingsSection = computed<SettingsSection>(() => (
 const activeNavigation = computed(() => findActiveNavigation(routePath.value, routeTab.value))
 const pageTitle = computed(() => activeNavigation.value?.child.label || (routePath.value === 'settings' ? settingsSectionTitles[settingsSection.value] : '页面迁移中'))
 const brandName = computed(() => data.shell?.client?.brand?.trim() || 'Hermes Trader')
-const pageRefreshing = computed(() => isHotboard.value || isLimitUpTracker.value || isHoldings.value || isSimulation.value || isWatchlist.value || isTiming.value || isMainlineResearch.value || isSentimentEvents.value || isTomorrowStrategy.value || isCapitalTracking.value || isStockAsk.value || isDiagnosis.value || isForecastMining.value || isIndustryChain.value || isCompanyResearch.value || isScreener.value || isTechnicalScreener.value || isReportCenter.value || isKnowledge.value || isSettings.value
+const pageRefreshing = computed(() => isHotboard.value || isLimitUpTracker.value || isHoldings.value || isSimulation.value || isWatchlist.value || isEtfWatch.value || isTiming.value || isMainlineResearch.value || isSentimentEvents.value || isTomorrowStrategy.value || isCapitalTracking.value || isStockAsk.value || isDiagnosis.value || isForecastMining.value || isIndustryChain.value || isCompanyResearch.value || isScreener.value || isTechnicalScreener.value || isReportCenter.value || isKnowledge.value || isSettings.value
   ? reportRefreshing.value
   : refreshing.value || reportRefreshing.value)
-const pageBusy = computed(() => isHotboard.value || isLimitUpTracker.value || isHoldings.value || isSimulation.value || isWatchlist.value || isTiming.value || isMainlineResearch.value || isSentimentEvents.value || isTomorrowStrategy.value || isCapitalTracking.value || isStockAsk.value || isDiagnosis.value || isForecastMining.value || isIndustryChain.value || isCompanyResearch.value || isScreener.value || isTechnicalScreener.value || isReportCenter.value || isKnowledge.value || isSettings.value
+const pageBusy = computed(() => isHotboard.value || isLimitUpTracker.value || isHoldings.value || isSimulation.value || isWatchlist.value || isEtfWatch.value || isTiming.value || isMainlineResearch.value || isSentimentEvents.value || isTomorrowStrategy.value || isCapitalTracking.value || isStockAsk.value || isDiagnosis.value || isForecastMining.value || isIndustryChain.value || isCompanyResearch.value || isScreener.value || isTechnicalScreener.value || isReportCenter.value || isKnowledge.value || isSettings.value
   ? reportRefreshing.value
   : loading.value || pageRefreshing.value)
 
@@ -261,6 +264,10 @@ async function refreshCurrentPage() {
   }
   if (isHoldings.value && holdingsPage.value) {
     await Promise.resolve(holdingsPage.value.refresh())
+    return
+  }
+  if (isEtfWatch.value && etfWatchPage.value) {
+    await Promise.resolve(etfWatchPage.value.refresh())
     return
   }
   if (isSimulation.value && simulationPage.value) {
@@ -452,6 +459,12 @@ watch([routePath, routeTab], async () => {
         <WatchlistPage
           v-else-if="isWatchlist"
           ref="watchlistPage"
+          @refresh-state="reportRefreshing = $event"
+        />
+
+        <EtfWatchPage
+          v-else-if="isEtfWatch"
+          ref="etfWatchPage"
           @refresh-state="reportRefreshing = $event"
         />
 

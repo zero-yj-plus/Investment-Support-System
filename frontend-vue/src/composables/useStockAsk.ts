@@ -54,7 +54,7 @@ function loadConversationCodes(): Record<string, string> {
 }
 
 export function useStockAsk() {
-  const mode = ref<StockAskMode>('free')
+  const mode = ref<StockAskMode>('stock')
   const codeInput = ref('')
   const selectedCode = ref('')
   const prompt = ref('')
