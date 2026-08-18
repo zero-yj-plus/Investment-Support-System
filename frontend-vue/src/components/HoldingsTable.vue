@@ -36,19 +36,19 @@ function inputValue(event: Event): string {
         <tbody>
           <tr v-for="row in rows" :key="row.clientKey">
             <th scope="row">
-              <input :aria-label="`${row.name || row.code || '未命名持仓'}股票代码`" :value="row.code" inputmode="numeric" maxlength="6" @input="emit('update', row.clientKey, 'code', inputValue($event))" />
+              <span class="mono">{{ row.code }}</span>
               <strong>{{ row.name || '名称缺失' }}</strong>
             </th>
             <td><span>{{ row.industry || '待服务端核验' }}</span></td>
-            <td><input :aria-label="`${row.name || row.code}成本价，单位元每股`" :value="row.cost == null ? '' : row.cost" inputmode="decimal" @input="emit('update', row.clientKey, 'cost', inputValue($event))" /></td>
-            <td><input :aria-label="`${row.name || row.code}持有股数`" :value="row.shares == null ? '' : row.shares" inputmode="numeric" @input="emit('update', row.clientKey, 'shares', inputValue($event))" /></td>
+            <td class="mono">{{ formatPrice(row.cost) }}<small>变更请重新规划</small></td>
+            <td class="mono">{{ row.shares == null ? '—' : `${row.shares.toLocaleString('zh-CN')} 股` }}<small>变更请重新规划</small></td>
             <td class="mono">{{ formatPrice(row.price) }}<small>{{ row.quote?.stale ? '陈旧报价' : row.quote?.source || '报价缺失' }}</small></td>
             <td class="mono" :class="`is-${pnlTone(row.changePct)}`">{{ formatPercent(row.changePct, true) }}</td>
             <td class="mono" :class="`is-${pnlTone(row.pnl)}`">{{ formatMoney(row.pnl) }}<small>{{ formatPercent(row.pnlPct, true) }}</small></td>
             <td class="mono">{{ formatMoney(row.marketValue) }}</td>
             <td class="mono">{{ formatPercent(row.holdingSharePct) }}<small>{{ row.holdingSharePct == null ? '报价不完整' : '持仓市值占比' }}</small></td>
             <td><input :aria-label="`${row.name || row.code}备注`" :value="row.note" maxlength="200" @input="emit('update', row.clientKey, 'note', inputValue($event))" /></td>
-            <td><button type="button" class="danger-button" @click="emit('remove', row.clientKey)">移除</button></td>
+            <td><button type="button" class="secondary-button" @click="emit('remove', row.clientKey)">取消关注</button></td>
           </tr>
         </tbody>
       </table>
@@ -58,7 +58,7 @@ function inputValue(event: Event): string {
       <article v-for="row in rows" :key="`mobile-${row.clientKey}`" class="holding-card">
         <header>
           <div><strong>{{ row.name || '名称缺失' }}</strong><span class="mono">{{ row.code || '代码缺失' }}</span></div>
-          <button type="button" class="danger-button" @click="emit('remove', row.clientKey)">移除</button>
+          <button type="button" class="secondary-button" @click="emit('remove', row.clientKey)">取消关注</button>
         </header>
         <p class="holding-card__industry">行业：{{ row.industry || '待服务端核验' }}</p>
         <dl>
@@ -69,9 +69,6 @@ function inputValue(event: Event): string {
         </dl>
         <p v-if="row.quote?.stale || row.price == null" class="holding-card__quote-note">{{ row.quote?.quote_note || '当前报价缺失，市值与盈亏不计算。' }}</p>
         <div class="holding-card__fields">
-          <label><span>代码</span><input :value="row.code" inputmode="numeric" maxlength="6" @input="emit('update', row.clientKey, 'code', inputValue($event))" /></label>
-          <label><span>成本价（元/股）</span><input :value="row.cost == null ? '' : row.cost" inputmode="decimal" @input="emit('update', row.clientKey, 'cost', inputValue($event))" /></label>
-          <label><span>股数（股）</span><input :value="row.shares == null ? '' : row.shares" inputmode="numeric" @input="emit('update', row.clientKey, 'shares', inputValue($event))" /></label>
           <label><span>备注</span><input :value="row.note" maxlength="200" @input="emit('update', row.clientKey, 'note', inputValue($event))" /></label>
         </div>
       </article>

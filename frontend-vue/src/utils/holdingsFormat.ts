@@ -1,4 +1,4 @@
-import type { HoldingDraft, HoldingQuote, HoldingView } from '../types/holdings'
+import type { HoldingDraft, HoldingQuote, HoldingRiskState, HoldingView } from '../types/holdings'
 
 export function finiteNumber(value: unknown): number | null {
   if (value == null || value === '') return null
@@ -27,6 +27,7 @@ export function formatShares(value: number | null): string {
 export function holdingView(
   row: HoldingDraft,
   quote: HoldingQuote | null,
+  riskState: HoldingRiskState | null = null,
 ): HoldingView {
   const price = finiteNumber(quote?.price)
   const changePct = finiteNumber(quote?.change_pct)
@@ -34,7 +35,7 @@ export function holdingView(
   const marketValue = price != null && row.shares != null ? price * row.shares : null
   const pnl = marketValue != null && costAmount != null ? marketValue - costAmount : null
   const pnlPct = pnl != null && costAmount != null && costAmount > 0 ? pnl / costAmount * 100 : null
-  return { ...row, quote, price, changePct, costAmount, marketValue, pnl, pnlPct, holdingSharePct: null }
+  return { ...row, quote, riskState, price, changePct, costAmount, marketValue, pnl, pnlPct, holdingSharePct: null }
 }
 
 export function pnlTone(value: number | null): 'up' | 'down' | 'flat' | 'missing' {

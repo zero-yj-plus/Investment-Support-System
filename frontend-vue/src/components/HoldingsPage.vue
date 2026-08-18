@@ -1,13 +1,16 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import HoldingEditor from './HoldingEditor.vue'
+import HoldingsRiskCards from './HoldingsRiskCards.vue'
 import HoldingsTable from './HoldingsTable.vue'
 import { useHoldings } from '../composables/useHoldings'
-import type { NewHoldingInput } from '../types/holdings'
+import type { HoldingDraft, NewHoldingInput } from '../types/holdings'
 import { formatMoney, pnlTone } from '../utils/holdingsFormat'
 
 const emit = defineEmits<{ refreshState: [refreshing: boolean] }>()
 const showEditor = ref(false)
+const replanClientKey = ref('')
+const supplementPreview = ref<HoldingDraft | null>(null)
 const {
   holdings,
   views,
@@ -16,12 +19,15 @@ const {
   quotesLoading,
   saving,
   adding,
+  riskRefreshing,
+  actionRunning,
   loaded,
   dirty,
   holdingsError,
   quotesError,
   saveError,
   addError,
+  riskError,
   feedback,
   quotedCount,
   quoteAsOf,
@@ -31,12 +37,16 @@ const {
   updateHolding,
   removeHolding,
   refreshQuotes,
+  refreshRiskStates,
   refresh,
   save,
   addHolding,
+  resetPlan,
+  confirmAdjustment,
 } = useHoldings()
 
-const pageRefreshing = computed(() => refreshing.value || quotesLoading.value || saving.value || adding.value)
+const pageRefreshing = computed(() => refreshing.value || quotesLoading.value || saving.value || adding.value || riskRefreshing.value || actionRunning.value)
+const replanHolding = computed(() => supplementPreview.value || holdings.value.find((row) => row.clientKey === replanClientKey.value) || null)
 const dataStatus = computed(() => {
   if (holdingsError.value) return '账本暂不可用'
   if (loading.value) return '加载中'
@@ -57,8 +67,53 @@ function openEditor() {
 }
 
 async function handleAdd(input: NewHoldingInput) {
+  const existing = holdings.value.find((row) => row.code === input.code)
+  if (existing) {
+    const oldCost = existing.cost
+    const oldShares = existing.shares
+    if (oldCost != null && oldShares != null) {
+      const totalShares = oldShares + input.shares
+      const supplementFees = input.fees == null ? 0 : input.fees
+      const aggregateCost = (oldCost * oldShares + input.cost * input.shares + supplementFees) / totalShares
+      supplementPreview.value = {
+        ...existing,
+        cost: aggregateCost,
+        shares: totalShares,
+        note: input.note || existing.note,
+        riskPlan: {
+          period: input.period,
+          buy_date: input.buyDate,
+          customer_risk_price: input.customerRiskPrice,
+          customer_target_price: input.customerTargetPrice,
+          target_mode: input.targetMode,
+          confirmed_reduction_pct: 0,
+        },
+      }
+    } else {
+      supplementPreview.value = { ...existing, cost: input.cost, shares: input.shares }
+    }
+    replanClientKey.value = existing.clientKey
+    showEditor.value = false
+    return
+  }
   const added = await addHolding(input)
   if (added) showEditor.value = false
+}
+
+function openReplan(clientKey: string) {
+  supplementPreview.value = null
+  replanClientKey.value = clientKey
+  void nextTick(() => document.querySelector<HTMLElement>('#holding-editor-title')?.scrollIntoView({ block: 'start' }))
+}
+
+async function handleReplan(input: NewHoldingInput) {
+  const holding = replanHolding.value
+  if (!holding) return
+  const reason = supplementPreview.value ? 'supplement' : 'manual_replan'
+  if (await resetPlan(holding.code, input, reason)) {
+    replanClientKey.value = ''
+    supplementPreview.value = null
+  }
 }
 
 onBeforeUnmount(() => emit('refreshState', false))
@@ -70,10 +125,11 @@ defineExpose({ refresh })
     <header class="holdings-intro">
       <div class="page-heading">
         <h1 id="holdings-page-title">我的持仓</h1>
-        <p class="page-subtitle">核对真实持仓、当前报价、持仓市值与盈亏边界；页面只做展示算术和账本编辑，不在浏览器中生成交易结论。</p>
+        <p class="page-subtitle">管理超短、短线和波段计划；服务端按K线、Wilder ATR14、结构位与时间规则给出累计仓位降低比例。</p>
       </div>
       <div class="holdings-intro__actions">
         <button type="button" :class="dirty ? 'secondary-button' : 'primary-button'" :disabled="loading || !!holdingsError || saving || adding" @click="openEditor">添加持仓</button>
+        <button type="button" class="secondary-button" :disabled="riskRefreshing || actionRunning || !holdings.length" @click="refreshRiskStates(true)">{{ riskRefreshing ? '评估中' : '刷新仓位评估' }}</button>
         <button v-if="dirty" type="button" class="primary-button" :disabled="saving" @click="save">{{ saving ? '保存中' : '保存持仓变更' }}</button>
       </div>
     </header>
@@ -114,13 +170,19 @@ defineExpose({ refresh })
           <strong>{{ saveError ? '操作未完成' : '账本状态' }}</strong><span>{{ saveError || feedback }}</span>
         </div>
 
+        <div v-if="riskError" class="holdings-alert" role="alert">
+          <div><strong>仓位管理状态读取失败</strong><span>{{ riskError }}；账本和报价仍可使用，页面不会用旧数据冒充新评估。</span></div>
+          <button type="button" class="secondary-button" :disabled="riskRefreshing" @click="refreshRiskStates()">重试状态</button>
+        </div>
+
         <HoldingEditor v-if="showEditor" :adding="adding" :server-error="addError" @submit="handleAdd" @cancel="showEditor = false" />
+        <HoldingEditor v-if="replanHolding" mode="replan" :initial="replanHolding" :adding="actionRunning" :server-error="saveError" @submit="handleReplan" @cancel="replanClientKey = ''; supplementPreview = null" />
 
         <section class="panel holdings-boundary" aria-labelledby="holdings-boundary-title">
           <div>
             <p class="eyebrow">自动汇总口径</p>
             <h2 id="holdings-boundary-title">持仓成本与市值</h2>
-            <p>投入成本按成本价 × 股数计算；持仓总市值按真实现价 × 股数计算。两者都不是包含现金的账户总资产。</p>
+            <p>投入成本仍按成本价 × 股数计算，市值按真实现价 × 股数计算；仓位管理只输出累计降低比例，不换算具体股数，也不连接券商下单。</p>
           </div>
           <dl>
             <div><dt>投入成本</dt><dd class="mono">{{ formatMoney(aggregate.costAmount) }}</dd></div>
@@ -136,8 +198,17 @@ defineExpose({ refresh })
           <button type="button" class="secondary-button" @click="openEditor">添加第一笔持仓</button>
         </section>
 
+        <HoldingsRiskCards
+          v-if="holdings.length"
+          :rows="views"
+          :action-running="actionRunning"
+          @replan="openReplan"
+          @confirm="confirmAdjustment"
+          @remove="removeHolding"
+        />
+
         <HoldingsTable
-          v-else
+          v-if="holdings.length"
           :rows="views"
           @update="updateHolding"
           @remove="removeHolding"
@@ -145,7 +216,7 @@ defineExpose({ refresh })
 
         <footer class="page-footer holdings-footer">
           <span>GET 持仓成功空数组、报价缺失、陈旧报价、接口失败分别展示；缺失值不补 0。</span>
-          <span>保存是整体覆盖操作；行业以服务端核验结果为准，持仓构成由当前市值自动计算，本页不生成风险等级或买卖动作。</span>
+          <span>仓位目标按计划版本只升不降；重置计划会重置1R、最高价、风险线和累计目标。数据失败保留原始时点并明确标记。</span>
         </footer>
       </template>
     </template>

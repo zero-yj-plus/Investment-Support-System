@@ -22,6 +22,10 @@ def test_vue_holdings_route_is_reachable_and_uses_real_contracts() -> None:
         "`/quotes?codes=${encodeURIComponent(codes.join(','))}`",
         "`/quote/${input.code}`",
         "putJson<HoldingsResponse>('/holdings'",
+        "'/holdings/risk'",
+        "'/holdings/risk/refresh'",
+        "`/holdings/${encodeURIComponent(code)}/risk-plan/reset`",
+        "`/holdings/${encodeURIComponent(code)}/adjustment`",
     ):
         assert endpoint in composable
     for unrelated in ("/cockpit", "/pulse", "/recommendations", "/market/flow"):
@@ -98,6 +102,7 @@ def test_vue_holdings_responsive_accessible_semantics_and_ui_audit() -> None:
     page = _read("src/components/HoldingsPage.vue")
     table = _read("src/components/HoldingsTable.vue")
     editor = _read("src/components/HoldingEditor.vue")
+    risk_cards = _read("src/components/HoldingsRiskCards.vue")
     audit = _read("scripts/audit-ui.mjs")
 
     assert 'tabindex="0" role="region" aria-label="持仓明细宽表，可横向滚动"' in table
@@ -107,6 +112,13 @@ def test_vue_holdings_responsive_accessible_semantics_and_ui_audit() -> None:
     assert "@media (max-width: 520px)" in editor
     assert "@media (prefers-reduced-motion: reduce)" in page
     assert "min-height: 44px" in page + table + editor
+    for label in (
+        "累计降低目标", "已调整至目标仓位", "重新规划", "取消关注",
+        "超短（1–3个交易日）", "短线（3–5个交易日）", "波段（5–10个交易日）",
+    ):
+        assert label in page + editor + risk_cards
+    for forbidden in ("建议卖出", "清仓", "风险颜色"):
+        assert forbidden not in page + editor + risk_cards
     for source in (page, table, editor):
         assert "box-shadow" not in source
         assert "linear-gradient" not in source

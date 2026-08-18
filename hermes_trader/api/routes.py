@@ -59,6 +59,7 @@ from ..analysis import (sentiment as senti, features, timing as timing_mod, quan
                         chat_materials as chat_materials_mod,
                         stock_perspectives as stock_perspectives_mod,
                         watchlist_zones as watchlist_zones_mod,
+                        holdings_risk as holdings_risk_mod,
                         technical_screener as technical_screener_mod)
 from ..jobs.scheduler import JOB_NAMES, apply_schedule, task_center_status  # noqa: E402
 from ..product_state import build_market_context, route_lifecycle_contract  # noqa: E402
@@ -4313,10 +4314,13 @@ async def export_push(request: Request, file: UploadFile = File(...), caption: s
 
 @router.get("/holdings")
 async def get_holdings(request: Request):
-    store = _state(request).store
+    st = _state(request)
+    store = st.store
+    service = getattr(st, "holding_risk", None)
     return {
         "ok": True,
         "holdings": store.holdings(),
+        "risk_states": service.snapshots() if service is not None else store.holdings_risk_states(),
         "portfolio_total_asset": store.portfolio_meta().get("total_asset"),
     }
 
@@ -4357,10 +4361,87 @@ async def put_holdings(request: Request):
             item["industry"] = industries.get(code, "")
             verified_holdings.append(item)
         st.store.save_holdings(verified_holdings, total_asset=total_asset)
+        active_codes = {str(row.get("code") or "").zfill(6) for row in st.store.holdings() if isinstance(row, dict)}
+        for obsolete_code in set(st.store.holdings_risk_states()) - active_codes:
+            st.store.delete_holding_risk_state(obsolete_code)
     except ValueError as e:
         # 畸形条目由 store 层抛出，转 400 告知具体不合法项而非 500
         return JSONResponse({"ok": False, "error": f"持仓数据不合法：{e}"}, status_code=400)
-    return {"ok": True, "holdings": st.store.holdings()}
+    service = getattr(st, "holding_risk", None)
+    if service is not None:
+        task = asyncio.create_task(service.refresh_all(force=True))
+        _bg_tasks.add(task)
+        task.add_done_callback(_bg_tasks.discard)
+    return {
+        "ok": True,
+        "holdings": st.store.holdings(),
+        "risk_states": service.snapshots() if service is not None else st.store.holdings_risk_states(),
+    }
+
+
+@router.get("/holdings/risk")
+async def get_holdings_risk(request: Request):
+    st = _state(request)
+    service = getattr(st, "holding_risk", None)
+    states = service.snapshots() if service is not None else st.store.holdings_risk_states()
+    return {
+        "ok": True,
+        "schema_version": holdings_risk_mod.SCHEMA_VERSION,
+        "algorithm_version": holdings_risk_mod.ALGORITHM_VERSION,
+        "states": states,
+    }
+
+
+@router.post("/holdings/risk/refresh")
+async def refresh_holdings_risk(request: Request):
+    service = getattr(_state(request), "holding_risk", None)
+    if service is None:
+        return JSONResponse({"ok": False, "error": "持仓仓位管理服务未装配"}, status_code=503)
+    return await service.refresh_all(force=True)
+
+
+@router.post("/holdings/{code}/risk-plan/reset")
+async def reset_holding_risk_plan(code: str, request: Request):
+    st = _state(request)
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise ValueError("请求体应为对象")
+        plan = {
+            "period": body.get("period"),
+            "buy_date": body.get("buy_date"),
+            "customer_risk_price": body.get("customer_risk_price"),
+            "customer_target_price": body.get("customer_target_price"),
+            "target_mode": body.get("target_mode") or "reminder",
+        }
+        holding = st.store.reset_holding_risk_plan(
+            code, plan, cost=body.get("cost"), shares=body.get("shares"),
+            reason=str(body.get("reason") or "manual_replan"),
+        )
+    except (TypeError, ValueError) as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    service = getattr(st, "holding_risk", None)
+    refreshed = await service.refresh_all(force=True) if service is not None else {"states": st.store.holdings_risk_states()}
+    return {"ok": True, "holding": holding, "states": refreshed.get("states", {})}
+
+
+@router.post("/holdings/{code}/adjustment")
+async def confirm_holding_adjustment(code: str, request: Request):
+    st = _state(request)
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise ValueError("请求体应为对象")
+        result = st.store.confirm_holding_reduction(code, body.get("reduction_pct"))
+    except (TypeError, ValueError) as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    service = getattr(st, "holding_risk", None)
+    if service is not None and not result.get("ended"):
+        refreshed = await service.refresh_all(force=True)
+        states = refreshed.get("states", {})
+    else:
+        states = service.snapshots() if service is not None else st.store.holdings_risk_states()
+    return {"ok": True, **result, "holdings": st.store.holdings(), "states": states}
 
 
 # ---------------------------------------------------------------- 观察池（母文档 §21）

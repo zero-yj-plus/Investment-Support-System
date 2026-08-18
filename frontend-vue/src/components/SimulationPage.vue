@@ -336,12 +336,12 @@ defineExpose({ refresh: load })
 .simulation-stop h2, .simulation-ledger h2 { margin: 0; font-size: 16px; }
 .simulation-ledger header p { margin: 0; color: var(--text-2); font-size: 13px; }
 .simulation-stop { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 11px 14px; }
-.simulation-stop.is-active { border-color: color-mix(in srgb, var(--danger) 60%, var(--border)); background: color-mix(in srgb, var(--danger) 6%, var(--surface)); }
 .simulation-stop__copy { display: grid; min-width: 0; gap: 3px; }
 .simulation-stop__title { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .simulation-stop__title span { padding: 3px 7px; border: 1px solid var(--border); border-radius: 999px; color: var(--text-3); font-size: 12px; white-space: nowrap; }
 .simulation-stop p { margin: 0; color: var(--text-2); font-size: 13px; }
 .simulation-stop button { flex: 0 0 auto; min-height: 44px; }
+.simulation-stop.is-active { border-color: color-mix(in srgb, var(--danger) 60%, var(--border)); background: color-mix(in srgb, var(--danger) 6%, var(--surface)); }
 .simulation-counts { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }
 .simulation-counts article { padding: 12px; }
 .simulation-counts strong { display: block; font-family: "SFMono-Regular", Consolas, monospace; font-size: 22px; }

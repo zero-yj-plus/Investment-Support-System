@@ -786,13 +786,42 @@ Markdown 表格中的失败行仍保持相同列数，只移除未通过校验�
 ## 7. 持仓
 
 ### GET /api/holdings
-`{"ok":true,"portfolio_total_asset":1000000,"holdings":[{"code":"002131","name":"利欧股份","cost":4.5,"shares":10000,"industry":"互联网","weight_pct":4.8,"market_value":48000,"note":"AI应用龙头"}]}`
+`{"ok":true,"portfolio_total_asset":1000000,"holdings":[{"code":"002131","name":"利欧股份","cost":4.5,"shares":10000,"industry":"互联网","weight_pct":4.8,"market_value":48000,"note":"AI应用龙头","risk_plan":{"schema_version":"holding-risk-plan-v1","version":1,"period":"short","buy_date":"2026-08-11","customer_risk_price":4.1,"customer_target_price":5.6,"target_mode":"reminder","confirmed_reduction_pct":0}}],"risk_states":{"002131":{...}}}`
+
+`risk_plan` 是用户确认的计划事实，`risk_states` 是服务端最近一次确定性评估快照。旧持仓可以没有 `risk_plan`；服务端和页面不得猜测买入日期或周期，而应提示建立计划。`period` 只允许 `ultra`（1–3个交易日）、`short`（3–5个交易日）和 `swing`（5–10个交易日）。`target_mode` 只允许 `reminder` 或 `ordinary_trigger`。
 ### PUT /api/holdings
 body `{"portfolio_total_asset":1000000,"holdings":[...]}`（整体覆盖保存）→ `{"ok":true,"holdings":[...]}`。
 `portfolio_total_asset` 是含现金的账户 NAV；服务端按 `market_value / NAV` 计算仓位。
 客户端提交的 `industry/sector` 不受信任，服务端按证券代码从免费公开个股主数据重新核验并覆盖；
 取不到行业时保存为空，所有新增风险动作由风险闸 fail closed。
 持仓数据不合法（条目非对象、cost/shares 非数值等）时返回 HTTP 400 `{"ok":false,"error":"持仓数据不合法：<原因>"}`，整批拒绝、不部分落盘。
+客户端未回传某个既有持仓的 `risk_plan` 时，服务端保留该持仓已确认计划；不能因旧客户端整体 PUT 静默抹掉计划。新增持仓要启用仓位管理时，成本、股数、买入日期和周期必须同时提交。
+
+### GET /api/holdings/risk
+只读取最近评估快照，不触发 K 线 N+1 采集：`{"ok":true,"schema_version":"holding-risk-evaluation-v1","algorithm_version":"1.0","states":{"000001":{...}}}`。
+
+评估只输出仓位管理比例，不输出卖出股数或券商指令。普通触发累计映射为降低 `25/33/50/67%`，客户风险线触及、完整周期 K 线确认跌破或极端跌破映射为降低 `100%`。同一计划版本的 `target_reduction_pct` 只升不降；条件解除只更新当前依据并可推送一次恢复，不建议补回仓位。状态字段包括：
+
+- `state`: `monitoring | pending_adjustment | completed_adjustment | data_insufficient | unsupported`；
+- `action / target_reduction_pct / retain_pct / confirmed_reduction_pct`；
+- `ordinary_triggers / decisive_triggers / near_risk_line`；
+- `initial_risk_line / current_risk_line / initial_r / r_multiple / highest_price`；
+- `atr.daily_14 / atr.primary_14 / atr.method`，当前方法固定为 Wilder ATR14，只使用完整 K 线；
+- `time.trading_days_held / max_days / expired`，买入日计第1日，有真实交易 K 线的日期才计入，因此停牌日不推进；
+- `evaluated_at / data_as_of / fresh / stale / missing / data_note`。
+
+行情刷新失败时保留同计划版本 last-good 的原价格结论和原 `evaluated_at`，新增 `refresh_attempted_at`、`stale=true` 与失败原因，不执行新的价格计算。上游明确标注为正式收盘价的盘后报价不是源失败，可与完整K线一起按 `price_context=official_close` 评估，但不得称为实时。若完整日 K 仍能独立证明当日有交易，时间到期可以继续推进。ST、ETF及契约外证券返回 `unsupported`，不运行普通算法。
+
+### POST /api/holdings/risk/refresh
+显式运行全部持仓评估并返回 `states`。后台也按5分钟周期执行；`max_instances=1`，不会叠加刷新。飞书只在 `25/33/50/67/100%` 首次出现或升级时推送，同计划、同比例、同原因不重复；风险条件解除可推一次，但累计目标不回退。
+
+### POST /api/holdings/{code}/risk-plan/reset
+body：`{"cost":10.2,"shares":1200,"buy_date":"2026-08-17","period":"short","customer_risk_price":9.5,"customer_target_price":12.8,"target_mode":"reminder","reason":"manual_replan|supplement"}`。
+
+显式创建下一计划版本，并重置1R、最高价、动态风险线、已确认比例和累计目标；旧计划事件保留在追加日志。一个客户同一代码最多一个活动持仓，补仓走该接口，不创建第二份并行计划。
+
+### POST /api/holdings/{code}/adjustment
+body：`{"reduction_pct":25}`，只接受 `0/25/33/50/67/100` 且不得小于此前已确认累计比例。确认当前目标后状态为“已完成当前调整，继续监控”；明确确认 `100` 时结束该持仓关注，但历史事件仍保留。系统不会自动确认执行或自动结束持仓。
 
 ## 8. 知识库
 
