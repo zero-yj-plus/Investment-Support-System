@@ -19,6 +19,7 @@ import re
 import threading
 import time
 import uuid
+from datetime import datetime
 from pathlib import Path
 
 from ..data.base import now_cn
@@ -1199,8 +1200,74 @@ class Store:
     def _holdings_path(self) -> Path:
         return self.root / "holdings.json"
 
+    @property
+    def _holdings_risk_path(self) -> Path:
+        return self.root / "holdings_risk.json"
+
+    @property
+    def _holdings_risk_events_path(self) -> Path:
+        return self.root / "holding_events" / "risk.v1.jsonl"
+
     def holdings(self) -> list[dict]:
         return self._read_json(self._holdings_path, [])
+
+    @staticmethod
+    def _normalise_holding_risk_plan(value: object, *, previous: dict | None = None) -> dict | None:
+        """校验用户确认的风险计划事实；历史评估结果不进入 holdings.json。"""
+        if value in (None, ""):
+            return dict(previous) if isinstance(previous, dict) else None
+        if not isinstance(value, dict):
+            raise ValueError("持仓风险计划应为对象")
+        period = str(value.get("period") or "").strip()
+        if period not in {"ultra", "short", "swing"}:
+            raise ValueError("持仓周期应为 ultra、short 或 swing")
+        buy_date = str(value.get("buy_date") or "").strip()
+        try:
+            parsed_buy_date = datetime.strptime(buy_date, "%Y-%m-%d")
+        except ValueError:
+            raise ValueError("买入日期格式应为 YYYY-MM-DD") from None
+        if parsed_buy_date.date() > now_cn().date():
+            raise ValueError("买入日期不能晚于今天")
+
+        def optional_price(key: str, label: str) -> float | None:
+            raw = value.get(key)
+            if raw in (None, ""):
+                return None
+            try:
+                parsed = float(raw)
+            except (TypeError, ValueError):
+                raise ValueError(f"{label}不是有效数字") from None
+            if not math.isfinite(parsed) or parsed <= 0:
+                raise ValueError(f"{label}必须大于 0")
+            return parsed
+
+        target_mode = str(value.get("target_mode") or "reminder").strip()
+        if target_mode not in {"reminder", "ordinary_trigger"}:
+            raise ValueError("目标价模式应为 reminder 或 ordinary_trigger")
+        previous_version = int((previous or {}).get("version") or 0)
+        try:
+            version = int(value.get("version") or previous_version or 1)
+        except (TypeError, ValueError):
+            version = max(1, previous_version)
+        try:
+            confirmed = int(float(value.get("confirmed_reduction_pct") or 0))
+        except (TypeError, ValueError):
+            raise ValueError("已确认降低比例不是有效数字") from None
+        if confirmed not in {0, 25, 33, 50, 67, 100}:
+            raise ValueError("已确认降低比例应为 0、25、33、50、67 或 100")
+        created_at = str(value.get("created_at") or (previous or {}).get("created_at") or now_cn().isoformat(timespec="seconds"))
+        return {
+            "schema_version": "holding-risk-plan-v1",
+            "version": max(1, version),
+            "period": period,
+            "buy_date": buy_date,
+            "customer_risk_price": optional_price("customer_risk_price", "客户风险线"),
+            "customer_target_price": optional_price("customer_target_price", "客户目标价"),
+            "target_mode": target_mode,
+            "confirmed_reduction_pct": confirmed,
+            "created_at": created_at[:32],
+            "updated_at": now_cn().isoformat(timespec="seconds"),
+        }
 
     @property
     def _portfolio_meta_path(self) -> Path:
@@ -1224,6 +1291,11 @@ class Store:
                 raise ValueError("账户总资产必须大于 0")
         else:
             total_asset = None
+        existing_rows = self.holdings()
+        existing_by_code = {
+            str(row.get("code") or "").strip().zfill(6): row
+            for row in existing_rows if isinstance(row, dict) and row.get("code")
+        }
         cleaned = []
         seen_codes: set[str] = set()
         for h in holdings[:50]:
@@ -1270,8 +1342,17 @@ class Store:
                 if weight_pct > 100:
                     raise ValueError(f"持仓 {normalised_code} 市值超过账户总资产")
             seen_codes.add(normalised_code)
-            cleaned.append(
-                {
+            previous_row = existing_by_code.get(normalised_code) or {}
+            previous_plan = previous_row.get("risk_plan") if isinstance(previous_row, dict) else None
+            if isinstance(previous_plan, dict):
+                previous_cost = float(previous_row.get("cost") or 0)
+                previous_shares = float(previous_row.get("shares") or 0)
+                if abs(cost - previous_cost) > 1e-9 or abs(shares - previous_shares) > 1e-9:
+                    raise ValueError(f"持仓 {normalised_code} 已建立风险计划，成本或数量变更请使用补仓/重规划")
+                risk_plan = dict(previous_plan)
+            else:
+                risk_plan = self._normalise_holding_risk_plan(h.get("risk_plan"), previous=None)
+            cleaned_row = {
                     "code": normalised_code,
                     "name": str(h.get("name", ""))[:30],
                     "cost": cost,
@@ -1280,18 +1361,135 @@ class Store:
                     "weight_pct": weight_pct,
                     "market_value": market_value,
                     "note": str(h.get("note", ""))[:200],
-                }
-            )
+            }
+            if risk_plan is not None:
+                cleaned_row["risk_plan"] = risk_plan
+            cleaned.append(cleaned_row)
         if total_asset is not None:
             total_market_value = sum(float(row.get("market_value") or 0) for row in cleaned)
             if total_market_value > total_asset * 1.000001:
                 raise ValueError("持仓总市值不得超过账户总资产")
         self._write_json(self._holdings_path, cleaned)
+        removed_codes = set(existing_by_code) - seen_codes
+        for removed_code in sorted(removed_codes):
+            previous_plan = existing_by_code[removed_code].get("risk_plan") if isinstance(existing_by_code[removed_code], dict) else None
+            self.append_holding_risk_event({
+                "type": "holding_ended", "code": removed_code,
+                "plan_version": int((previous_plan or {}).get("version") or 0),
+                "reason": "user_removed_from_holdings",
+            })
         if total_asset is not None:
             self._write_json(self._portfolio_meta_path, {
                 "total_asset": total_asset,
                 "updated_at": self.now_str(),
             })
+
+    def holdings_risk_states(self) -> dict[str, dict]:
+        value = self._read_json(self._holdings_risk_path, {})
+        if not isinstance(value, dict):
+            return {}
+        return {str(code): dict(state) for code, state in value.items() if isinstance(state, dict)}
+
+    def save_holding_risk_state(self, code: str, state: dict) -> None:
+        normalised = str(code or "").strip().split(".", 1)[0].zfill(6)
+        if not re.fullmatch(r"\d{6}", normalised) or not isinstance(state, dict):
+            raise ValueError("持仓风险状态不合法")
+        with self._lock:
+            states = self.holdings_risk_states()
+            states[normalised] = dict(state)
+            self._write_json(self._holdings_risk_path, states)
+
+    def delete_holding_risk_state(self, code: str) -> None:
+        normalised = str(code or "").strip().split(".", 1)[0].zfill(6)
+        with self._lock:
+            states = self.holdings_risk_states()
+            if states.pop(normalised, None) is not None:
+                self._write_json(self._holdings_risk_path, states)
+
+    def append_holding_risk_event(self, event: dict) -> dict:
+        rec = {
+            "event_id": f"hre_{time.time_ns():x}",
+            "schema_version": "holding-risk-event-v1",
+            "at": now_cn().isoformat(timespec="seconds"),
+            **dict(event or {}),
+        }
+        path = self._holdings_risk_events_path
+        with self._lock:
+            path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(rec, ensure_ascii=False, separators=(",", ":")) + "\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            self._fsync_dir(path.parent)
+        return rec
+
+    def reset_holding_risk_plan(self, code: str, plan: dict, *, cost: object = None,
+                                shares: object = None, reason: str = "manual_replan") -> dict:
+        """显式重置计划：版本递增，并清空只能随计划上移的派生状态。"""
+        normalised = str(code or "").strip().split(".", 1)[0].zfill(6)
+        with self._lock:
+            rows = self.holdings()
+            row = next((item for item in rows if str(item.get("code") or "").zfill(6) == normalised), None)
+            if row is None:
+                raise ValueError("持仓不存在")
+            previous = row.get("risk_plan") if isinstance(row.get("risk_plan"), dict) else {}
+            next_plan = dict(plan or {})
+            next_plan["version"] = int(previous.get("version") or 0) + 1
+            next_plan["confirmed_reduction_pct"] = 0
+            row["risk_plan"] = self._normalise_holding_risk_plan(next_plan, previous=None)
+            if cost not in (None, ""):
+                parsed_cost = float(cost)
+                if not math.isfinite(parsed_cost) or parsed_cost <= 0:
+                    raise ValueError("新综合成本必须大于 0")
+                row["cost"] = parsed_cost
+            if shares not in (None, ""):
+                parsed_shares = float(shares)
+                if not math.isfinite(parsed_shares) or parsed_shares <= 0:
+                    raise ValueError("新持仓数量必须大于 0")
+                row["shares"] = parsed_shares
+            row["market_value"] = float(row["cost"]) * float(row["shares"])
+            row["weight_pct"] = None
+            self._write_json(self._holdings_path, rows)
+            self.delete_holding_risk_state(normalised)
+            self.append_holding_risk_event({
+                "type": "plan_reset", "code": normalised,
+                "plan_version": row["risk_plan"]["version"], "reason": str(reason or "manual_replan")[:80],
+            })
+            return dict(row)
+
+    def confirm_holding_reduction(self, code: str, reduction_pct: object) -> dict:
+        normalised = str(code or "").strip().split(".", 1)[0].zfill(6)
+        try:
+            confirmed = int(float(reduction_pct))
+        except (TypeError, ValueError):
+            raise ValueError("累计降低比例不是有效数字") from None
+        if confirmed not in {0, 25, 33, 50, 67, 100}:
+            raise ValueError("累计降低比例应为 0、25、33、50、67 或 100")
+        with self._lock:
+            rows = self.holdings()
+            row = next((item for item in rows if str(item.get("code") or "").zfill(6) == normalised), None)
+            if row is None:
+                raise ValueError("持仓不存在")
+            plan = row.get("risk_plan") if isinstance(row.get("risk_plan"), dict) else None
+            if plan is None:
+                raise ValueError("该持仓尚未建立风险计划")
+            previous = int(plan.get("confirmed_reduction_pct") or 0)
+            if confirmed < previous:
+                raise ValueError("累计降低比例不能小于已确认比例")
+            plan["confirmed_reduction_pct"] = confirmed
+            plan["updated_at"] = now_cn().isoformat(timespec="seconds")
+            ended = confirmed == 100
+            if ended:
+                rows = [item for item in rows if item is not row]
+            self._write_json(self._holdings_path, rows)
+            self.append_holding_risk_event({
+                "type": "reduction_confirmed", "code": normalised,
+                "plan_version": int(plan.get("version") or 1),
+                "from_pct": previous, "to_pct": confirmed, "ended": ended,
+            })
+            if ended:
+                self.delete_holding_risk_state(normalised)
+            return {"holding": None if ended else dict(row), "ended": ended, "confirmed_reduction_pct": confirmed}
 
     # ---------- 持仓处理倾向·每日快照（策略自证：昨日建议 vs 今日实际）----------
     # 每个交易日收盘按规则给各持仓确定性处理倾向 + 收盘价，落库快照（按日覆盖、幂等）。

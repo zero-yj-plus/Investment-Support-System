@@ -21,6 +21,7 @@ from starlette.middleware.gzip import GZipMiddleware
 from . import __version__
 from .agent.hermes_client import HermesClient
 from .analysis.engine import Engine
+from .analysis.holdings_risk import HoldingRiskService, register as register_holdings_risk
 from .api.routes import router
 from .config import Config
 from .feishu.push import FeishuPusher
@@ -179,6 +180,7 @@ def create_app(config_path: str) -> FastAPI:
     else:
         notifier = FeishuPusher(config)
     engine = Engine(config, store, hermes, notifier)
+    holding_risk = HoldingRiskService(config, store, notifier)
     research_runs = ResearchRunManager(config.data_dir)
     limitup_tracker = LimitUpTracker(config.data_dir)
     # 分析层只消费统一网关契约；不在各页再各自直连行情源。
@@ -187,6 +189,7 @@ def create_app(config_path: str) -> FastAPI:
     from .analysis import technical_screener  # noqa: PLC0415
     technical_screener.init(config.data_dir)
     scheduler = build_scheduler(config, engine)
+    register_holdings_risk(scheduler, holding_risk)
     simulation_matcher = SimulationMatcher(simulation_store)
     register_simulation_matcher(scheduler, simulation_matcher)
     try:
@@ -243,6 +246,7 @@ def create_app(config_path: str) -> FastAPI:
     app.state.agent_runs = hermes.run_store
     app.state.feishu = notifier   # 活动推送器（飞书 webhook 或 Hermes 网关，同接口鸭子类型）
     app.state.engine = engine
+    app.state.holding_risk = holding_risk
     app.state.research_runs = research_runs
     app.state.limitup_tracker = limitup_tracker
     app.state.limitup_backfill_jobs = {"active": None, "jobs": {}}

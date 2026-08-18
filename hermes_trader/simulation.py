@@ -166,7 +166,9 @@ class SimulationStore:
                     updated_at TEXT,
                     last_reset_by TEXT,
                     last_reset_reason TEXT,
-                    last_reset_at TEXT
+                    last_reset_at TEXT,
+                    automatic_matching_enabled INTEGER NOT NULL DEFAULT 1,
+                    automatic_matching_updated_at TEXT
                 );
                 INSERT OR IGNORE INTO simulation_state(singleton, emergency_stop)
                     VALUES(1, 0);
@@ -175,9 +177,16 @@ class SimulationStore:
             state_columns = {
                 row["name"] for row in conn.execute("PRAGMA table_info(simulation_state)").fetchall()
             }
-            for column in ("last_reset_by", "last_reset_reason", "last_reset_at"):
+            state_migrations = {
+                "last_reset_by": "TEXT",
+                "last_reset_reason": "TEXT",
+                "last_reset_at": "TEXT",
+                "automatic_matching_enabled": "INTEGER NOT NULL DEFAULT 1",
+                "automatic_matching_updated_at": "TEXT",
+            }
+            for column, definition in state_migrations.items():
                 if column not in state_columns:
-                    conn.execute(f"ALTER TABLE simulation_state ADD COLUMN {column} TEXT")
+                    conn.execute(f"ALTER TABLE simulation_state ADD COLUMN {column} {definition}")
             order_columns = {
                 row["name"] for row in conn.execute("PRAGMA table_info(simulation_orders)").fetchall()
             }
@@ -363,6 +372,67 @@ class SimulationStore:
             "SELECT emergency_stop FROM simulation_state WHERE singleton=1"
         ).fetchone()
         return bool(row and row["emergency_stop"])
+
+    def automatic_matching_enabled(self) -> bool:
+        """Return the persisted runtime switch before any matching work starts."""
+        with self._lock, self._connect() as conn:
+            row = conn.execute(
+                "SELECT automatic_matching_enabled FROM simulation_state WHERE singleton=1"
+            ).fetchone()
+            return row is None or bool(row["automatic_matching_enabled"])
+
+    def set_automatic_matching(
+        self,
+        *,
+        client_request_id: str,
+        enabled: Any,
+    ) -> dict[str, Any]:
+        """Persist the scheduler switch and append an auditable control event."""
+        request_id = self._validate_request_id(client_request_id)
+        if not isinstance(enabled, bool):
+            raise SimulationError(
+                "automatic_matching_enabled_invalid",
+                "enabled 必须是布尔值",
+            )
+        request_hash = _stable_hash({"enabled": enabled})
+        now_text = _iso(self._now())
+        with self._lock, self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            replay = self._replay(
+                conn,
+                client_request_id=request_id,
+                operation="automatic_matching_control",
+                request_hash=request_hash,
+            )
+            if replay is not None:
+                return replay
+            row = conn.execute(
+                "SELECT automatic_matching_enabled FROM simulation_state WHERE singleton=1"
+            ).fetchone()
+            previous = row is None or bool(row["automatic_matching_enabled"])
+            changed = previous != enabled
+            if changed:
+                conn.execute(
+                    """UPDATE simulation_state
+                       SET automatic_matching_enabled=?,automatic_matching_updated_at=?
+                       WHERE singleton=1""",
+                    (int(enabled), now_text),
+                )
+            self._append_event(
+                conn,
+                order_id=None,
+                operation="automatic_matching_control",
+                event_type=(
+                    "automatic_matching_enabled" if enabled else "automatic_matching_paused"
+                ),
+                from_status=None,
+                to_status=None,
+                client_request_id=request_id,
+                request_hash=request_hash,
+                detail={"enabled": enabled, "changed": changed},
+                created_at=now_text,
+            )
+            return {"idempotent_replay": False, "status": self._status_in_conn(conn)}
 
     def propose(
         self,
@@ -1076,7 +1146,8 @@ class SimulationStore:
     def _status_in_conn(self, conn: sqlite3.Connection) -> dict[str, Any]:
         state = conn.execute(
             """SELECT emergency_stop,emergency_reason,updated_at,
-                      last_reset_by,last_reset_reason,last_reset_at
+                      last_reset_by,last_reset_reason,last_reset_at,
+                      automatic_matching_enabled,automatic_matching_updated_at
                FROM simulation_state WHERE singleton=1"""
         ).fetchone()
         counts = {state_name: 0 for state_name in sorted(ORDER_STATES)}
@@ -1099,13 +1170,19 @@ class SimulationStore:
                 latest_event.pop("detail_json", None)
                 latest_event["detail"] = {}
         return {
-            "schema_version": "simulation-status.v3",
+            "schema_version": "simulation-status.v4",
             "mode": "simulation_only",
             "simulation_only": True,
             "broker_connected": False,
             "broker_interface_present": False,
             "manual_approval_required": False,
             "automatic_matching": True,
+            "automatic_matching_enabled": (
+                bool(state["automatic_matching_enabled"]) if state else True
+            ),
+            "automatic_matching_updated_at": (
+                state["automatic_matching_updated_at"] if state else None
+            ),
             "matching_interval_seconds": 5,
             "order_time_in_force": "DAY",
             "account_initialized": SimulationAccountLedger.account_exists(conn),

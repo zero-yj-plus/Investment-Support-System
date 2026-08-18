@@ -64,6 +64,8 @@ export interface SimulationStatus {
   broker_interface_present?: false
   manual_approval_required: false
   automatic_matching?: true
+  automatic_matching_enabled?: boolean
+  automatic_matching_updated_at?: string | null
   matching_interval_seconds?: number
   order_time_in_force?: 'DAY'
   account_initialized?: boolean
