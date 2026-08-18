@@ -18,7 +18,7 @@ const idle = computed(() => rows.value?.filter((row) => row.status === 'idle') |
 <template>
   <section id="settings-data" class="settings-data panel" aria-labelledby="settings-data-title">
     <header class="settings-data__heading">
-      <div><p class="eyebrow">DATA GOVERNANCE</p><h2 id="settings-data-title">数据健康与部署</h2><p>状态来自被动埋点；查看本页不会把未采集冒充为失败。</p></div>
+      <div><p class="eyebrow">DATA GOVERNANCE</p><h2 id="settings-data-title">数据健康与部署</h2><p>状态来自后台快照与被动埋点；查看本页不会触发外部探测，也不会把未采集冒充为失败。</p></div>
       <span v-if="response" class="mono">{{ textValue(response.ts, '检查时点未提供') }}</span>
     </header>
     <div v-if="!rows && loading" class="settings-local-state" role="status">正在读取数据源健康…</div>

@@ -321,9 +321,7 @@ def resolve_free_stock_reference(message: str) -> dict:
     normalized_text = _normalized_stock_reference(text)
     universe = free_source.cached_stock_universe()
     universe_status = free_source.stock_universe_status()
-    universe_complete = bool(universe_status.get("complete")) and not bool(
-        universe_status.get("missing_exchanges")
-    )
+    universe_complete = free_source.stock_universe_is_authoritative(universe_status)
     matches: dict[str, dict] = {}
     unrecognized_codes: list[str] = []
 

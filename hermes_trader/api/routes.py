@@ -22,7 +22,7 @@ from pathlib import Path as _Path
 from .. import __version__
 from ..agent.hermes_client import HermesClient
 from ..integrity import summary as _core_summary, core_fingerprint as _core_fp_calc
-from ..data import (market, stock, news, sources, capital_tracker, xverify as xverify_mod,
+from ..data import (market, stock, news, capital_tracker, xverify as xverify_mod,
                     overseas_source as overseas, deriv_source, mainforce_source as mainforce,
                     free_source as public_data, tdx_api_source as tdx_api,
                     official_disclosure, official_interaction, official_longhu_source,
@@ -487,6 +487,39 @@ def _finite_number(value):
     except (TypeError, ValueError):
         return None
     return number if number == number and abs(number) != float("inf") else None
+
+
+def _reference_price_evidence_bindable(point: dict | None) -> bool:
+    """Return whether a price point may anchor a formal recommendation.
+
+    ``degraded`` remains a truthful data-quality label.  The only narrow
+    exception is a complete, live Tencent quote selected after the primary
+    route failed, with no degradation reason other than ``fallback_source``.
+    """
+    if not isinstance(point, dict):
+        return False
+    quality = str(point.get("quality_status") or "")
+    if quality == "ok":
+        return True
+    raw_reasons = point.get("quality_reasons") or []
+    if isinstance(raw_reasons, str):
+        raw_reasons = [raw_reasons]
+    reasons = {
+        str(reason).strip()
+        for reason in raw_reasons
+        if str(reason).strip()
+    }
+    fallback_level = _finite_number(point.get("fallback_level"))
+    return bool(
+        quality == "degraded"
+        and str(point.get("source_id") or "") == "tencent_quote"
+        and reasons == {"fallback_source"}
+        and str(point.get("freshness") or "") == "live"
+        and str(point.get("batch_status") or "") == "complete"
+        and fallback_level is not None
+        and fallback_level > 0
+        and str(point.get("observation_role") or "") == "selected"
+    )
 
 
 def _deterministic_diagnosis_proposal(card: dict, *, has_holding: bool) -> dict:
@@ -1342,6 +1375,43 @@ async def simulation_status(request: Request):
         return {"ok": True, **status}
     except SimulationError as exc:
         return _simulation_error(exc)
+
+
+def _set_simulation_matching_job(request: Request, *, enabled: bool) -> None:
+    scheduler = getattr(_state(request), "scheduler", None)
+    if scheduler is None:
+        return
+    if enabled:
+        scheduler.resume_job("simulation_matcher")
+    else:
+        scheduler.pause_job("simulation_matcher")
+
+
+@router.post("/simulation/automatic-matching")
+async def simulation_automatic_matching(request: Request):
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise SimulationError("invalid_json", "请求体必须是 JSON 对象")
+        enabled = body.get("enabled")
+        result = await asyncio.to_thread(
+            _simulation_store(request).set_automatic_matching,
+            client_request_id=body.get("client_request_id"),
+            enabled=enabled,
+        )
+        effective_enabled = bool(
+            (result.get("status") or {}).get("automatic_matching_enabled", enabled)
+        )
+        # Always sync the scheduler to the effective persisted state. This also
+        # prevents a replayed old request from overriding a newer switch action.
+        _set_simulation_matching_job(request, enabled=effective_enabled)
+        return {"ok": True, "simulation_only": True, **result}
+    except SimulationError as exc:
+        return _simulation_error(exc)
+    except Exception as exc:
+        if isinstance(exc, (json.JSONDecodeError, UnicodeDecodeError, ValueError)):
+            return _simulation_error(SimulationError("invalid_json", "无效 JSON 请求体"))
+        raise
 
 
 @router.get("/simulation/orders")
@@ -2227,11 +2297,10 @@ async def _governed_and_record_diagnosis(
         row for row in (card.get("decision_market_evidence") or [])
         if isinstance(row, dict) and row.get("field") == "last_price"
     ), None)
-    price_quality = str((price_row or {}).get("quality_status") or "")
-    # degraded 可以用来解释「为什么观望」，但不能当作一条
-    # 可直接绑定推荐价的新鲜证据。之前 stale 点会在统一入口
-    # 再次校验时抛 ValueError，导致卡片成功但留痕报 ERROR。
-    price_bindable = bool(price_row and price_quality == "ok")
+    # degraded 默认只能解释「为什么观望」；唯一例外是质量原因仅为
+    # fallback_source 的完整、实时腾讯备源点。stale/conflict/partial
+    # 仍不能绑定推荐价，也不能伪装成正式推荐证据。
+    price_bindable = _reference_price_evidence_bindable(price_row)
     price_evidence_id = (price_row or {}).get("evidence_id") if price_bindable else None
     action = str(card.get("action") or "观望")
     try:
@@ -4841,7 +4910,7 @@ async def _bind_reference_price_evidence(st, body: dict) -> tuple[dict, bool]:
         symbol_matches
         and point.get("field") == "last_price"
         and value_matches
-        and point.get("quality_status") not in {"missing", "conflict"}
+        and _reference_price_evidence_bindable(point)
         and fresh
     )
     if requested_id and not valid:
@@ -4864,7 +4933,7 @@ async def _bind_reference_price_evidence(st, body: dict) -> tuple[dict, bool]:
     if evidence_id and evidence_id not in evidence_ids:
         evidence_ids.append(evidence_id)
     out["evidence_ids"] = evidence_ids
-    return out, bool(point.get("quality_status") == "ok")
+    return out, True
 
 
 async def _authorize_and_record_advice(
@@ -6010,91 +6079,14 @@ async def news_a_share_reconciliation(date: str | None = None, limit: int = 100)
 @router.get("/datasources")
 async def datasources(request: Request):
     st = _state(request)
-    cfg = st.config
-    # 即时探测 Hermes 网关延迟
-    import time as _t
-    hermes = {"name": "Hermes AI 网关", "base_url": cfg.hermes_base_url, "model": cfg.hermes_model,
-              "kind": "本机Hermes网关" if "127.0.0.1" in cfg.hermes_base_url or "localhost" in cfg.hermes_base_url else "云端relay"}
-    t0 = _t.monotonic()
-    hermes["connected"] = await st.hermes.check_connection()
-    hermes["latency_ms"] = round((_t.monotonic() - t0) * 1000)
-
-    import os as _os
-    rmeta = market.last_relay_meta()
-    # DATA_RELAY_API / proxy URL 可能携带 access token。数据源健康页只需知道链路是否配置，
-    # 绝不能把完整中继地址或代理串回传到浏览器。
-    relay_api_configured = bool(_os.environ.get("DATA_RELAY_API", ""))
-    relay_proxy_configured = bool(relay_proxy())
-    relay_enabled = relay_api_configured or relay_proxy_configured
-    relay = {
-        "enabled": relay_enabled,
-        "transport": (
-            "api" if relay_api_configured else ("proxy" if relay_proxy_configured else "direct")
-        ),
-        "api_configured": relay_api_configured,
-        "proxy_configured": relay_proxy_configured,
-        "spot": {
-            "count": rmeta.get("count"), "total": rmeta.get("total"),
-            "failed_pages": len(rmeta.get("failed_pages", []) or []),
-            "stale": rmeta.get("stale"), "age_sec": round(rmeta.get("age")) if rmeta.get("age") else None,
-            "incomplete": rmeta.get("incomplete"),
-        } if rmeta else None,
-    }
-    # configured 与 FeishuPusher.configured 同语义：webhook 或 应用凭据(bot API 直发)任一即已配置
-    # （审计反查：原仅看 webhook，纯 app 凭据部署时设置页显"未配置"与工具栏矛盾）
-    feishu = {"configured": bool(cfg.feishu_webhook) or bool(getattr(cfg, "feishu_app_id", "") and getattr(cfg, "feishu_app_secret", "")),
-              "bot": bool(getattr(cfg, "feishu_app_id", ""))}
-    tdx_api_health = await asyncio.to_thread(tdx_api.service_health)
-    # 股票池 canonical 状态只读一次：顶部摘要与数据源表格共用同一快照，
-    # 避免备用构建路径的失败埋点把已完整的股票池误报为 down。
-    canonical_universe = public_data.stock_universe_status()
-    report = await asyncio.to_thread(
-        sources.build_report,
-        {"hermes": hermes, "relay": relay, "feishu": feishu, "tdx_api": tdx_api_health},
-        canonical_universe,
-    )
-    market_gateway = getattr(st, "market_gateway", None)
-    if market_gateway is not None:
-        report["field_contract"] = await asyncio.to_thread(market_gateway.contract)
-    # 设置页只读最近已有状态，不因查看健康页额外请求交易所。
-    report["universe"] = canonical_universe
-    from ..data import news_observation  # noqa: PLC0415
-    news_summary = news_observation.observation_summary()
-    news_job = (
-        (st.store.get_job_states() or {}).get("news_event_observation", {})
-        if getattr(st, "store", None) is not None else {}
-    )
-    report["news_observation"] = {
-        **news_summary,
-        "last_run": news_job.get("last_run"),
-        "last_finished": news_job.get("last_finished"),
-        "last_status": news_job.get("last_status"),
-        "last_error": news_job.get("last_error"),
-        "last_result": news_job.get("last_result") or {},
-    }
-    evidence_store = getattr(st, "evidence_store", None)
-    if evidence_store is not None:
-        registry, evidence_summary = await asyncio.gather(
-            asyncio.to_thread(evidence_store.list_sources),
-            asyncio.to_thread(evidence_store.stats),
+    monitor = getattr(st, "data_health_monitor", None)
+    if monitor is None:
+        return JSONResponse(
+            {"ok": False, "error": "数据健康快照尚未初始化"},
+            status_code=503,
         )
-        # 老版本曾把本地报价适配器注册为 ``tdx_quote``。适配器已从母版删除，
-        # 但客户运行库可能仍保留历史 registry 行；健康页只展示当前可调用源，
-        # 避免把退役链路误报成仍在运行。历史证据数据不做破坏性删除。
-        retired_source_ids = {"tdx_quote", "opentdx"}
-        report["evidence_registry"] = [
-            item for item in registry
-            if str(item.get("source_id") or "") not in retired_source_ids
-        ]
-        report["retired_evidence_sources"] = sorted(
-            str(item.get("source_id") or "")
-            for item in registry
-            if str(item.get("source_id") or "") in retired_source_ids
-        )
-        report["evidence_stats"] = evidence_summary
-        if market_gateway is not None:
-            report["evidence_health"] = await asyncio.to_thread(market_gateway.health)
-    return report
+    # 纯内存复制：不得在 GET 请求内调用 Hermes、TDX、交易所或证据库。
+    return monitor.snapshot()
 
 
 # ---------------------------------------------------------------- DIY 研究工作流

@@ -5,7 +5,8 @@ import json
 from types import SimpleNamespace
 
 from hermes_trader.api import routes
-from hermes_trader.data import sources
+from hermes_trader.data import health_monitor, sources
+from hermes_trader.data.health_monitor import DataHealthMonitor
 
 
 def test_source_catalog_reports_actual_field_routes(monkeypatch) -> None:
@@ -29,7 +30,7 @@ def test_source_catalog_reports_actual_field_routes(monkeypatch) -> None:
     })
 
     report = sources.build_report({"relay": {"enabled": False}}, {
-        "source": "沪深京交易所官网公开列表", "count": 5231,
+        "source": "TDX 数据 API 股票列表", "authority": "tdx_instruments_a", "count": 5231,
         "complete": True, "stale": False, "refresh_required": False,
         "fetched_at": "2026-07-13T09:34:59+08:00", "missing_exchanges": [],
     })
@@ -89,7 +90,7 @@ def test_universe_row_uses_canonical_result_and_keeps_fallback_failure_as_diagno
         },
     })
     canonical = {
-        "source": "沪深京交易所官网公开列表", "count": 5231,
+        "source": "TDX 数据 API 股票列表", "authority": "tdx_instruments_a", "count": 5231,
         "complete": True, "stale": False, "refresh_required": False,
         "fetched_at": "2026-07-13T09:35:01+08:00", "missing_exchanges": [],
     }
@@ -98,7 +99,7 @@ def test_universe_row_uses_canonical_result_and_keeps_fallback_failure_as_diagno
     row = next(item for item in report["sources"] if item["key"] == "universe")
 
     assert row["status"] == "ok"
-    assert row["channel"] == "沪深京交易所官网公开列表"
+    assert row["channel"] == "TDX 数据 API 股票列表"
     assert row["diagnostics"] == [{
         "source": "股票代码表(TDX API)",
         "status": "down",
@@ -133,17 +134,26 @@ def test_universe_row_maps_partial_missing_and_unobserved_states(monkeypatch) ->
 
 
 class _Hermes:
+    def __init__(self) -> None:
+        self.connection_checks = 0
+
     async def check_connection(self) -> bool:
-        return True
+        self.connection_checks += 1
+        raise AssertionError("GET /datasources must not probe Hermes")
 
 
 def test_datasource_endpoint_never_returns_relay_credentials(monkeypatch) -> None:
     monkeypatch.setenv("DATA_RELAY_API", "https://relay.example/api?token=top-secret")
-    monkeypatch.setattr(routes, "relay_proxy", lambda: "socks5://user:proxy-secret@relay.example:1080")
-    monkeypatch.setattr(routes.market, "last_relay_meta", lambda: {})
-    monkeypatch.setattr(routes.tdx_api, "service_health", lambda: {"configured": True, "connected": True})
+    monkeypatch.setattr(health_monitor, "relay_proxy", lambda: "socks5://user:proxy-secret@relay.example:1080")
+    monkeypatch.setattr(health_monitor.market, "last_relay_meta", lambda: {})
+    monkeypatch.setattr(health_monitor.tdx_api, "configured", lambda: True)
+
+    def forbidden_tdx_probe():
+        raise AssertionError("GET /datasources must not probe TDX")
+
+    monkeypatch.setattr(health_monitor.tdx_api, "service_health", forbidden_tdx_probe)
     canonical = {
-        "source": "沪深京交易所官网公开列表", "count": 5231,
+        "source": "TDX 数据 API 股票列表", "authority": "tdx_instruments_a", "count": 5231,
         "complete": True, "stale": False, "refresh_required": False,
     }
     seen = {}
@@ -152,8 +162,8 @@ def test_datasource_endpoint_never_returns_relay_credentials(monkeypatch) -> Non
         seen["stock_universe"] = stock_universe
         return {"ok": True, "infra": infra, "sources": []}
 
-    monkeypatch.setattr(routes.public_data, "stock_universe_status", lambda: canonical)
-    monkeypatch.setattr(routes.sources, "build_report", build_report)
+    monkeypatch.setattr(health_monitor.free_source, "stock_universe_status", lambda: canonical)
+    monkeypatch.setattr(health_monitor.sources, "build_report", build_report)
 
     config = SimpleNamespace(
         hermes_base_url="http://127.0.0.1:8742/v1",
@@ -162,23 +172,10 @@ def test_datasource_endpoint_never_returns_relay_credentials(monkeypatch) -> Non
         feishu_app_id="",
         feishu_app_secret="",
     )
-
-    class EvidenceStore:
-        @staticmethod
-        def list_sources():
-            return [
-                {"source_id": "tdx_quote"},
-                {"source_id": "opentdx"},
-                {"source_id": "tdx_api_quote"},
-            ]
-
-        @staticmethod
-        def stats():
-            return {"sources": 3}
-
+    hermes = _Hermes()
+    monitor = DataHealthMonitor(config, hermes)
     request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(
-        config=config, hermes=_Hermes(), store=None,
-        evidence_store=EvidenceStore(), market_gateway=None,
+        data_health_monitor=monitor,
     )))
 
     response = asyncio.run(routes.datasources(request))
@@ -194,9 +191,93 @@ def test_datasource_endpoint_never_returns_relay_credentials(monkeypatch) -> Non
     assert "top-secret" not in encoded
     assert "proxy-secret" not in encoded
     assert "relay.example" not in encoded
-    assert response["infra"]["tdx_api"] == {"configured": True, "connected": True}
+    assert response["infra"]["tdx_api"] == {
+        "configured": True,
+        "connected": None,
+        "status": "unchecked",
+        "checked_at": None,
+    }
+    assert response["health_refresh"]["request_mode"] == "passive_snapshot"
+    assert hermes.connection_checks == 0
     assert seen["stock_universe"] is canonical
-    assert response["universe"] is canonical
+    assert response["universe"] == canonical
+    assert "TDXAPI_KEY" not in encoded
+
+
+def test_data_health_background_refresh_collects_bounded_enrichment(monkeypatch) -> None:
+    monkeypatch.delenv("DATA_RELAY_API", raising=False)
+    monkeypatch.setattr(health_monitor, "relay_proxy", lambda: "")
+    monkeypatch.setattr(health_monitor.market, "last_relay_meta", lambda: {})
+    monkeypatch.setattr(health_monitor.free_source, "stock_universe_status", lambda: {
+        "source": "TDX 数据 API 股票列表",
+        "count": 5231,
+        "complete": True,
+        "stale": False,
+        "refresh_required": False,
+    })
+    monkeypatch.setattr(health_monitor.tdx_api, "configured", lambda: True)
+    tdx_calls = 0
+
+    def tdx_health():
+        nonlocal tdx_calls
+        tdx_calls += 1
+        return {"configured": True, "connected": True, "pricevol": "fresh"}
+
+    monkeypatch.setattr(health_monitor.tdx_api, "service_health", tdx_health)
+
+    class Hermes:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def check_connection(self):
+            self.calls += 1
+            return True
+
+    class EvidenceStore:
+        @staticmethod
+        def list_sources():
+            return [
+                {"source_id": "tdx_quote"},
+                {"source_id": "opentdx"},
+                {"source_id": "tdx_api_quote"},
+            ]
+
+        @staticmethod
+        def stats():
+            return {"sources": 3}
+
+    class MarketGateway:
+        store = EvidenceStore()
+
+        @staticmethod
+        def contract():
+            return {"schema_version": "field-contract-v2", "fields": {}}
+
+        @staticmethod
+        def health():
+            return {"status": "ready"}
+
+    store = SimpleNamespace(get_job_states=lambda: {})
+    config = SimpleNamespace(
+        model_connection_custom=True,
+        hermes_base_url="https://model.example/v1",
+        hermes_model="test-model",
+        feishu_webhook="",
+        feishu_app_id="",
+        feishu_app_secret="",
+    )
+    hermes = Hermes()
+    monitor = DataHealthMonitor(config, hermes, store, MarketGateway())
+
+    assert monitor.snapshot()["health_refresh"]["status"] == "pending"
+    response = asyncio.run(monitor.refresh())
+
+    assert response["health_refresh"]["status"] == "ready"
+    assert response["health_refresh"]["request_mode"] == "passive_snapshot"
+    assert response["infra"]["hermes"]["connected"] is True
+    assert response["infra"]["tdx_api"]["connected"] is True
     assert response["evidence_registry"] == [{"source_id": "tdx_api_quote"}]
     assert response["retired_evidence_sources"] == ["opentdx", "tdx_quote"]
-    assert "TDXAPI_KEY" not in encoded
+    assert response["field_contract"]["schema_version"] == "field-contract-v2"
+    assert hermes.calls == 1
+    assert tdx_calls == 1

@@ -141,6 +141,14 @@ export interface DatasourcesResponse extends ApiResult {
   source_contract?: string | null
   active_policy?: string | null
   ts?: string | null
+  health_refresh?: {
+    status?: 'pending' | 'ready' | 'degraded' | null
+    request_mode?: 'passive_snapshot' | null
+    last_started_at?: string | null
+    last_finished_at?: string | null
+    duration_ms?: number | null
+    error_codes?: string[] | null
+  } | null
   sources?: DataSourceRow[] | null
   deployment?: {
     configured?: string | null

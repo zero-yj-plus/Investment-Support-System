@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 import importlib.util
 import json
 import os
@@ -21,6 +22,7 @@ VENV_PYTHON = VENV_ROOT / "Scripts" / "python.exe"
 REQUIREMENTS = PROJECT_ROOT / "requirements.txt"
 REQUIRED_IMPORTS = ("fastapi", "uvicorn", "yaml", "apscheduler", "pandas", "httpx")
 ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+RUNTIME_LOG_DIR = PROJECT_ROOT / "data" / "logs"
 
 
 class DeploymentError(RuntimeError):
@@ -169,7 +171,52 @@ def require_runtime() -> None:
         )
 
 
-def start(config: str, host: str | None, port: int | None) -> int:
+def _background_flags() -> int:
+    if os.name != "nt":
+        return 0
+    return subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
+
+
+def _run_service(
+    command: list[str],
+    environment: dict[str, str],
+    *,
+    description: str,
+    log_stem: str,
+    foreground: bool,
+) -> int:
+    if foreground:
+        print(f"正在前台启动 {description}；按 Ctrl+C 停止。")
+        return subprocess.call(command, cwd=PROJECT_ROOT, env=environment)
+
+    environment["PYTHONUNBUFFERED"] = "1"
+    RUNTIME_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    log_path = RUNTIME_LOG_DIR / f"{log_stem}-{stamp}.log"
+    try:
+        with log_path.open("ab") as output:
+            process = subprocess.Popen(
+                command,
+                cwd=PROJECT_ROOT,
+                env=environment,
+                stdin=subprocess.DEVNULL,
+                stdout=output,
+                stderr=subprocess.STDOUT,
+                creationflags=_background_flags(),
+            )
+    except OSError as exc:
+        raise DeploymentError(f"无法后台启动 {description}：{exc}") from exc
+    print(f"已在后台启动 {description}，PID {process.pid}。")
+    print(f"日志：{log_path}")
+    return 0
+
+
+def start(
+    config: str,
+    host: str | None,
+    port: int | None,
+    foreground: bool = False,
+) -> int:
     require_runtime()
     config_path = Path(config)
     if not config_path.is_absolute():
@@ -189,11 +236,16 @@ def start(config: str, host: str | None, port: int | None) -> int:
             raise DeploymentError("端口必须在 1 到 65535 之间。")
         command.extend(["--port", str(port)])
 
-    print("正在前台启动 Hermes Trader；按 Ctrl+C 停止。")
-    return subprocess.call(command, cwd=PROJECT_ROOT, env=environment)
+    return _run_service(
+        command,
+        environment,
+        description="Hermes Trader",
+        log_stem="hermes-start",
+        foreground=foreground,
+    )
 
 
-def start_tdx_bridge() -> int:
+def start_tdx_bridge(foreground: bool = False) -> int:
     bridge_script = PROJECT_ROOT / "scripts" / "tq_tdx_bridge.py"
     if not bridge_script.is_file():
         raise DeploymentError("部署包不完整：缺少 scripts\\tq_tdx_bridge.py。")
@@ -212,11 +264,12 @@ def start_tdx_bridge() -> int:
             "http://127.0.0.1:18879。"
         )
 
-    print("正在前台启动只读 TQ/TDX 兼容桥；按 Ctrl+C 停止。")
-    return subprocess.call(
+    return _run_service(
         [sys.executable, str(bridge_script)],
-        cwd=PROJECT_ROOT,
-        env=environment,
+        environment,
+        description="只读 TQ/TDX 兼容桥",
+        log_stem="tdx-bridge-start",
+        foreground=foreground,
     )
 
 
@@ -334,8 +387,10 @@ def build_parser() -> argparse.ArgumentParser:
     start_parser.add_argument("--config", default="config.yaml")
     start_parser.add_argument("--host")
     start_parser.add_argument("--port", type=int)
+    start_parser.add_argument("--foreground", action="store_true")
 
-    subparsers.add_parser("start-tdx-bridge")
+    bridge_parser = subparsers.add_parser("start-tdx-bridge")
+    bridge_parser.add_argument("--foreground", action="store_true")
 
     check_parser = subparsers.add_parser("check")
     check_parser.add_argument("--base-url", default="http://127.0.0.1:18869")
@@ -352,9 +407,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "install":
             return install(args.skip_pip_upgrade)
         if args.command == "start":
-            return start(args.config, args.host, args.port)
+            return start(args.config, args.host, args.port, args.foreground)
         if args.command == "start-tdx-bridge":
-            return start_tdx_bridge()
+            return start_tdx_bridge(args.foreground)
         if args.command == "check":
             return check(args.base_url, args.skip_bridge, args.timeout)
         raise DeploymentError(f"未知命令：{args.command}")

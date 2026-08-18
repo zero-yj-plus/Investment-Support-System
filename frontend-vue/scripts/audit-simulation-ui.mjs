@@ -62,6 +62,7 @@ try {
     let account = initialAccount()
     let emergencyActive = false
     let emergencyReason = null
+    let matchingEnabled = true
     let eventSeed = 1
     const page = await browser.newPage({ viewport: { width: viewport.width, height: viewport.height } })
     await page.addInitScript((theme) => localStorage.setItem('wudi-vue-theme', theme), viewport.theme)
@@ -74,9 +75,11 @@ try {
 
       if (path === '/api/simulation/status') {
         body = {
-          schema_version: 'simulation-status.v3', mode: 'simulation_only', simulation_only: true,
+          schema_version: 'simulation-status.v4', mode: 'simulation_only', simulation_only: true,
           broker_connected: false, broker_interface_present: false, manual_approval_required: false,
-          automatic_matching: true, matching_interval_seconds: 5, order_time_in_force: 'DAY',
+          automatic_matching: true, automatic_matching_enabled: matchingEnabled,
+          automatic_matching_updated_at: '2026-08-11T10:31:00+08:00',
+          matching_interval_seconds: 5, order_time_in_force: 'DAY',
           account_initialized: true, settlement_rule: 'A_SHARE_T_PLUS_1',
           emergency_stop: { active: emergencyActive, reason: emergencyReason, updated_at: '2026-08-11T10:31:00+08:00' },
           counts: { proposed: order.status === 'proposed' ? 1 : 0, approved: order.status === 'approved' ? 1 : 0, filled: order.status === 'filled' ? 1 : 0, rejected: 0, cancelled: order.status === 'cancelled' ? 1 : 0 },
@@ -103,6 +106,9 @@ try {
       } else if (path.endsWith('/cancel') && method === 'POST') {
         order = { ...order, status: 'cancelled', rejection_reason: 'operator_cancelled_from_vue' }
         body = { ok: true, simulation_only: true, order }
+      } else if (path === '/api/simulation/automatic-matching' && method === 'POST') {
+        matchingEnabled = request.postDataJSON().enabled === true
+        body = { ok: true, simulation_only: true }
       } else if (path === '/api/simulation/emergency-stop' && method === 'POST') {
         emergencyActive = true
         emergencyReason = request.postDataJSON().reason
@@ -141,6 +147,10 @@ try {
       await page.getByRole('button', { name: '费用设置' }).click()
       await page.getByRole('button', { name: '保存后续成交设置' }).click()
       await page.getByRole('button', { name: '记录当前估值' }).click()
+      await page.getByRole('button', { name: '关闭模拟交易' }).click()
+      await page.getByRole('button', { name: '开启模拟交易' }).waitFor()
+      await page.getByRole('button', { name: '开启模拟交易' }).click()
+      await page.getByRole('button', { name: '关闭模拟交易' }).waitFor()
       await page.getByRole('button', { name: '紧急停止', exact: true }).click()
       await page.getByLabel('停止原因').fill('定向 UI 审计')
       await page.getByRole('button', { name: '立即紧急停止' }).click()

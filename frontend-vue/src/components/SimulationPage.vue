@@ -16,7 +16,7 @@ import type {
 const emit = defineEmits<{ refreshState: [refreshing: boolean] }>()
 const {
   status, account, orders, loading, loaded, loadError, actionError, feedback,
-  actionBusy, pageBusy, load, propose, cancel, emergencyStop,
+  actionBusy, pageBusy, load, propose, cancel, setAutomaticMatching, emergencyStop,
   resetEmergencyStop, initializeAccount, updateAccountSettings, recordValuation,
   clearActionMessages,
 } = useSimulation()
@@ -25,6 +25,7 @@ const dialogMode = ref<SimulationDialogMode | null>(null)
 const dialogOrder = ref<SimulationOrder | null>(null)
 const dialogIntent = ref<Partial<SimulationOrderIntent> | null>(null)
 const emergencyActive = computed(() => status.value?.emergency_stop?.active === true)
+const matchingEnabled = computed(() => status.value?.automatic_matching_enabled !== false)
 const accountInitialized = computed(() => account.value?.initialized === true)
 const statusRows: Array<{ key: SimulationOrderStatus; label: string }> = [
   { key: 'proposed', label: '旧挂单迁移中' }, { key: 'approved', label: '挂单中' },
@@ -73,6 +74,10 @@ function formatEvent(value: string): string { return eventLabels[value] || value
 function pnlClass(value: number | null | undefined) { return { 'is-profit': Number(value) > 0, 'is-loss': Number(value) < 0 } }
 function priceMode(mode: string | null | undefined): string { return mode === 'latest_close' ? '最近交易日收盘价' : mode === 'live' ? '盘中实时价' : '价格模式缺失' }
 
+async function toggleAutomaticMatching() {
+  await setAutomaticMatching(!matchingEnabled.value)
+}
+
 function openDialog(
   mode: SimulationDialogMode,
   order: SimulationOrder | null = null,
@@ -112,10 +117,20 @@ defineExpose({ refresh: load })
     <header class="simulation-header">
       <div class="page-heading">
         <h1 id="simulation-page-title">模拟执行</h1>
-        <p class="page-subtitle">提交即进入服务端撮合池；每 5 秒检查真实行情，触价后自动成交并更新资金、成本与持仓。</p>
+        <p class="page-subtitle">提交即进入服务端撮合池；模拟交易开启时每 5 秒检查真实行情，触价后更新资金、成本与持仓。</p>
       </div>
-      <button v-if="accountInitialized" type="button" class="primary-button" :disabled="loading || !!loadError || emergencyActive || !!actionBusy" @click="openDialog('create')">新建模拟订单</button>
-      <button v-else type="button" class="primary-button" :disabled="loading || !!loadError || !!actionBusy" @click="openDialog('account-create')">创建模拟账户</button>
+      <div class="simulation-header__actions">
+        <button
+          v-if="accountInitialized"
+          type="button"
+          class="secondary-button simulation-trading-toggle"
+          :disabled="loading || !!loadError || !!actionBusy"
+          :aria-pressed="matchingEnabled"
+          @click="toggleAutomaticMatching"
+        >{{ matchingEnabled ? '关闭模拟交易' : '开启模拟交易' }}</button>
+        <button v-if="accountInitialized" type="button" class="primary-button" :disabled="loading || !!loadError || emergencyActive || !!actionBusy" @click="openDialog('create')">新建模拟订单</button>
+        <button v-else type="button" class="primary-button" :disabled="loading || !!loadError || !!actionBusy" @click="openDialog('account-create')">创建模拟账户</button>
+      </div>
     </header>
 
     <div class="sr-only" aria-live="polite">
@@ -224,7 +239,7 @@ defineExpose({ refresh: load })
 
           <div v-if="!orders.length" class="simulation-empty" role="status">
             <h3>当前没有模拟订单</h3>
-            <p>新建订单后，服务端核验风险与行情；有效订单直接进入撮合池，触价后自动成交。</p>
+            <p>新建订单后，服务端核验风险与行情；有效订单直接进入撮合池，模拟交易开启时触价后成交。</p>
             <button type="button" class="secondary-button" :disabled="!accountInitialized || emergencyActive || !!actionBusy" @click="openDialog('create')">新建第一笔模拟订单</button>
           </div>
 
@@ -280,7 +295,8 @@ defineExpose({ refresh: load })
 .simulation-page { display: grid; gap: 14px; }
 .simulation-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .simulation-header h1 { margin: 0; font-size: clamp(22px, 2vw, 28px); }
-.simulation-header .primary-button { flex: 0 0 auto; }
+.simulation-header__actions { display: flex; flex: 0 0 auto; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.simulation-header__actions button { min-height: 44px; }
 .simulation-loading { display: grid; gap: 14px; }
 .simulation-skeleton { min-height: 220px; background: linear-gradient(90deg, var(--surface) 20%, var(--surface-2) 50%, var(--surface) 80%); background-size: 220% 100%; animation: simulation-pulse 1.4s ease infinite; }
 .simulation-skeleton.is-table { min-height: 360px; }
@@ -363,7 +379,8 @@ defineExpose({ refresh: load })
 }
 @media (max-width: 760px) {
   .simulation-header { align-items: stretch; flex-direction: column; }
-  .simulation-header .primary-button { width: 100%; }
+  .simulation-header__actions { display: grid; grid-template-columns: minmax(0, 1fr); justify-content: stretch; width: 100%; }
+  .simulation-header__actions button { width: 100%; }
   .simulation-account-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .simulation-positions > header, .simulation-equity > header { align-items: stretch; flex-direction: column; }
   .simulation-positions > header button, .simulation-equity > header button { width: 100%; }

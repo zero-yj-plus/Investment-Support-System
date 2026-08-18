@@ -38,8 +38,13 @@ install.bat
 start.bat
 ```
 
+`start.bat` 默认在后台启动，不保留 CMD 窗口；输出写入
+`data\logs\hermes-start-*.log`。需要在当前窗口查看实时输出并用 Ctrl+C 停止时，运行
+`start.bat --foreground`。
+
 如使用本机通达信 TQ HTTP 服务，先在 `.env` 中配置桥接密钥和地址，再在独立
-窗口运行 `start-tdx-bridge.bat`。服务启动后运行 `check.bat`
+后台运行 `start-tdx-bridge.bat`，其日志写入 `data\logs\tdx-bridge-start-*.log`；
+需要常驻窗口时运行 `start-tdx-bridge.bat --foreground`。服务启动后运行 `check.bat`
 检查首页、核心 API 和已配置的本地桥。
 
 已有 Windows 客户升级时，把新版部署 ZIP、同名 `.sha256` 和打包时生成的
@@ -89,6 +94,10 @@ npm run audit:ui
 只读兼容桥，让现有 TDX API 适配器复用本地实时行情、股票池、板块关系和基础财务，
 无需修改业务数据链路。配置、启动和能力边界见
 [`docs/TQ_TDX_BRIDGE.md`](docs/TQ_TDX_BRIDGE.md)。
+
+全 A 股身份主名录使用 TDX `instruments_a`；只有完成全部 cursor 分页、通过沪深京覆盖
+校验并写入当前权威缓存后，系统才会把未命中代码判定为不存在。旧缓存和内置启动快照
+只作降级展示，不具有负向身份判定权。
 
 部署前必须按真实位置把 `data_source.deployment_profile` 明确设置为：
 

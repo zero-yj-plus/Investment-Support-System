@@ -1124,6 +1124,39 @@ async def test_conflicting_live_price_records_observation_without_forced_evidenc
 
 
 @pytest.mark.asyncio
+async def test_clean_live_tencent_fallback_is_forwarded_for_price_binding(
+    monkeypatch,
+) -> None:
+    async def fake_card(_state, _code):
+        return {
+            "name": "隆平高科", "action": "买入", "confidence": 0.77,
+            "decision_generated_at": "2026-08-18T13:17:11+08:00",
+            "decision_market_evidence": [{
+                "field": "last_price", "value": 9.06,
+                "evidence_id": "tencent-fallback-price",
+                "source_id": "tencent_quote", "quality_status": "degraded",
+                "quality_reasons": ["fallback_source"], "freshness": "live",
+                "batch_status": "complete", "fallback_level": 1,
+                "observation_role": "selected",
+            }],
+            "deterministic_signal": {"reference_price": 9.06},
+            "risk_decision": {"decision": "allow", "position_cap_pct": 2.0},
+        }
+
+    async def fake_record(_state, payload, **_kwargs):
+        assert payload["rec_price"] == 9.06
+        assert payload["price_evidence_id"] == "tencent-fallback-price"
+        return {"ok": True, "recommendation_created": True}
+
+    monkeypatch.setattr(routes, "governed_diagnosis_card", fake_card)
+    monkeypatch.setattr(routes, "_authorize_and_record_advice", fake_record)
+    result = await routes._governed_and_record_diagnosis(SimpleNamespace(), "000998")
+
+    assert result["action"] == "买入"
+    assert result["advice_record"]["recommendation_created"] is True
+
+
+@pytest.mark.asyncio
 async def test_unverified_defensive_recommendation_cannot_manufacture_win_rate(tmp_path: Path) -> None:
     store = Store(tmp_path)
     state = SimpleNamespace(store=store, evidence_store=None, market_gateway=None)
@@ -1183,6 +1216,48 @@ async def test_reference_price_evidence_must_match_server_point(
         await routes._bind_reference_price_evidence(state, {
             "code": "000001", "rec_price": 12.2,
             "price_evidence_id": "ev-price",
+        })
+
+
+@pytest.mark.asyncio
+async def test_reference_price_accepts_only_clean_live_tencent_fallback(
+    monkeypatch, tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    observed_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+    observed_cn = observed_at.astimezone(timezone(timedelta(hours=8)))
+    monkeypatch.setattr(routes, "now_cn", lambda: observed_cn)
+    monkeypatch.setattr(routes, "trade_day_status", lambda _day: {"status": "open"})
+    monkeypatch.setattr(routes, "prev_trade_day", lambda _day: observed_cn.date().isoformat())
+
+    class EvidenceStore:
+        @staticmethod
+        def get_point(evidence_id: str):
+            point = {
+                "evidence_id": evidence_id,
+                "symbol": "000998.SZ", "field": "last_price", "value": 9.06,
+                "source_id": "tencent_quote", "event_time": observed_at.isoformat(),
+                "quality_status": "degraded", "quality_reasons": ["fallback_source"],
+                "freshness": "live", "batch_status": "complete", "fallback_level": 1,
+                "observation_role": "selected",
+            }
+            if evidence_id == "partial-fallback":
+                point["quality_reasons"] = ["fallback_source", "batch_partial"]
+                point["batch_status"] = "partial"
+            return point
+
+    state = SimpleNamespace(store=store, evidence_store=EvidenceStore(), market_gateway=None)
+    bound, complete = await routes._bind_reference_price_evidence(state, {
+        "code": "000998", "rec_price": 9.06,
+        "price_evidence_id": "clean-fallback",
+    })
+
+    assert complete is True
+    assert bound["reference_price_evidence"]["quality_status"] == "degraded"
+    with pytest.raises(ValueError, match="不一致"):
+        await routes._bind_reference_price_evidence(state, {
+            "code": "000998", "rec_price": 9.06,
+            "price_evidence_id": "partial-fallback",
         })
 
 

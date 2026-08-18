@@ -7,12 +7,19 @@ from hermes_trader.data import news, news_mapping
 
 def _install_sources(monkeypatch, *, catalog=None, relations=None, frame=None, official=None, tdx_names=None,
                      industry_members=None, concept_members=None) -> None:
-    monkeypatch.setattr(news_mapping.tdx, "stock_universe", lambda: tdx_names or {"000001": "平安银行"})
-    monkeypatch.setattr(news_mapping.free_source, "stock_universe", lambda: official or {"000001": "平安银行"})
+    primary_names = tdx_names or official or {"000001": "平安银行"}
+    monkeypatch.setattr(news_mapping.free_source, "stock_universe", lambda: primary_names)
     monkeypatch.setattr(
         news_mapping.free_source,
         "stock_universe_status",
-        lambda: {"complete": True, "stale": False, "source": "交易所官网"},
+        lambda: {
+            "complete": True,
+            "schema": "a-share-universe-v3",
+            "authority": "tdx_instruments_a",
+            "stale": False,
+            "missing_exchanges": [],
+            "source": "TDX 数据 API 股票列表",
+        },
     )
     monkeypatch.setattr(news_mapping.tdx, "sector_catalog", lambda: catalog or {
         "881157.SH": {"code": "881157.SH", "name": "全国性银行", "kind": "industry"},
@@ -27,7 +34,7 @@ def _install_sources(monkeypatch, *, catalog=None, relations=None, frame=None, o
     monkeypatch.setattr(news_mapping.tdx, "pricevol_snapshot", lambda: frame)
 
 
-def test_direct_stock_mapping_uses_official_and_tdx_then_waits_for_next_session(monkeypatch) -> None:
+def test_direct_stock_mapping_uses_tdx_primary_then_waits_for_next_session(monkeypatch) -> None:
     _install_sources(
         monkeypatch,
         tdx_names={"605028": "世茂能源", "600900": "长江电力"},
@@ -158,7 +165,7 @@ def test_market_style_label_is_not_an_a_share_topic_candidate(monkeypatch) -> No
     assert result["items"][0]["a_share"]["topic_candidates"] == []
 
 
-def test_stock_name_is_not_mapped_when_official_validator_lacks_the_code(monkeypatch) -> None:
+def test_ambiguous_stock_name_is_not_mapped_without_explicit_security_context(monkeypatch) -> None:
     _install_sources(
         monkeypatch,
         tdx_names={"300024": "机器人", "000001": "平安银行"},
@@ -209,7 +216,7 @@ def test_suffixed_stock_code_remains_strong_evidence(monkeypatch) -> None:
 
     stock = result["items"][0]["a_share"]["matches"][0]
     assert stock["code"] == "600000"
-    assert stock["name_consistency"] == "matched"
+    assert stock["name_consistency"] == "primary_authority"
 
 
 def test_a_share_short_name_inside_overseas_subsidiary_is_not_bound(monkeypatch) -> None:

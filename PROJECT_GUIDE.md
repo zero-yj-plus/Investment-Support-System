@@ -150,8 +150,8 @@ flowchart LR
 | `pytest.ini` | 测试目录、严格 asyncio 模式和 `cloud` 标记。 |
 | `run.sh` | Bash 启动器：载入 `.env`，优先 `.venv/bin/python`，否则用 `uv`，再启动模块。 |
 | `install.bat` | Windows 部署入口：定位 64 位 Python 3.10+，调用标准库部署助手创建 `.venv`、安装生产依赖并保留已有配置。 |
-| `start.bat` | Windows 主服务前台启动入口：通过部署助手安全载入 `.env`，使用部署目录 `.venv` 启动应用。 |
-| `start-tdx-bridge.bat` | Windows 本地 TQ/TDX 只读桥前台启动入口；要求桥接密钥且不把密钥写入命令行。 |
+| `start.bat` | Windows 主服务入口：默认无窗口后台启动并写 `data/logs`；传 `--foreground` 时前台常驻。通过部署助手安全载入 `.env`，使用部署目录 `.venv` 启动应用。 |
+| `start-tdx-bridge.bat` | Windows 本地 TQ/TDX 只读桥入口：默认无窗口后台启动并写 `data/logs`；传 `--foreground` 时前台常驻。要求桥接密钥且不把密钥写入命令行。 |
 | `check.bat` | Windows 基础部署检查入口：验证必需文件、首页、核心 API 及已配置的本地桥。 |
 | `upgrade.bat` | Windows 原目录升级入口：校验新版 ZIP 后调用升级助手，保留客户配置、密钥、运行数据和虚拟环境。 |
 | `scripts/windows_deploy.py` | BAT 共用的标准库部署助手；负责环境创建、依赖安装、`.env` 载入、进程启动和 HTTP 验收。 |
@@ -249,25 +249,26 @@ flowchart LR
 | `data/runtime_gateway.py` | 将 TDX 与腾讯快照适配为生产字段策略，统一代码、时点、单位和批次语义。 |
 | `data/evidence_contract.py` | `data-evidence-v1` 来源、时点、完整性和内容哈希契约。 |
 | `data/evidence_store.py` | SQLite 点时证据库；存来源、原始载荷、标准化点和谱系，支持严格 PIT 读取。 |
+| `data/health_monitor.py` | 后台并行、有界刷新 Hermes/TDX 与本地证据统计，维护进程内健康快照；`GET /api/datasources` 只复制快照，不触发探测。 |
 | `data/market.py` | 指数、市场宽度、涨跌停、板块、资金、涨幅榜等市场级聚合与回退。 |
 | `data/limitup_tracker.py` | 涨停基准日 T+1/T+2 服务端追踪；交易日推导、五项统计、JSONL 追加冻结与显式历史补数。 |
 | `data/stock.py` | 个股实时盘口、快速报价、分时、日 K、板块和资金的渐进式详情。 |
 | `data/etf.py` | ETF 公开名录核验、基金档案/净值申赎低频快照，以及基于真实日线的 5/20/60 日收益、波动、回撤和均线趋势。 |
-| `data/free_source.py` | 免费数据兼容层；统一腾讯、TDX、AkShare/新浪/同花顺等常用能力。 |
-| `data/tdx_api_source.py` | 客户授权 TDX Data API v2.8 适配；代码表、行情、板块、资金和盘后研究。 |
+| `data/free_source.py` | 免费数据兼容层；统一腾讯、TDX、AkShare/新浪/同花顺等常用能力；TDX `instruments_a` 是唯一可产生完整 A 股身份结论的主名录。 |
+| `data/tdx_api_source.py` | 客户授权 TDX Data API v2.8 适配；代码表、行情、板块、资金和盘后研究；全量名录严格校验 cursor、可选 total、代码唯一性和市场后缀。 |
 | `data/tdx_local_daily.py` | 直接解析本机 `vipdoc/*/lday/*.day`；仅用 TQ 读取本地权息事件并计算前复权，不调用 TQ K 线接口。 |
 | `data/tencent_source.py` | 腾讯 `qt.gtimg.cn` 行情适配；补实时、估值、港美股和指数。 |
 | `data/xverify.py` | TDX/腾讯/新浪跨源价格核对，输出高可信、单源、存疑或无数据。 |
 | `data/akshare_isolated.py` | 在子进程执行高风险 AkShare/MiniRacer 调用并维护熔断。 |
 | `data/akshare_worker.py` | 一次性 AkShare worker；V8 崩溃只影响子进程。 |
 | `data/universe_worker.py` | 可硬终止的 TDX 股票池阻塞 worker。 |
-| `data/bootstrap_universe.py` | 2026-07-10 官方股票池压缩快照；仅在官网、TDX 和 last-good 都不可用时托底，必须标 stale。 |
-| `data/official_universe.py` | 沪、深、北交易所官方股票列表的独立有界抓取。 |
+| `data/bootstrap_universe.py` | 2026-07-10 官方股票池压缩启动快照；仅在 TDX 与 last-good 都不可用时托底，必须标 stale，不能据此判定代码不存在。 |
+| `data/official_universe.py` | 沪、深、北交易所官方股票列表的独立有界抓取；不再参与主名录完整性授权。 |
 | `data/capital_tracker.py` | 行业/热门股资金快照写 SQLite 并提供排名和历史趋势。 |
 | `data/cls_news_source.py` | 财联社 7×24 电报网页适配、签名、解析和 last-good。 |
 | `data/gdelt_source.py` | GDELT 官方 DOC API 的低频全球事件元数据，不复制正文。 |
 | `data/news.py` | 财联社、TDX、GDELT、腾讯等消息聚合、去重、时点和多市场新闻。 |
-| `data/news_mapping.py` | 新闻到 A 股公司/行业/概念的确定性映射，不判断利多利空。 |
+| `data/news_mapping.py` | 新闻到 A 股公司/行业/概念的确定性映射；股票身份只消费经完整性门禁的 TDX 主名录，不判断利多利空。 |
 | `data/news_observation.py` | 新闻事件与后续盘面观察的客户隔离 append-only 账本。 |
 | `data/official_disclosure.py` | 巨潮与交易所公司公告双路径、证据状态、PDF 可选哈希和 last-good。 |
 | `data/official_interaction.py` | 深交所互动易管理层回复适配；明确其不是法定公告。 |
@@ -553,7 +554,7 @@ ETF观察页读取独立 `/api/etf-watch`，将批量 TDX/腾讯行情和显式�
 | `test_features_transport_semantics.py` | 传输失败与真实空样本严格区分。 |
 | `test_free_runtime_sources.py` | 腾讯日线、质量语义和无 V8 热路径。 |
 | `test_free_source_contract.py` | 单位、跌停名称、筛选覆盖率和 free_only。 |
-| `test_free_universe_resilience.py` | 交易所部分失败、last-good 过期和股票池状态。 |
+| `test_free_universe_resilience.py` | TDX 主名录、旧缓存安全降级、last-good 过期和启动快照状态。 |
 | `test_gdelt_source.py` | 国内部署跳过跨境增强、海外只取元数据。 |
 | `test_interactive_source_budgets.py` | 无本地 TDX SDK、抓取预算和降级。 |
 | `test_intraday_pool_fallbacks.py` | 盘中涨跌停池同一时点回退。 |

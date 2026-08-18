@@ -818,7 +818,7 @@ body 可选 `{source_report_ids,evidence_ids,sample_count}`。无真实来源或
 
 ### POST /api/risk/evaluate
 
-纯规则、无网络/无 AI 的 `risk-gate.v1`。输入 `candidate/market/portfolio/liquidity/event`，
+纯规则、无网络/无 AI 的 `risk-gate.v2`。输入 `candidate/market/portfolio/liquidity/event`，
 输出 `allow/reduce/veto`、最终动作、仓位上限、原因码、规则版本和规范化输入 SHA-256。
 同一输入必须得到同一输出。
 
@@ -826,7 +826,11 @@ body 可选 `{source_report_ids,evidence_ids,sample_count}`。无真实来源或
 
 新增推荐前，服务端会：
 
-1. 回读并校验 `price_evidence_id` 的代码/字段/数值/质量；
+1. 回读并校验 `price_evidence_id` 的代码/字段/数值/质量；通常要求
+   `quality_status=ok`。唯一例外是腾讯行情作为主源失败后的备用源，且该点必须同时满足
+   `freshness=live`、`batch_status=complete`、无跨源冲突，并且唯一质量原因是
+   `fallback_source`；此时仍保留 `quality_status=degraded` 的真实标签，但允许绑定推荐价。
+   含 `batch_partial`、`stale`、`event_time_inferred` 或其他降级原因的点仍禁止绑定；
 2. 用服务端 pulse 风险档和当前持仓执行最终风险闸，不信任客户端 `risk_decision`、
    `portfolio`、`liquidity`、`event` 或行业自由文本；候选和全部持仓行业均按代码从服务端主数据覆盖；
 3. `veto` 返回 HTTP 409 且不落库；`reduce` 使用风险闸缩减后的仓位/信心；
@@ -1060,13 +1064,21 @@ stale-while-revalidate：存在六小时内的非空最近成功快照时先返�
 ## 15. 数据源健康面板 datasources
 
 ### GET /api/datasources
-汇总所有数据源的真实字段链路、用途、角色、最近调用状态与延迟（延迟为被动埋点，不额外发请求）。
-该接口不会返回中继 API、代理地址、Webhook 或任何凭据。
+汇总所有数据源的真实字段链路、用途、角色、最近调用状态与延迟。该 GET 只复制进程内
+健康快照：不会同步访问 Hermes、TDX、交易所或证据库，也不会返回中继 API、代理地址、
+Webhook 或任何凭据。普通数据源延迟继续来自被动埋点；Hermes/TDX 与本地证据统计由
+后台循环并行刷新。Hermes、TDX 和本地统计分别受 5 秒、7 秒、3 秒上限约束，任何单项
+超时只写入稳定 `error_codes` 并保留可展示快照，不把整页变成 HTTP 超时。
+
+`health_refresh.status` 为 `pending/ready/degraded`；`request_mode` 固定为
+`passive_snapshot`。`infra.*.status=unchecked` 表示后台尚未完成首次检查，不等于失败。
 ```json
 {
   "ok": true, "source_contract": "field-route-v2", "active_policy": "free_only", "ts": "2026-06-11 14:30:00",
+  "health_refresh": {"status":"ready","request_mode":"passive_snapshot","last_started_at":"2026-06-11T14:29:58+08:00","last_finished_at":"2026-06-11T14:30:00+08:00","duration_ms":1820,"error_codes":[]},
   "infra": {
-    "hermes": {"name":"Hermes AI 网关","base_url":"http://127.0.0.1:8874/v1","model":"hermes-agent","kind":"项目专属受限Hermes网关","connected":true,"latency_ms":120},
+    "hermes": {"name":"Hermes AI 网关","base_url":"http://127.0.0.1:8874/v1","model":"hermes-agent","kind":"本机Hermes网关","configured":true,"connected":true,"status":"ok","latency_ms":120,"checked_at":"2026-06-11T14:30:00+08:00"},
+    "tdx_api": {"configured":true,"connected":true,"status":"ok","checked_at":"2026-06-11T14:30:00+08:00","pricevol":"fresh"},
     "relay": {"enabled":true,"transport":"api","api_configured":true,"proxy_configured":false,
               "spot":{"count":5862,"total":5862,"failed_pages":0,"stale":false,"age_sec":12,"incomplete":false}},
     "feishu": {"configured":false,"bot":false}
@@ -1087,6 +1099,18 @@ stale-while-revalidate：存在六小时内的非空最近成功快照时先返�
 ### 当前正式链路（`free_only`）
 
 当前正式链路：TDX API v2.8 兼容服务（客户授权远程 API，或可选的本地 TQ 只读桥；提供实时价量/盘口、代码名录、行业概念、全市场快照）、腾讯（行情备用及估值/换手/量比/市值补齐）、新浪与同花顺公开接口（资金/财务/行业资金/涨停原因）、AkShare 封装公开源、乐咕（市场宽度）、东财中继或直连（可选备用）、多源财经快讯（研究证据）。标准部署不要求安装本地通达信；选择 TQ 桥时必须先启动支持 TQ 的本地客户端和 `scripts/tq_tdx_bridge.py`。不使用按次扣积分的数据源。
+
+全 A 股身份主名录固定为 TDX `instruments_a`。适配器按 cursor 拉到明确终页；响应若提供
+`count/total`，页内数量和终页总数必须一致，并拒绝重复 cursor、重复代码和市场后缀错误。
+只有沪深京覆盖均通过且写入 `a-share-universe-v3`、`authority=tdx_instruments_a`
+的快照才允许 `complete=true`，并据此对未命中代码返回 `stock_not_found`。旧版缓存、
+交易所内置启动快照、陈旧快照或覆盖不足快照仍可展示已有名称，但必须
+`refresh_required=true`、`complete=false`，无权判定股票不存在。服务启动时在后台刷新一次
+TDX 名录，不阻塞 HTTP 启动；失败时保留真实降级状态。
+
+新闻 A 股实体映射同样只消费该主名录；其 `summary.universe` 返回
+`authority/count/complete/stale`，不再把同一份 TDX 数据伪装成“TDX + 交易所”双名录
+交叉验证。名录不具权威性时仍可保留正向命中，但整体状态必须为 `degraded`。
 
 本地 TQ 桥只暴露 TDX 适配器需要的只读端点，明确拒绝账户、持仓、下单、撤单和客户端执行类能力。它支持实时快照、股票名录、板块目录/成分、行业概念关系、基础财务和全市场价量；无等价契约的板块资金排名、舆情、机构一致预期和十大股东返回 `501`，由既有公开源回退或显示缺失，禁止伪装为空数据。配置与运行说明见 `docs/TQ_TDX_BRIDGE.md`。
 
@@ -1167,7 +1191,11 @@ ETF观察与 A 股观察池使用独立账本和接口，**不生成、复用或
 
 ### GET /api/simulation/status
 
-返回 `simulation-status.v3`：模式、账户是否初始化、`A_SHARE_T_PLUS_1` 交收规则、紧急停止、各状态订单数量和最近事件。`manual_approval_required=false`、`automatic_matching=true`、`matching_interval_seconds=5`、`order_time_in_force=DAY`。
+返回 `simulation-status.v4`：模式、账户是否初始化、`A_SHARE_T_PLUS_1` 交收规则、自动撮合开关、紧急停止、各状态订单数量和最近事件。`manual_approval_required=false`、`automatic_matching=true` 表示服务端支持自动撮合，`automatic_matching_enabled` 表示持久化运行状态，`matching_interval_seconds=5`、`order_time_in_force=DAY`。
+
+### POST /api/simulation/automatic-matching
+
+请求体：`client_request_id`、`enabled`（布尔值）。关闭后服务器暂停 `simulation_matcher` 定时作业，并在撮合器入口再次阻断；不读取待处理订单、不拉取撮合行情、不迁移或到期撤销 DAY 挂单。已有挂单保持不变，新订单仍可进入挂单池；恢复后先按 DAY 规则清理已过期挂单，再继续正常撮合。开关写入本地 SQLite，服务重启后保持原状态；每次控制请求追加审计事件。该开关不等同于紧急停止，不会撤单或禁止新单。
 
 ### GET /api/simulation/orders?limit=100&status=approved
 
@@ -1177,7 +1205,7 @@ ETF观察与 A 股观察池使用独立账本和接口，**不生成、复用或
 
 请求体仅接受订单意图：`client_request_id`、`symbol`、`side`、`order_type`、`quantity`、可选 `limit_price`。用户提交本身即为确认；通过服务端风险与行情校验后，订单直接进入撮合池，不再要求普通订单人工批准或手动成交。交易时段使用服务端盘中行情 `price_mode=live`；非交易时段允许用核验后的最近收盘价建立下一交易日 DAY 挂单。风险等级、参考价、行情时点和缺失状态均由服务端读取，客户端伪造同名字段会被忽略。买入缺风险、缺行情、盘中行情陈旧、风险等级不低于 4 或不满足 100 股整手时拒绝。
 
-服务端每 5 秒批量读取挂单标的行情并撮合，页面关闭不影响。买入限价单在原始市场价 `<= limit_price` 时触发，成交价为 `min(市场价 × (1 + 滑点), limit_price)`；卖出限价单在原始市场价 `>= limit_price` 时触发，成交价为 `max(市场价 × (1 - 滑点), limit_price)`。未触价、行情暂缺或行情陈旧时继续挂单，不写入拒绝终态。市场价单在下一个有效撮合轮次成交。DAY 挂单在有效交易日 15:00 撮合结束后自动撤单，原因 `day_order_expired`。
+自动撮合开启时，服务端每 5 秒批量读取挂单标的行情并撮合，页面关闭不影响。买入限价单在原始市场价 `<= limit_price` 时触发，成交价为 `min(市场价 × (1 + 滑点), limit_price)`；卖出限价单在原始市场价 `>= limit_price` 时触发，成交价为 `max(市场价 × (1 - 滑点), limit_price)`。未触价、行情暂缺或行情陈旧时继续挂单，不写入拒绝终态。市场价单在下一个有效撮合轮次成交。DAY 挂单在有效交易日 15:00 撮合结束后自动撤单，原因 `day_order_expired`。
 
 ### POST /api/simulation/orders/{order_id}/approve
 

@@ -1,5 +1,6 @@
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 
 from scripts import windows_deploy
 
@@ -57,6 +58,71 @@ def test_runtime_launchers_load_dotenv_without_bridge_key_on_command_line():
     assert '"--api-key"' not in helper
     assert ".venv\\Scripts\\python.exe" in start
     assert ".venv\\Scripts\\python.exe" in bridge
+
+
+def test_runtime_launchers_default_to_hidden_background_and_offer_foreground():
+    start_args = windows_deploy.build_parser().parse_args(["start"])
+    bridge_args = windows_deploy.build_parser().parse_args(["start-tdx-bridge"])
+    assert start_args.foreground is False
+    assert bridge_args.foreground is False
+    assert windows_deploy.build_parser().parse_args(
+        ["start", "--foreground"]
+    ).foreground is True
+    assert windows_deploy.build_parser().parse_args(
+        ["start-tdx-bridge", "--foreground"]
+    ).foreground is True
+
+
+def test_background_launcher_detaches_and_writes_log(tmp_path, monkeypatch):
+    observed = {}
+
+    def fake_popen(command, **kwargs):
+        observed["command"] = command
+        observed.update(kwargs)
+        return SimpleNamespace(pid=4321)
+
+    monkeypatch.setattr(windows_deploy, "RUNTIME_LOG_DIR", tmp_path)
+    monkeypatch.setattr(windows_deploy.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(windows_deploy, "_background_flags", lambda: 123)
+
+    environment = {}
+    result = windows_deploy._run_service(
+        [sys.executable, "service.py"],
+        environment,
+        description="测试服务",
+        log_stem="test-service",
+        foreground=False,
+    )
+
+    assert result == 0
+    assert environment["PYTHONUNBUFFERED"] == "1"
+    assert observed["command"] == [sys.executable, "service.py"]
+    assert observed["stdin"] is windows_deploy.subprocess.DEVNULL
+    assert observed["stderr"] is windows_deploy.subprocess.STDOUT
+    assert observed["creationflags"] == 123
+    assert list(tmp_path.glob("test-service-*.log"))
+
+
+def test_foreground_launcher_keeps_console(monkeypatch):
+    observed = {}
+
+    def fake_call(command, **kwargs):
+        observed["command"] = command
+        observed.update(kwargs)
+        return 17
+
+    monkeypatch.setattr(windows_deploy.subprocess, "call", fake_call)
+    result = windows_deploy._run_service(
+        [sys.executable, "service.py"],
+        {},
+        description="测试服务",
+        log_stem="unused",
+        foreground=True,
+    )
+
+    assert result == 17
+    assert observed["command"] == [sys.executable, "service.py"]
+    assert "creationflags" not in observed
 
 
 def test_check_covers_ui_core_apis_and_optional_bridge():

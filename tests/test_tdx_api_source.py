@@ -107,6 +107,59 @@ def test_cursor_pagination_restarts_whole_query_after_409(monkeypatch) -> None:
     assert calls == [None, "old-page-2", None, "new-page-2"]
 
 
+def test_cursor_pagination_rejects_repeated_cursor(monkeypatch) -> None:
+    monkeypatch.setattr(tdx, "configured", lambda: True)
+
+    monkeypatch.setattr(
+        tdx,
+        "_request_json_result",
+        lambda *_args, **_kwargs: ({
+            "rows": [{"entity_key": "000001.SZ"}],
+            "has_more": True,
+            "next_cursor": "same-page",
+        }, 200),
+    )
+
+    assert tdx._dataset_rows("demo", label="demo", max_rows=10) is None
+
+
+def test_cursor_pagination_rejects_terminal_total_mismatch(monkeypatch) -> None:
+    monkeypatch.setattr(tdx, "configured", lambda: True)
+
+    monkeypatch.setattr(
+        tdx,
+        "_request_json_result",
+        lambda *_args, **_kwargs: ({
+            "rows": [{"entity_key": "000001.SZ"}],
+            "count": 1,
+            "total": 2,
+            "has_more": False,
+        }, 200),
+    )
+
+    assert tdx._dataset_rows("demo", label="demo", max_rows=10) is None
+
+
+def test_instruments_a_rejects_duplicate_codes_and_wrong_market_suffix(monkeypatch) -> None:
+    monkeypatch.setattr(tdx, "configured", lambda: True)
+    rows = [
+        {
+            "entity_key": f"{index:06d}.SZ",
+            "payload": {"Name": f"股票{index}"},
+        }
+        for index in range(3000)
+    ]
+    rows.append({"entity_key": "000001.SZ", "payload": {"Name": "重复股票"}})
+    monkeypatch.setattr(tdx, "_dataset_rows", lambda *_args, **_kwargs: rows)
+
+    assert tdx.stock_universe.__wrapped__() is None
+
+    rows[-1] = {"entity_key": "688563.SZ", "payload": {"Name": "错误市场"}}
+    names = tdx.stock_universe.__wrapped__()
+    assert names is not None
+    assert "688563" not in names
+
+
 def test_quotes_batch_does_not_block_on_instruments_and_rejects_pending(monkeypatch) -> None:
     monkeypatch.setattr(tdx, "configured", lambda: True)
     monkeypatch.setattr(
@@ -405,6 +458,47 @@ def test_relation_blocks_keep_industry_and_concepts_but_drop_style(monkeypatch) 
 
     assert result["605028"]["industry"]["name"] == "电力"
     assert [item["name"] for item in result["605028"]["concepts"]] == ["绿色电力", "光伏"]
+
+
+def test_industry_for_codes_reuses_full_relation_cache(monkeypatch) -> None:
+    calls: list[tuple[str, ...]] = []
+
+    def relation_blocks(entities: tuple[str, ...]):
+        calls.append(entities)
+        return {
+            "605028": {
+                "industry": {
+                    "name": "电力",
+                    "code": "881459.SH",
+                    "source": "TDX relation",
+                },
+                "concepts": [{"name": "绿色电力", "code": "880753.SH"}],
+                "source": "TDX relation",
+            }
+        }
+
+    monkeypatch.setattr(tdx, "_relation_blocks_cached", relation_blocks)
+    monkeypatch.setattr(
+        tdx,
+        "_relation_industries_cached",
+        lambda _entities: pytest.fail("风险行业核验不得重复请求独立 relation 缓存"),
+    )
+    monkeypatch.setattr(
+        tdx,
+        "sector_memberships",
+        lambda: pytest.fail("精确 relation 已有行业时不得再读全市场成分表"),
+    )
+
+    result = tdx.industry_for_codes(["605028"])
+
+    assert calls == [("605028.SH",)]
+    assert result == {
+        "605028": {
+            "industry": "电力",
+            "sector_code": "881459.SH",
+            "source": "TDX relation",
+        }
+    }
 
 
 def test_basic_financial_uses_named_stock_info_fields_without_inventing_growth(monkeypatch) -> None:

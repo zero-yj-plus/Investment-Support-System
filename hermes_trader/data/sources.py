@@ -1,7 +1,7 @@
 """数据源健康面板 — 汇总所有数据源的来源、用途、主/备、实时延迟与状态。
 
 延迟与成败来自 base._record_source 的被动埋点（safe() 每次调用记录），
-不为面板产生额外请求；Hermes 与中台 /spot 的状态由路由层即时探测后传入。
+不为面板产生额外请求；Hermes/TDX 基础设施状态由后台健康快照传入。
 """
 from __future__ import annotations
 
@@ -20,8 +20,8 @@ CATALOG = [
      "feeds": "秒级价量与买一/卖一、全市场宽度、行业/概念关系、板块资金排名、K线与基础财务",
      "role": "客户授权主行情与行业关系源；板块资金原值单位未核验，只用排名/方向；失败退腾讯/公开板块源",
      "match_contains": ["TDX API"]},
-    {"key": "universe", "name": "全 A 股股票池", "provider": "沪深京交易所官网 / TDX 数据 API / last-good",
-     "feeds": "股票代码、名称、全市场筛选分母", "role": "免费基础名录，缺交易所/陈旧会显式标记",
+    {"key": "universe", "name": "全 A 股股票池", "provider": "TDX instruments_a / TDX last-good / 内置启动快照",
+     "feeds": "股票代码、名称、全市场筛选分母", "role": "TDX 主名录；旧版、陈旧或沪深京覆盖不足时禁止据此判定股票不存在",
      "match_contains": ["股票代码表("]},
     {"key": "tencent", "name": "腾讯行情", "provider": "qt.gtimg.cn",
      "feeds": "A股行情/估值、指数、港美股行情", "role": "免费带供应商时钟备源；补 PE/PB/换手/量比/市值", "match": ["腾讯行情"]},
@@ -132,8 +132,8 @@ def _display_ts(value: object) -> str | None:
 def _universe_report_row(catalog: dict, canonical: dict, metric: dict | None) -> dict:
     """股票池行只以 canonical status 决定可用性。
 
-    交易所、TDX 和 last-good 都是候选构建路径；某个候选路径的最新
-    失败只能作为诊断，不得把已构建完整的最终股票池改写为 down。
+    TDX instruments_a 是唯一完整性权威；最近一次刷新失败只能作为诊断，
+    不得把仍在有效期内的 TDX last-good 改写为 down。
     """
     count = int(canonical.get("count") or 0)
     complete = bool(canonical.get("complete"))
@@ -194,7 +194,7 @@ def _universe_report_row(catalog: dict, canonical: dict, metric: dict | None) ->
 
 
 def build_report(infra: dict, stock_universe: dict | None = None) -> dict:
-    """infra：路由层即时探测得到的 {hermes, relay, feishu} 状态。
+    """infra：后台快照得到的 {hermes, relay, feishu, tdx_api} 状态。
 
     ``stock_universe`` 是已解析股票池的唯一真值；不传时只读取本地
     canonical 状态，不会为健康面板发起网络采集。

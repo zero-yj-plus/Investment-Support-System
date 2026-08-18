@@ -2,7 +2,7 @@
 
 本模块不判断利多利空，也不使用模型猜实体：
 
-* 股票必须同时存在于 TDX ``instruments_a`` 与交易所官网股票池；
+* 股票必须存在于通过完整性校验的 TDX ``instruments_a`` 主名录；
 * 公司只接受 6 位代码或完整正式简称命中；
 * 行业/概念来自 TDX ``relation`` 或板块目录；
 * 盘面只描述可观察状态，不把同涨同跌包装成新闻因果。
@@ -59,18 +59,6 @@ def _aliases(name: str) -> tuple[str, ...]:
 def _name_is_specific(name: str) -> bool:
     compact = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff]", "", name)
     return len(compact) >= 4 and compact not in _AMBIGUOUS_STOCK_NAMES
-
-
-def _listing_name_key(name: str) -> str:
-    raw = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff]", "", str(name or "").upper())
-    raw = re.sub(r"^(?:N|C|XD|DR|\*?ST)+", "", raw)
-    raw = re.sub(r"(?:U|W|D)$", "", raw)
-    return raw
-
-
-def _names_consistent(tdx_name: str, official_name: str) -> bool:
-    left, right = _listing_name_key(tdx_name), _listing_name_key(official_name)
-    return bool(left and right and (left == right or (min(len(left), len(right)) >= 3 and (left.startswith(right) or right.startswith(left)))))
 
 
 def _explicit_code_occurs(raw_text: str, code: str, names: tuple[str, ...]) -> bool:
@@ -132,28 +120,26 @@ def _frame_date(frame: dict | None):
 
 def _stock_matches(
     item: dict,
-    tdx_names: dict[str, str],
-    official_names: dict[str, str],
+    primary_names: dict[str, str],
 ) -> list[dict]:
     raw_text = _text(f"{item.get('title') or ''} {item.get('content') or ''}")
     found: dict[str, dict] = {}
-    # 代码是最强证据，但仍必须同时存在于两份真实股票池。
+    # 代码是最强证据，但仍必须存在于经过完整分页校验的 TDX 主名录。
     for code in dict.fromkeys(_CODE_RE.findall(raw_text)):
-        if code in tdx_names and code in official_names and _explicit_code_occurs(
-            raw_text, code, (tdx_names[code], official_names[code]),
+        if code in primary_names and _explicit_code_occurs(
+            raw_text, code, (primary_names[code],),
         ):
-            consistent = _names_consistent(tdx_names[code], official_names[code])
             found[code] = {
                 "kind": "stock",
                 "code": code,
-                "name": official_names.get(code) or tdx_names.get(code) or "",
+                "name": primary_names.get(code) or "",
                 "match_by": "explicit_code",
                 "evidence": code,
-                "name_consistency": "matched" if consistent else "drifted",
+                "name_consistency": "primary_authority",
             }
     # 名称采用最长精确匹配；短名、普通词和易歧义证券名不自动绑定。
     ordered = sorted(
-        ((code, official_names.get(code) or name) for code, name in tdx_names.items() if code in official_names),
+        primary_names.items(),
         key=lambda pair: len(pair[1] or ""),
         reverse=True,
     )
@@ -174,7 +160,7 @@ def _stock_matches(
                 "name": name,
                 "match_by": "exact_short_name",
                 "evidence": alias,
-                "name_consistency": "matched" if _names_consistent(tdx_names[code], official_names[code]) else "drifted",
+                "name_consistency": "primary_authority",
             }
             occupied.append(key)
             break
@@ -315,15 +301,15 @@ def _base_unavailable(item: dict, missing: list[str]) -> dict:
 def map_news_items(items: list[dict]) -> dict:
     """给标准新闻列表附加确定性 ``a_share`` 合同与整体覆盖状态。"""
     source_items = [dict(item) for item in items if isinstance(item, dict)]
-    tdx_names = tdx.stock_universe() or {}
-    official_names = free_source.stock_universe() or {}
-    official_status = free_source.stock_universe_status()
+    primary_names = free_source.stock_universe() or {}
+    universe_status = free_source.stock_universe_status()
+    universe_authoritative = free_source.stock_universe_is_authoritative(
+        universe_status
+    )
     catalog = tdx.sector_catalog() or {}
     base_missing: list[str] = []
-    if not tdx_names:
+    if not primary_names:
         base_missing.append("TDX instruments_a 全 A 名录不可用")
-    if not official_names:
-        base_missing.append("交易所官网股票池不可用")
     if not catalog:
         base_missing.append("TDX 板块目录不可用")
     if base_missing:
@@ -339,7 +325,7 @@ def map_news_items(items: list[dict]) -> dict:
     prepared: list[dict] = []
     all_stock_codes: list[str] = []
     for item in source_items:
-        stocks = _stock_matches(item, tdx_names, official_names)
+        stocks = _stock_matches(item, primary_names)
         direct_blocks = _direct_sector_matches(item, catalog)
         all_stock_codes.extend(stock["code"] for stock in stocks)
         prepared.append({"item": item, "stocks": stocks, "direct_blocks": direct_blocks})
@@ -424,7 +410,9 @@ def map_news_items(items: list[dict]) -> dict:
                         "change_pct": round(float(quote["change_pct"]), 2),
                     })
             for block in _dedupe_blocks([*industries, *concepts, *topic_candidates], 4):
-                observation = sector_observation(block, members_by_sector, frame_stocks, tdx_names)
+                observation = sector_observation(
+                    block, members_by_sector, frame_stocks, primary_names
+                )
                 if observation:
                     sector_observations.append(observation)
             if not stock_observations and not sector_observations:
@@ -436,9 +424,6 @@ def map_news_items(items: list[dict]) -> dict:
         coverage_missing = list(market_missing)
         if stocks and relation_complete < relation_total:
             coverage_missing.append(f"{relation_total - relation_complete}只股票行业关系缺失")
-        drifted_names = sum(stock.get("name_consistency") == "drifted" for stock in stocks)
-        if drifted_names:
-            coverage_missing.append(f"{drifted_names}只股票双名录简称存在漂移，代码关系仍保留")
         matches = [
             *stocks,
             *[{**block, "kind": "industry"} for block in industries],
@@ -479,10 +464,10 @@ def map_news_items(items: list[dict]) -> dict:
             },
         })
 
-    base_state = "complete" if official_status.get("complete") and frame else "degraded"
+    base_state = "complete" if universe_authoritative and frame else "degraded"
     summary_missing: list[str] = []
-    if not official_status.get("complete"):
-        summary_missing.append("交易所官网股票池为部分覆盖或沿用值")
+    if not universe_authoritative:
+        summary_missing.append("TDX 主名录为部分覆盖、旧缓存或沿用值")
     if not frame:
         summary_missing.append("pricevol 全市场完整帧不可用")
     return {
@@ -494,12 +479,12 @@ def map_news_items(items: list[dict]) -> dict:
             "total": len(mapped_items),
             "generated_at": ts_str(),
             "score_weight": 0,
-            "rule": "股票代码/正式简称双重名录校验；行业/概念来自TDX关系或目录；盘面只作观察",
+            "rule": "股票代码/正式简称经TDX主名录校验；行业/概念来自TDX关系或目录；盘面只作观察",
             "universe": {
-                "tdx_count": len(tdx_names),
-                "official_count": len(official_names),
-                "official_complete": bool(official_status.get("complete")),
-                "official_stale": bool(official_status.get("stale")),
+                "authority": universe_status.get("authority"),
+                "count": len(primary_names),
+                "complete": universe_authoritative,
+                "stale": bool(universe_status.get("stale")),
             },
             "market_frame": {
                 "available": bool(frame),

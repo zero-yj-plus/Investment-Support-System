@@ -33,6 +33,7 @@ from .knowledge.store import Store
 from .research_runs import ResearchRunManager
 from .simulation import SimulationStore
 from .data.limitup_tracker import LimitUpTracker
+from .data.health_monitor import DataHealthMonitor
 
 log = logging.getLogger("hermes")
 
@@ -181,6 +182,7 @@ def create_app(config_path: str) -> FastAPI:
     engine = Engine(config, store, hermes, notifier)
     research_runs = ResearchRunManager(config.data_dir)
     limitup_tracker = LimitUpTracker(config.data_dir)
+    data_health_monitor = DataHealthMonitor(config, hermes, store, market_gateway)
     # 分析层只消费统一网关契约；不在各页再各自直连行情源。
     engine.market_gateway = market_gateway
     # 技术选股只读客户隔离的本地缓存；网络采集由盘后任务或显式刷新触发。
@@ -210,6 +212,38 @@ def create_app(config_path: str) -> FastAPI:
             __version__, config.client_name, config.client_id,
             config.data_dir, config.hermes_base_url,
         )
+        # 数据健康面板只读进程内快照。外部 Hermes/TDX 探测在独立后台循环中并行执行，
+        # 单项超时只降级对应状态，不占用 /api/datasources 的请求预算。
+        async def _refresh_data_health_forever() -> None:
+            while True:
+                try:
+                    await data_health_monitor.refresh()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:  # noqa: BLE001 -- 健康监视器不得阻断主服务
+                    log.exception("后台数据健康快照刷新失败（保留最近快照）")
+                await asyncio.sleep(60)
+
+        app.state.data_health_refresh_task = asyncio.create_task(
+            _refresh_data_health_forever()
+        )
+        # TDX instruments_a 是唯一有权产生“完整 A 股名录”结论的主数据源。
+        # 启动时后台刷新一次：不阻塞 HTTP 服务，也不让升级脚本保留的旧官网
+        # complete 缓存继续参与负向身份判断。
+        async def _refresh_stock_universe() -> None:
+            try:
+                from .data import free_source  # noqa: PLC0415
+
+                await asyncio.to_thread(free_source.stock_universe)
+            except Exception:  # noqa: BLE001 -- 名录失败必须降级，不能阻断主服务
+                log.exception("TDX 股票名录启动刷新失败（保留降级缓存）")
+
+        try:
+            app.state.universe_refresh_task = asyncio.create_task(
+                _refresh_stock_universe()
+            )
+        except RuntimeError:
+            app.state.universe_refresh_task = None
         # 后台预热器：读回启动快照(last-good) + 预热一次 + 注册 15s 周期任务（仅交易时段主动预热）。
         # 全程异常自吞——预热是纯优化层，任何失败都不得阻断主服务启动。
         try:
@@ -228,6 +262,10 @@ def create_app(config_path: str) -> FastAPI:
         except Exception:
             log.exception("飞书互动机器人启动失败（不影响主服务）")
         yield
+        data_health_task = getattr(app.state, "data_health_refresh_task", None)
+        if data_health_task is not None:
+            data_health_task.cancel()
+            await asyncio.gather(data_health_task, return_exceptions=True)
         await research_runs.shutdown()
         scheduler.shutdown(wait=False)
 
@@ -249,6 +287,7 @@ def create_app(config_path: str) -> FastAPI:
     app.state.scheduler = scheduler
     app.state.market_gateway = market_gateway
     app.state.evidence_store = market_gateway.store if market_gateway is not None else None
+    app.state.data_health_monitor = data_health_monitor
     # 核心完整性闸（隔离铁律的技术校验）：客户机上 hermes_trader/+frontend/ 若偏离母版本(私改/删/增)
     # → 启动期告警 + /api/status 暴露，便于远程发现"客户私改了核心"，提示用 upgrade_core.sh 对齐回正。
     # 开发态(仓库无 core.sha256 清单)不校验、不误报。

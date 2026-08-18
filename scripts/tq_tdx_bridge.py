@@ -529,6 +529,7 @@ class BridgeApp:
             "next_cursor": str(next_offset) if has_more else "",
             "has_more": has_more,
             "count": len(page),
+            "total": len(rows),
         }
 
     def _dataset(self, dataset: str, query: dict[str, str]) -> list[dict[str, Any]]:

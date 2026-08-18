@@ -60,6 +60,15 @@ class SimulationMatcher:
             return {}
 
     async def run_once(self) -> dict[str, Any]:
+        enabled = await asyncio.to_thread(self.store.automatic_matching_enabled)
+        if not enabled:
+            return {
+                "ok": True,
+                "session": "paused",
+                "matched": 0,
+                "expired": 0,
+                "migrated": 0,
+            }
         current = self.clock()
         today = current.date().isoformat()
         after_close = (
@@ -170,7 +179,7 @@ def register(scheduler, matcher: SimulationMatcher) -> None:
         except Exception:  # noqa: BLE001 - matching must not stop other jobs
             log.exception("模拟订单撮合轮次失败")
 
-    scheduler.add_job(
+    job = scheduler.add_job(
         _tick,
         IntervalTrigger(seconds=MATCH_INTERVAL_SECONDS),
         id="simulation_matcher",
@@ -180,4 +189,8 @@ def register(scheduler, matcher: SimulationMatcher) -> None:
         max_instances=1,
         misfire_grace_time=MATCH_INTERVAL_SECONDS,
     )
-    log.info("已注册模拟订单自动撮合（每 %d 秒，DAY 有效）", MATCH_INTERVAL_SECONDS)
+    if not matcher.store.automatic_matching_enabled():
+        job.pause()
+        log.info("已注册模拟订单自动撮合，但按持久化开关保持暂停")
+    else:
+        log.info("已注册模拟订单自动撮合（每 %d 秒，DAY 有效）", MATCH_INTERVAL_SECONDS)

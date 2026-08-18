@@ -23,13 +23,14 @@ def test_vue_simulation_restores_the_local_order_lifecycle() -> None:
         "/simulation/account?curve_limit=365",
         "/simulation/account/settings",
         "/simulation/account/valuation",
+        "/simulation/automatic-matching",
         "/simulation/orders?limit=100",
         "/simulation/orders/${encodeURIComponent(order.order_id)}/cancel",
         "/simulation/emergency-stop",
         "/simulation/emergency-stop/reset",
     ):
         assert endpoint in composable
-    assert "每 5 秒检查真实行情" in page
+    assert "模拟交易开启时每 5 秒检查真实行情" in page
     assert "提交即进入服务端撮合池" in page
     assert "人工批准" not in page
     assert "模拟成交</button>" not in page
@@ -41,6 +42,12 @@ def test_vue_simulation_restores_the_local_order_lifecycle() -> None:
     assert "T+1 冻结" in page
     assert "累计盈亏" in page
     assert "SimulationEquityCurve" in page
+    assert "关闭模拟交易" in page
+    assert "开启模拟交易" in page
+    assert ':aria-pressed="matchingEnabled"' in page
+    assert 'class="panel simulation-matching"' not in page
+    assert "simulation-header__actions" in page
+    assert "setAutomaticMatching" in composable
     assert "初始资金（元）" in dialog
     assert "佣金率（% / 双边）" in dialog
     assert "提交订单意图" in dialog
@@ -97,5 +104,8 @@ def test_vue_simulation_has_a_targeted_interaction_and_accessibility_audit() -> 
     assert "sellActionVisible" in audit
     assert "globalThis.axe.run(document)" in audit
     assert "undersizedTargets" in audit
+    assert "matchingEnabled = request.postDataJSON().enabled === true" in audit
+    assert "关闭模拟交易" in audit
+    assert "开启模拟交易" in audit
     assert "{ name: 'phone-375-dark', width: 375, height: 812, theme: 'dark' }" in audit
     assert "checks.violations.length > 0" in audit

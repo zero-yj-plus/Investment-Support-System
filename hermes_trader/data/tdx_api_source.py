@@ -122,7 +122,13 @@ def _dataset_rows(
     for restart in range(_CURSOR_RESTARTS + 1):
         rows: list[dict] = []
         cursor = ""
+        seen_cursors: set[str] = set()
+        expected_total: int | None = None
         while True:
+            if cursor in seen_cursors:
+                log.warning("TDX API %s 返回重复 cursor，拒绝使用可能循环/重复的数据", dataset)
+                return None
+            seen_cursors.add(cursor)
             query = dict(base_params)
             if cursor:
                 query["cursor"] = cursor
@@ -141,6 +147,30 @@ def _dataset_rows(
             if not isinstance(batch, list):
                 return None
             normalized = [row for row in batch if isinstance(row, dict)]
+            declared_count = (payload or {}).get("count")
+            if declared_count is not None:
+                try:
+                    if int(declared_count) != len(batch):
+                        log.warning("TDX API %s 页内 count 与 rows 不一致", dataset)
+                        return None
+                except (TypeError, ValueError):
+                    log.warning("TDX API %s 页内 count 非整数", dataset)
+                    return None
+            declared_total = (payload or {}).get("total")
+            if declared_total is not None:
+                try:
+                    one_total = int(declared_total)
+                except (TypeError, ValueError):
+                    log.warning("TDX API %s total 非整数", dataset)
+                    return None
+                if one_total < 0 or one_total > max_rows:
+                    log.warning("TDX API %s total 超出安全范围", dataset)
+                    return None
+                if expected_total is None:
+                    expected_total = one_total
+                elif expected_total != one_total:
+                    log.warning("TDX API %s 分页期间 total 发生变化", dataset)
+                    return None
             if len(rows) + len(normalized) > max_rows:
                 log.warning("TDX API %s 超过安全上限 %s 行，拒绝使用截断结果", dataset, max_rows)
                 return None
@@ -154,6 +184,12 @@ def _dataset_rows(
                 # v2.8 声明有后页却没给 cursor，这是契约错误，不回退
                 # offset 以免静默重复/跳行。
                 log.warning("TDX API %s 返回 has_more 但缺 next_cursor", dataset)
+                return None
+            if expected_total is not None and len(rows) != expected_total:
+                log.warning(
+                    "TDX API %s 终页数量 %s 与 total %s 不一致",
+                    dataset, len(rows), expected_total,
+                )
                 return None
             return rows
     log.warning("TDX API %s cursor 连续冲突，拒绝返回混合版本结果", dataset)
@@ -276,11 +312,21 @@ def stock_universe() -> dict[str, str] | None:
         return None
     names: dict[str, str] = {}
     for row in rows:
-        code = _code6(row.get("entity_key") or "")
+        entity = str(row.get("entity_key") or "").strip().upper()
+        code = _code6(entity)
         body = row.get("payload") if isinstance(row.get("payload"), dict) else {}
         name = str(body.get("Name") or body.get("name") or "").strip()
-        if len(code) == 6 and code.isdigit():
-            names[code] = name
+        expected_market = (
+            "BJ" if code.startswith(("4", "8", "92"))
+            else ("SH" if code.startswith("6") else ("SZ" if code.startswith(("0", "3")) else ""))
+        )
+        actual_market = entity.rsplit(".", 1)[-1] if "." in entity else ""
+        if not expected_market or actual_market != expected_market or not name:
+            continue
+        if code in names:
+            log.warning("TDX API instruments_a 返回重复代码 %s，拒绝使用", code)
+            return None
+        names[code] = name
     return names if len(names) >= 3000 else None
 
 
@@ -408,19 +454,35 @@ def _relation_industries_cached(entities: tuple[str, ...]) -> dict[str, dict] | 
 
 
 def industry_for_codes(codes: Iterable[str]) -> dict[str, dict]:
-    """少量热股票优先用 ``relation`` 精确查行业，静态成分表作为同源兜底。"""
+    """复用行业/概念关系主链，返回扁平行业映射。
+
+    个股详情已经通过 :func:`relations_for_codes` 读取并缓存同一份 TDX
+    ``relation`` 数据。风险闸若再走独立的 ``_relation_industries_cached``
+    缓存，会重复发起远程请求；交互路径 1.5 秒超时后便把已验证的行业
+    误判为缺失。这里统一复用完整关系缓存，再保持原有的扁平返回契约。
+    """
     normalized = tuple(dict.fromkeys(filter(None, (_suffix_code(code) for code in codes))))
     out: dict[str, dict] = {}
     for start in range(0, len(normalized), 120):
         group = normalized[start:start + 120]
-        found = _relation_industries_cached(group) or {}
-        out.update(found)
-    missing_codes = [_code6(entity) for entity in normalized if _code6(entity) not in out]
-    if missing_codes:
-        fallback = (sector_memberships() or {}).get("by_stock") or {}
-        for code in missing_codes:
-            if code and code in fallback:
-                out[code] = fallback[code]
+        relations = relations_for_codes(group)
+        for code, relation in relations.items():
+            industry = relation.get("industry") if isinstance(relation, dict) else None
+            if isinstance(industry, dict):
+                name = str(industry.get("name") or "").strip()
+                sector_code = _suffix_code(industry.get("code") or "")
+                source = str(industry.get("source") or relation.get("source") or "TDX relation")
+            else:
+                name = str(industry or "").strip()
+                sector_code = _suffix_code((relation or {}).get("sector_code") or "")
+                source = str((relation or {}).get("source") or "TDX relation")
+            if not name:
+                continue
+            out[code] = {
+                "industry": name,
+                "sector_code": sector_code,
+                "source": source,
+            }
     return out
 
 
@@ -471,7 +533,18 @@ def relations_for_codes(codes: Iterable[str]) -> dict[str, dict]:
         group = normalized[start:start + 80]
         found = _relation_blocks_cached(group) or {}
         out.update(found)
-    fallback = (sector_memberships() or {}).get("by_stock") or {}
+    # 精确 relation 已包含行业时不应再加载全市场成分表。该全表读取可能
+    # 需要数秒，曾让后续 RiskGate 的 1.5 秒行业核验超时，并把已经验证
+    # 的行业误判为缺失。只有确实缺行业的代码才触发同源回退。
+    missing_industry = {
+        _code6(entity)
+        for entity in normalized
+        if _code6(entity) and not (out.get(_code6(entity)) or {}).get("industry")
+    }
+    fallback = (
+        (sector_memberships() or {}).get("by_stock") or {}
+        if missing_industry else {}
+    )
     for entity in normalized:
         code = _code6(entity)
         if not code:

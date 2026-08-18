@@ -14,7 +14,6 @@
 """
 from __future__ import annotations
 
-from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from datetime import datetime
 import json
 import math
@@ -35,6 +34,7 @@ from .base import (
     direct_https_opener,
     get_ak,
     is_trade_day,
+    invalidate_ttl_cache,
     log,
     now_cn,
     prev_trade_day,
@@ -46,7 +46,6 @@ from .base import (
 from . import tencent_source as tc
 from . import akshare_isolated
 from . import bootstrap_universe
-from . import official_universe
 from . import tdx_api_source as _tdx_research
 
 _UA = {
@@ -59,8 +58,9 @@ _DIRECT = direct_https_opener()
 _UNIVERSE_CACHE_FRESH_AGE = 30 * 24 * 3600
 _UNIVERSE_CACHE_MAX_STALE_AGE = 180 * 24 * 3600
 _UNIVERSE_MIN_COVERAGE = 3000
-_UNIVERSE_RACE_TIMEOUT = 7.0
-_UNIVERSE_TDX_GRACE = 6.0
+_UNIVERSE_TDX_TIMEOUT = 7.0
+_UNIVERSE_CACHE_SCHEMA = "a-share-universe-v3"
+_UNIVERSE_AUTHORITY = "tdx_instruments_a"
 _universe_status_lock = threading.Lock()
 _universe_status: dict = {
     "source": "unavailable",
@@ -128,9 +128,22 @@ def stock_universe_status() -> dict:
     return status
 
 
+def stock_universe_is_authoritative(status: dict | None = None) -> bool:
+    """只有当前 TDX v3 完整快照才允许对未命中代码作否定判断。"""
+    current = dict(status) if isinstance(status, dict) else stock_universe_status()
+    return bool(
+        current.get("complete")
+        and current.get("schema") == _UNIVERSE_CACHE_SCHEMA
+        and current.get("authority") == _UNIVERSE_AUTHORITY
+        and not current.get("stale")
+        and not current.get("refresh_required")
+        and not current.get("missing_exchanges")
+    )
+
+
 @ttl_cache(5 * 60, fail_seconds=30)
 def cached_stock_universe() -> dict[str, str]:
-    """只读本地 last-good/内置官方快照，不发起网络请求。
+    """只读本地 TDX last-good/内置启动快照，不发起网络请求。
 
     交互接口可用它区分“已知股票但当前报价未返回”和“在完整名录中不存在”；
     不得为了一次问股同步刷新全 A 名录。
@@ -144,7 +157,7 @@ def cached_stock_identity(code: str) -> dict:
     names = cached_stock_universe()
     status = stock_universe_status()
     name = str(names.get(normalized) or "").strip()
-    complete = bool(status.get("complete")) and not bool(status.get("missing_exchanges"))
+    complete = stock_universe_is_authoritative(status)
     return {
         "code": normalized,
         "known": bool(name),
@@ -174,21 +187,41 @@ def _load_universe_cache() -> dict[str, str] | None:
         if len(clean) < _UNIVERSE_MIN_COVERAGE:
             return None
         stale = age > _UNIVERSE_CACHE_FRESH_AGE
+        authority = str(payload.get("authority") or "").strip()
+        schema = str(payload.get("schema") or "").strip()
+        authority_trusted = bool(
+            schema == _UNIVERSE_CACHE_SCHEMA
+            and authority == _UNIVERSE_AUTHORITY
+        )
+        payload_refresh_required = bool(payload.get("refresh_required"))
+        payload_complete = bool(
+            payload.get("complete", not payload_refresh_required)
+        )
+        refresh_required = bool(
+            stale or payload_refresh_required or not authority_trusted
+        )
+        complete = bool(
+            authority_trusted and payload_complete and not refresh_required
+        )
         status = {
             "source": str(payload.get("source") or "本地last-good"),
+            "schema": schema or None,
+            "authority": authority or None,
             "sources": list(payload.get("sources") or []),
             "as_of": payload.get("as_of") or payload.get("saved_at"),
             "fetched_at": payload.get("saved_at"),
             "count": len(clean),
             "coverage": payload.get("coverage") or {"total": len(clean)},
             "stale": stale,
-            "refresh_required": stale or bool(payload.get("refresh_required")),
-            "complete": bool(payload.get("complete", not payload.get("refresh_required"))),
+            "refresh_required": refresh_required,
+            "complete": complete,
             "missing_exchanges": list(payload.get("missing_exchanges") or []),
             "source_attempts": dict(payload.get("source_attempts") or {}),
             "age_seconds": round(age),
             "cache": "last-good",
         }
+        if not authority_trusted:
+            status["degradation_reason"] = "legacy_or_non_tdx_authority"
         _set_universe_status(status)
         _record_source(
             "股票代码表(本地last-good)", 0, True,
@@ -213,11 +246,12 @@ def _save_universe_cache(names: dict[str, str], metadata: dict | None = None) ->
         saved_at = now_cn().isoformat(timespec="seconds")
         meta = dict(metadata or {})
         payload = {
-            "schema": "a-share-universe-v2",
+            "schema": _UNIVERSE_CACHE_SCHEMA,
             "saved_at": saved_at,
             "saved_at_epoch": time.time(),
             "as_of": meta.get("as_of") or now_cn().date().isoformat(),
-            "source": meta.get("source") or "未标注免费源",
+            "source": meta.get("source") or "未标注名录源",
+            "authority": meta.get("authority"),
             "sources": list(meta.get("sources") or []),
             "coverage": meta.get("coverage") or {"total": len(names)},
             "refresh_required": bool(meta.get("refresh_required")),
@@ -228,6 +262,9 @@ def _save_universe_cache(names: dict[str, str], metadata: dict | None = None) ->
         }
         tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
         os.replace(tmp, path)
+        invalidate_ttl_cache(
+            "hermes_trader.data.free_source.cached_stock_universe:"
+        )
     except OSError as exc:
         log.info("股票代码表快照写入失败: %s", str(exc)[:120])
         try:
@@ -450,190 +487,58 @@ def _active_a_share_names(names: dict[str, str]) -> dict[str, str]:
 
 @ttl_cache(30 * 60, fail_seconds=60)
 def stock_universe() -> dict[str, str] | None:
-    """全 A 股 ``code -> name``：三家交易所官网独立并发，并与 TDX API 竞速。
+    """全 A 股 ``code -> name``，以 TDX ``instruments_a`` 为唯一主名录。
 
-    不再调用 AkShare 的串行聚合函数。交易所结果合并后达到 3000 只即可
-    作为真实分母（允许单个交易所故障）；低于门槛绝不落盘。全链失败时
-    读取 last-good，30 天后明确标记 stale/refresh_required，180 天后拒绝使用。
+    TDX 适配器必须按 cursor 拉到明确终页，随后这里再校验沪深京覆盖并落客户
+    last-good。交易所启动快照只能在 TDX 与 last-good 都不可用时展示已有名称，
+    永远无权产生 ``complete=true`` 或据此判定一只股票不存在。
     """
-    executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="hermes-universe")
-    future_kind = {
-        executor.submit(_bounded_tdx_api_universe, _UNIVERSE_RACE_TIMEOUT - 0.25): "tdx_api"
-    }
-    for exchange in ("sse", "szse", "bse"):
-        future_kind[executor.submit(
-            official_universe.fetch_exchange, exchange, _UNIVERSE_RACE_TIMEOUT - 0.5
-        )] = exchange
-    pending = set(future_kind)
-    deadline = time.monotonic() + _UNIVERSE_RACE_TIMEOUT
-    official_parts: dict[str, official_universe.ExchangeUniverse] = {}
-    tdx_candidate: dict[str, str] | None = None
-    official_candidate: tuple[dict[str, str], dict] | None = None
-    candidate_ready_at: float | None = None
-    try:
-        while pending:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                break
-            if candidate_ready_at is not None:
-                remaining = min(remaining, max(0.0, _UNIVERSE_TDX_GRACE - (time.monotonic() - candidate_ready_at)))
-                if remaining <= 0:
-                    break
-            done, pending = wait(pending, timeout=remaining, return_when=FIRST_COMPLETED)
-            if not done:
-                break
-            for future in done:
-                kind = future_kind[future]
-                try:
-                    result = future.result()
-                except Exception:  # noqa: BLE001 - 任一分支失败不影响另三支
-                    result = None
-                if kind == "tdx_api":
-                    names = result if isinstance(result, dict) else {}
-                    if len(names) >= _UNIVERSE_MIN_COVERAGE:
-                        tdx_candidate = names
-                        _coverage, _missing = _tdx_exchange_coverage(names)
-                        if not _missing:
-                            candidate_ready_at = candidate_ready_at or time.monotonic()
-                elif isinstance(result, official_universe.ExchangeUniverse):
-                    official_parts[kind] = result
-
-            official_names: dict[str, str] = {}
-            for exchange in ("sse", "szse", "bse"):
-                part = official_parts.get(exchange)
-                if part:
-                    official_names.update(part.names)
-            official_names = _active_a_share_names(official_names)
-            if len(official_names) >= _UNIVERSE_MIN_COVERAGE:
-                coverage = {
-                    exchange: {
-                        "count": len(part.names), "complete": part.complete, "error": part.error,
-                    }
-                    for exchange, part in official_parts.items()
-                }
-                coverage["total"] = len(official_names)
-                missing_exchanges = [
-                    exchange for exchange in ("sse", "szse", "bse")
-                    if exchange not in official_parts or not official_parts[exchange].complete
-                ]
-                metadata = {
-                    "source": "沪深京交易所官网公开列表",
-                    "sources": [part.source_url for part in official_parts.values() if part.names],
-                    "as_of": now_cn().date().isoformat(),
-                    "coverage": coverage,
-                    "refresh_required": bool(missing_exchanges),
-                    "complete": not missing_exchanges,
-                    "missing_exchanges": missing_exchanges,
-                }
-                if metadata["complete"]:
-                    # 官网的 complete 只表示三个端点各自返回，不代表集合没有漏股。
-                    # 给 TDX 名录一个很短的 grace，两者做并集后再落盘。
-                    official_candidate = (official_names, metadata)
-                    candidate_ready_at = candidate_ready_at or time.monotonic()
-                    if tdx_candidate is not None:
-                        break
-                    continue
-                # 官网部分达标只作候选，给仍在途的 BSE/完整 TDX 短暂 grace。
-                official_candidate = (official_names, metadata)
-
-        tdx_choice: tuple[dict[str, str], dict] | None = None
-        source_attempts = {
-            exchange: {
-                "status": (
-                    "ok" if official_parts.get(exchange) and official_parts[exchange].complete
-                    else ("degraded" if official_parts.get(exchange) else "timeout")
-                ),
-                "count": len(official_parts[exchange].names) if official_parts.get(exchange) else 0,
-                "error": (official_parts[exchange].error if official_parts.get(exchange) else "bounded_fetch_timeout"),
-            }
-            for exchange in ("sse", "szse", "bse")
-        }
-        source_attempts["tdx_api"] = {
-            "status": "ok" if tdx_candidate is not None else "unavailable",
-            "count": len(tdx_candidate or {}),
-            "error": None if tdx_candidate is not None else "instruments_a_unavailable",
-        }
-        if official_candidate is not None:
-            official_candidate[1]["source_attempts"] = source_attempts
-        if tdx_candidate is not None:
-            tdx_candidate = _active_a_share_names(tdx_candidate)
-            tdx_coverage, missing_exchanges = _tdx_exchange_coverage(tdx_candidate)
-            metadata = {
-                "source": "TDX 数据 API 股票列表",
-                "sources": ["TDX 数据 API / instruments_a"],
-                "as_of": now_cn().date().isoformat(),
-                "coverage": {
-                    **tdx_coverage, "tdx": len(tdx_candidate), "total": len(tdx_candidate),
+    raw = _bounded_tdx_api_universe(_UNIVERSE_TDX_TIMEOUT)
+    names = _active_a_share_names(raw or {})
+    if len(names) >= _UNIVERSE_MIN_COVERAGE:
+        coverage, missing_exchanges = _tdx_exchange_coverage(names)
+        complete = not missing_exchanges
+        metadata = {
+            "source": "TDX 数据 API 股票列表",
+            "authority": _UNIVERSE_AUTHORITY,
+            "sources": ["TDX 数据 API / instruments_a"],
+            "as_of": now_cn().date().isoformat(),
+            "coverage": {
+                **coverage,
+                "tdx": len(names),
+                "total": len(names),
+                "pagination_complete": True,
+            },
+            "refresh_required": not complete,
+            "complete": complete,
+            "missing_exchanges": missing_exchanges,
+            "source_attempts": {
+                "tdx_api": {
+                    "status": "ok" if complete else "degraded",
+                    "count": len(names),
+                    "error": None if complete else "exchange_coverage_below_floor",
                 },
-                "refresh_required": bool(missing_exchanges),
-                "complete": not missing_exchanges,
-                "missing_exchanges": missing_exchanges,
-                "source_attempts": source_attempts,
-            }
-            tdx_choice = (tdx_candidate, metadata)
+            },
+        }
+        _save_universe_cache(names, metadata)
+        _set_universe_status({
+            **metadata,
+            "schema": _UNIVERSE_CACHE_SCHEMA,
+            "count": len(names),
+            "stale": False,
+            "fetched_at": now_cn().isoformat(timespec="seconds"),
+            "cache": "live-refresh",
+        })
+        _record_source(
+            "股票代码表(TDX API)", 0, complete, "tdx_api",
+            None if complete else f"覆盖不足: {','.join(missing_exchanges)}",
+        )
+        return names
 
-        choices = [choice for choice in (official_candidate, tdx_choice) if choice is not None]
-        if official_candidate is not None and tdx_choice is not None:
-            official_names, official_meta = official_candidate
-            tdx_names, tdx_meta = tdx_choice
-            merged_names = dict(tdx_names)
-            merged_names.update(official_names)  # 同代码以交易所名称为准
-            merged_names = _active_a_share_names(merged_names)
-            merged_coverage, merged_missing = _tdx_exchange_coverage(merged_names)
-            choices.append((merged_names, {
-                "source": "沪深京交易所官网 + TDX 数据 API 交叉并集",
-                "sources": list(dict.fromkeys(
-                    list(official_meta.get("sources") or []) + list(tdx_meta.get("sources") or [])
-                )),
-                "as_of": now_cn().date().isoformat(),
-                "coverage": {
-                    **merged_coverage,
-                    "official": len(official_names),
-                    "tdx": len(tdx_names),
-                    "tdx_only": len(set(tdx_names) - set(official_names)),
-                    "official_only": len(set(official_names) - set(tdx_names)),
-                    "total": len(merged_names),
-                },
-                "refresh_required": bool(merged_missing),
-                "complete": not merged_missing,
-                "missing_exchanges": merged_missing,
-                "source_attempts": source_attempts,
-            }))
-        if choices:
-            # 优先完整、其次缺所更少、再比覆盖数；不因先返回
-            # 一份 3000+ partial 就丢弃几百毫秒后的完整免费股票池。
-            selected_names, selected_meta = max(
-                choices,
-                key=lambda item: (
-                    bool(item[1].get("complete")),
-                    -len(item[1].get("missing_exchanges") or []),
-                    len(item[0]),
-                    2 if "交叉并集" in str(item[1].get("source") or "") else (
-                        1 if item[1].get("source") == "沪深京交易所官网公开列表" else 0
-                    ),
-                ),
-            )
-            _save_universe_cache(selected_names, selected_meta)
-            _set_universe_status({
-                **selected_meta, "count": len(selected_names), "stale": False,
-                "fetched_at": now_cn().isoformat(timespec="seconds"),
-            })
-            source_name = str(selected_meta.get("source") or "")
-            if "交叉并集" in source_name:
-                label, mode = "股票代码表(官网+TDX API)", "tdx_api"
-            elif source_name == "沪深京交易所官网公开列表":
-                label, mode = "股票代码表(交易所官网)", "official-direct"
-            else:
-                label, mode = "股票代码表(TDX API)", "tdx_api"
-            _record_source(label, 0, True, mode, None)
-            for other in pending:
-                other.cancel()
-            return selected_names
-        cached = _load_universe_cache()
-        return cached if cached is not None else _load_bootstrap_universe()
-    finally:
-        # 不等待失去竞速的慢分支；页面墙钟最长 7s。
-        executor.shutdown(wait=False, cancel_futures=True)
+    cached = _load_universe_cache()
+    if cached is not None:
+        return cached
+    return _load_bootstrap_universe()
 
 
 def _name_map() -> dict[str, str]:

@@ -53,6 +53,8 @@ def _patch_universe(monkeypatch) -> None:
         "stock_universe_status",
         lambda: {
             "complete": True,
+            "schema": "a-share-universe-v3",
+            "authority": "tdx_instruments_a",
             "missing_exchanges": [],
             "as_of": "2026-07-18",
         },

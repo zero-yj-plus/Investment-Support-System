@@ -186,6 +186,7 @@ def test_normal_orders_need_no_manual_approval(
     assert order["approved_at"] is None
     assert status["manual_approval_required"] is False
     assert status["automatic_matching"] is True
+    assert status["automatic_matching_enabled"] is True
     assert status["matching_interval_seconds"] == 5
 
 
@@ -589,9 +590,48 @@ def test_sqlite_uses_wal_and_state_survives_restart(tmp_path, clock: Clock) -> N
         assert conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
 
 
+def test_automatic_matching_switch_is_audited_idempotent_and_persistent(
+    tmp_path, clock: Clock,
+) -> None:
+    path = tmp_path / "simulation.sqlite3"
+    store = SimulationStore(path, clock=clock)
+
+    paused = store.set_automatic_matching(
+        client_request_id="req-matching-pause",
+        enabled=False,
+    )
+    replay = store.set_automatic_matching(
+        client_request_id="req-matching-pause",
+        enabled=False,
+    )
+
+    assert paused["status"]["schema_version"] == "simulation-status.v4"
+    assert paused["status"]["automatic_matching"] is True
+    assert paused["status"]["automatic_matching_enabled"] is False
+    assert paused["status"]["latest_event"]["event_type"] == "automatic_matching_paused"
+    assert replay["idempotent_replay"] is True
+    assert SimulationStore(path, clock=clock).automatic_matching_enabled() is False
+
+    with pytest.raises(SimulationError) as invalid:
+        store.set_automatic_matching(
+            client_request_id="req-matching-invalid",
+            enabled="false",
+        )
+    assert invalid.value.code == "automatic_matching_enabled_invalid"
+
+
 class Request:
-    def __init__(self, store: SimulationStore, payload: dict | None = None, query: dict | None = None):
-        self.app = SimpleNamespace(state=SimpleNamespace(simulation_store=store, store=object()))
+    def __init__(
+        self,
+        store: SimulationStore,
+        payload: dict | None = None,
+        query: dict | None = None,
+        scheduler=None,
+    ):
+        state = SimpleNamespace(simulation_store=store, store=object())
+        if scheduler is not None:
+            state.scheduler = scheduler
+        self.app = SimpleNamespace(state=state)
         self._payload = payload or {}
         self.query_params = query or {}
 
@@ -601,6 +641,50 @@ class Request:
 
 def _json_response(response) -> dict:
     return json.loads(response.body.decode("utf-8"))
+
+
+def test_automatic_matching_api_controls_scheduler_without_touching_orders(
+    store: SimulationStore, clock: Clock,
+) -> None:
+    order_id = store.propose(**proposal(clock, "req-toggle-order"))["order"]["order_id"]
+
+    class Scheduler:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str]] = []
+
+        def pause_job(self, job_id: str) -> None:
+            self.calls.append(("pause", job_id))
+
+        def resume_job(self, job_id: str) -> None:
+            self.calls.append(("resume", job_id))
+
+    scheduler = Scheduler()
+    paused = asyncio.run(routes.simulation_automatic_matching(Request(
+        store,
+        {"client_request_id": "req-api-pause-matching", "enabled": False},
+        scheduler=scheduler,
+    )))
+    resumed = asyncio.run(routes.simulation_automatic_matching(Request(
+        store,
+        {"client_request_id": "req-api-resume-matching", "enabled": True},
+        scheduler=scheduler,
+    )))
+    old_pause_replay = asyncio.run(routes.simulation_automatic_matching(Request(
+        store,
+        {"client_request_id": "req-api-pause-matching", "enabled": False},
+        scheduler=scheduler,
+    )))
+
+    assert paused["status"]["automatic_matching_enabled"] is False
+    assert resumed["status"]["automatic_matching_enabled"] is True
+    assert old_pause_replay["idempotent_replay"] is True
+    assert old_pause_replay["status"]["automatic_matching_enabled"] is True
+    assert scheduler.calls == [
+        ("pause", "simulation_matcher"),
+        ("resume", "simulation_matcher"),
+        ("resume", "simulation_matcher"),
+    ]
+    assert store.get_order(order_id)["status"] == "approved"
 
 
 def _install_server_authority(monkeypatch, clock: Clock, quote_state: dict, *, risk_level: int = 2):
@@ -870,3 +954,61 @@ def test_automatic_matcher_fills_triggered_order_and_expires_day_orders(
     assert order["status"] == "cancelled"
     assert order["rejection_reason"] == "day_order_expired"
     assert order["events"][-1]["event_type"] == "expired"
+
+
+def test_automatic_matcher_pause_skips_orders_expiry_and_quotes(
+    store: SimulationStore, clock: Clock, monkeypatch,
+) -> None:
+    current = datetime(2026, 7, 13, 15, 1, tzinfo=timezone(timedelta(hours=8)))
+    quote_calls: list[list[str]] = []
+    matcher = SimulationMatcher(
+        store,
+        quote_provider=lambda symbols: quote_calls.append(symbols) or {},
+        clock=lambda: current,
+    )
+    monkeypatch.setattr(simulation_matcher, "is_trade_day", lambda _value: True)
+    order_id = store.propose(**proposal(
+        clock, "req-matcher-paused", limit_price=9.0,
+    ))["order"]["order_id"]
+    store.set_automatic_matching(
+        client_request_id="req-pause-before-match",
+        enabled=False,
+    )
+
+    result = asyncio.run(matcher.run_once())
+
+    assert result == {
+        "ok": True,
+        "session": "paused",
+        "matched": 0,
+        "expired": 0,
+        "migrated": 0,
+    }
+    assert quote_calls == []
+    assert store.get_order(order_id)["status"] == "approved"
+
+
+def test_register_keeps_persisted_automatic_matching_pause(store: SimulationStore) -> None:
+    store.set_automatic_matching(
+        client_request_id="req-register-paused",
+        enabled=False,
+    )
+
+    class Job:
+        def __init__(self) -> None:
+            self.paused = False
+
+        def pause(self) -> None:
+            self.paused = True
+
+    class Scheduler:
+        def __init__(self) -> None:
+            self.job = Job()
+
+        def add_job(self, *_args, **_kwargs):
+            return self.job
+
+    scheduler = Scheduler()
+    simulation_matcher.register(scheduler, SimulationMatcher(store))
+
+    assert scheduler.job.paused is True

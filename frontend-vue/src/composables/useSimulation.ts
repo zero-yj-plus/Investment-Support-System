@@ -152,6 +152,17 @@ export function useSimulation() {
     }, () => '模拟订单已取消。')
   }
 
+  function setAutomaticMatching(enabled: boolean): Promise<boolean> {
+    return perform(
+      `automatic-matching:${enabled ? 'enable' : 'pause'}`,
+      '/simulation/automatic-matching',
+      { enabled },
+      () => enabled
+        ? '模拟交易已开启；挂单将继续按 5 秒周期检查。'
+        : '模拟交易已关闭；现有挂单保持不变。',
+    )
+  }
+
   function emergencyStop(reason: string): Promise<boolean> {
     return perform('emergency-stop', '/simulation/emergency-stop', { reason }, () => (
       '紧急停止已开启，所有待处理模拟订单已取消。'
@@ -218,6 +229,7 @@ export function useSimulation() {
     load,
     propose,
     cancel,
+    setAutomaticMatching,
     emergencyStop,
     resetEmergencyStop,
     initializeAccount,

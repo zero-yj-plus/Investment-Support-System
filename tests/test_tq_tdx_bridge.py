@@ -209,6 +209,7 @@ def test_stock_universe_and_cursor_pagination() -> None:
     status, first = service.dispatch("GET", "/v1/data/instruments_a?limit=2", auth())
     assert status == 200
     assert len(first["rows"]) == 2
+    assert first["total"] == 3
     assert first["has_more"] is True
     assert first["next_cursor"] == "2"
     assert first["rows"][0]["payload"]["Name"] == "平安银行"
@@ -216,6 +217,7 @@ def test_stock_universe_and_cursor_pagination() -> None:
     assert status == 200
     assert second["rows"][0]["entity_key"] == "830001.BJ"
     assert second["has_more"] is False
+    assert second["total"] == 3
 
 
 def test_sectors_members_and_relations() -> None:

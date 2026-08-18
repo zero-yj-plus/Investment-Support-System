@@ -19,6 +19,10 @@
 显式不支持并返回 HTTP `501`：板块资金排名、新闻舆情、机构一致预期、十大股东。
 账户、资产、持仓、委托、下单、撤单、公式执行和客户端控制方法不在转发白名单中。
 
+`instruments_a` 以最多 5000 条一页返回 `rows/count/total/has_more/next_cursor`。
+上层必须拉到明确终页并校验累计行数等于 `total`；分页不完整时整份名录不可作为
+“代码不存在”的依据。
+
 ## 配置
 
 先启动支持 TQ 的通达信客户端，并确认它监听 `127.0.0.1:17709`。然后为桥和项目
@@ -40,6 +44,13 @@ $env:TDXAPI_KEY=$env:TQ_BRIDGE_API_KEY
 
 ```bat
 start-tdx-bridge.bat
+```
+
+默认后台启动，不保留 CMD 窗口，输出写入 `data\logs\tdx-bridge-start-*.log`。
+排查启动问题或需要用 Ctrl+C 停止时，改用前台模式：
+
+```bat
+start-tdx-bridge.bat --foreground
 ```
 
 另开一个 PowerShell 检查：
