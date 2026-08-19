@@ -92,8 +92,14 @@ def test_vue_holdings_cleans_lifecycle_and_prevents_duplicate_actions() -> None:
         assert 'role="button"' not in source
     assert '>添加持仓</button>' in page
     assert '@click="openEditor"' in page
-    assert ':disabled="loading || !!holdingsError || saving || adding"' in page
-    assert "'保存持仓变更'" in page
+    assert ':disabled="loading || !!holdingsError || saving || adding || actionRunning"' in page
+    assert "保存持仓变更" not in page
+    assert "await persistHoldings(" in composable
+    assert "持仓已核验并加入" in composable
+    assert "@commit=\"save\"" in page
+    assert "@blur=\"emit('commit')\"" in _read("src/components/HoldingsTable.vue")
+    assert "止损线（可选）" in editor
+    assert "止盈线（可选）" in editor
     assert "HoldingsSummary" not in page
     assert '<dt>缺失报价</dt>' not in page
 

@@ -28,7 +28,6 @@ defineProps<{
       <footer>
         <span>{{ message.role === 'user' ? '你' : '研究助手' }}</span>
         <span v-if="message.code" class="mono">{{ message.code }}</span>
-        <span v-if="message.perspectives?.length" class="stock-ask-message__perspectives">视角：{{ message.perspectives.map((item) => item.name).join('、') }}</span>
         <time v-if="message.ts">{{ message.ts }}</time>
         <span v-if="message.state === 'streaming'">生成中</span>
         <span v-else-if="message.state === 'partial'">部分输出</span>
@@ -51,7 +50,6 @@ defineProps<{
 .stock-ask-message__waiting strong { color: var(--accent); font-size: 17px; }
 .stock-ask-message__quarantine { margin: 0 0 8px; padding: 9px 10px; border: 1px solid var(--warning); border-radius: 6px; background: color-mix(in srgb, var(--warning) 9%, var(--surface)); color: var(--warning); font-weight: 700; }
 .stock-ask-message footer { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 6px; color: var(--text-3); font-size: 12px; }
-.stock-ask-message__perspectives { color: var(--accent); font-weight: 700; }
 .stock-ask-message__markdown :deep(.report-markdown) { max-width: none; padding: 0; }
 .stock-ask-message__markdown :deep(.report-markdown h2) { margin-top: 4px; font-size: 20px; }
 .stock-ask-message__markdown :deep(.report-markdown h3) { margin-top: 18px; font-size: 18px; }

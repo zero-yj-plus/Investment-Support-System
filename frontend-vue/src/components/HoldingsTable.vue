@@ -2,10 +2,11 @@
 import type { HoldingView } from '../types/holdings'
 import { formatMoney, formatPercent, formatPrice, pnlTone } from '../utils/holdingsFormat'
 
-defineProps<{ rows: HoldingView[] }>()
+defineProps<{ rows: HoldingView[]; busy?: boolean }>()
 
 const emit = defineEmits<{
   update: [clientKey: string, field: 'code' | 'cost' | 'shares' | 'note', value: string]
+  commit: []
   remove: [clientKey: string]
 }>()
 
@@ -21,7 +22,7 @@ function inputValue(event: Event): string {
         <p class="eyebrow">结构化明细</p>
         <h2 id="holdings-detail-title">持仓明细</h2>
       </div>
-      <span>{{ rows.length }} 条账本记录</span>
+      <span>{{ busy ? '正在自动保存' : `${rows.length} 条账本记录 · 修改后自动保存` }}</span>
     </header>
 
     <div class="holdings-table-wrap" tabindex="0" role="region" aria-label="持仓明细宽表，可横向滚动">
@@ -47,8 +48,8 @@ function inputValue(event: Event): string {
             <td class="mono" :class="`is-${pnlTone(row.pnl)}`">{{ formatMoney(row.pnl) }}<small>{{ formatPercent(row.pnlPct, true) }}</small></td>
             <td class="mono">{{ formatMoney(row.marketValue) }}</td>
             <td class="mono">{{ formatPercent(row.holdingSharePct) }}<small>{{ row.holdingSharePct == null ? '报价不完整' : '持仓市值占比' }}</small></td>
-            <td><input :aria-label="`${row.name || row.code}备注`" :value="row.note" maxlength="200" @input="emit('update', row.clientKey, 'note', inputValue($event))" /></td>
-            <td><button type="button" class="secondary-button" @click="emit('remove', row.clientKey)">取消关注</button></td>
+            <td><input :aria-label="`${row.name || row.code}备注`" :value="row.note" :disabled="busy" maxlength="200" @input="emit('update', row.clientKey, 'note', inputValue($event))" @blur="emit('commit')" /></td>
+            <td><button type="button" class="secondary-button" :disabled="busy" @click="emit('remove', row.clientKey)">取消关注</button></td>
           </tr>
         </tbody>
       </table>
@@ -58,7 +59,7 @@ function inputValue(event: Event): string {
       <article v-for="row in rows" :key="`mobile-${row.clientKey}`" class="holding-card">
         <header>
           <div><strong>{{ row.name || '名称缺失' }}</strong><span class="mono">{{ row.code || '代码缺失' }}</span></div>
-          <button type="button" class="secondary-button" @click="emit('remove', row.clientKey)">取消关注</button>
+          <button type="button" class="secondary-button" :disabled="busy" @click="emit('remove', row.clientKey)">取消关注</button>
         </header>
         <p class="holding-card__industry">行业：{{ row.industry || '待服务端核验' }}</p>
         <dl>
@@ -69,7 +70,7 @@ function inputValue(event: Event): string {
         </dl>
         <p v-if="row.quote?.stale || row.price == null" class="holding-card__quote-note">{{ row.quote?.quote_note || '当前报价缺失，市值与盈亏不计算。' }}</p>
         <div class="holding-card__fields">
-          <label><span>备注</span><input :value="row.note" maxlength="200" @input="emit('update', row.clientKey, 'note', inputValue($event))" /></label>
+          <label><span>备注</span><input :value="row.note" :disabled="busy" maxlength="200" @input="emit('update', row.clientKey, 'note', inputValue($event))" @blur="emit('commit')" /></label>
         </div>
       </article>
     </div>

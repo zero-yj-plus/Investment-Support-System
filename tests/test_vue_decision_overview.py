@@ -751,6 +751,7 @@ def test_vue_timing_cleans_lifecycle_and_uses_native_safe_interactions() -> None
     page = _read("src/components/TimingPage.vue")
     stock = _read("src/components/TimingStockLookup.vue")
     composable = _read("src/composables/useTiming.ts")
+    autocomplete = _read("src/components/StockAutocomplete.vue")
 
     for controller in ("marketController?.abort()", "stockController?.abort()"):
         assert controller in composable
@@ -770,8 +771,8 @@ def test_vue_timing_cleans_lifecycle_and_uses_native_safe_interactions() -> None
     assert '<form' in stock
     assert '<button' in stock and '<button' in page
     assert 'type="submit"' in stock
-    assert 'inputmode="numeric"' in stock
-    assert 'pattern="[0-9]{6}"' in stock
+    assert 'inputmode="search"' in autocomplete
+    assert "中文或拼音输入必须先选择候选股票" in autocomplete
     assert "本页不消费 Markdown" in page
 
 
@@ -780,6 +781,7 @@ def test_vue_timing_has_responsive_accessible_layout_and_focus_semantics() -> No
     fear = _read("src/components/TimingFearGreed.vue")
     card = _read("src/components/TimingRegionCard.vue")
     stock = _read("src/components/TimingStockLookup.vue")
+    autocomplete = _read("src/components/StockAutocomplete.vue")
 
     assert 'aria-labelledby="timing-page-title"' in page
     assert 'aria-live="polite"' in page
@@ -790,7 +792,7 @@ def test_vue_timing_has_responsive_accessible_layout_and_focus_semantics() -> No
     assert '@media (max-width: 720px)' in page + fear + stock
     assert '@media (max-width: 520px)' in card
     assert '@media (prefers-reduced-motion: reduce)' in page + stock
-    assert "min-height: 44px" in stock and "min-height: 44px" in card
+    assert "min-height: 44px" in stock + autocomplete and "min-height: 44px" in card
     assert "box-shadow" not in page + fear + card + stock
     assert "linear-gradient" not in page + fear + card + stock
 

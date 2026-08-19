@@ -1126,6 +1126,7 @@ def _deep_technical_analysis(
         return sum(values[-window:]) / window if len(values) >= window else None
 
     ma5 = mean_tail(closes, 5)
+    ma10 = mean_tail(closes, 10)
     ma20 = mean_tail(closes, 20)
     ma60 = mean_tail(closes, 60)
     ma20_prev = (
@@ -1142,6 +1143,8 @@ def _deep_technical_analysis(
     atr14 = _atr14(daily)
     ret20 = (closes[-1] / closes[-21] - 1.0) * 100.0 if len(closes) >= 21 else None
     ret60 = (closes[-1] / closes[-61] - 1.0) * 100.0 if len(closes) >= 61 else None
+    ret5 = (closes[-1] / closes[-6] - 1.0) * 100.0 if len(closes) >= 6 else None
+    ret10 = (closes[-1] / closes[-11] - 1.0) * 100.0 if len(closes) >= 11 else None
     volume5 = mean_tail(volumes, 5)
     volume20 = mean_tail(volumes, 20)
     volume_ratio_5_20 = (
@@ -1318,11 +1321,16 @@ def _deep_technical_analysis(
         "dimensions": dimensions,
         "metrics": {
             "ma5": round(ma5, 4) if ma5 is not None else None,
+            "ma10": round(ma10, 4) if ma10 is not None else None,
             "ma20": round(ma20, 4) if ma20 is not None else None,
             "ma60": round(ma60, 4) if ma60 is not None else None,
+            "ma20_prev": round(ma20_prev, 4) if ma20_prev is not None else None,
             "rsi14": round(rsi14, 2) if rsi14 is not None else None,
             "macd_hist": round(macd_hist, 4) if macd_hist is not None else None,
+            "macd_hist_prev": round(macd_prev, 4) if macd_prev is not None else None,
             "atr14": round(atr14, 4) if atr14 is not None else None,
+            "return5_pct": round(ret5, 2) if ret5 is not None else None,
+            "return10_pct": round(ret10, 2) if ret10 is not None else None,
             "return20_pct": round(ret20, 2) if ret20 is not None else None,
             "return60_pct": round(ret60, 2) if ret60 is not None else None,
             "volume_5_20": round(volume_ratio_5_20, 3) if volume_ratio_5_20 is not None else None,

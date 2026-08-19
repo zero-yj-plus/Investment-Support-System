@@ -16,8 +16,7 @@ const {
   composerError, chatError, saveWarning, conversations, conversationsLoading,
   conversationError, activeConversationId, messages, pendingImages, streaming,
   stageText, stageSeconds, refreshing, canAsk, loadStock, loadConversations,
-  perspectives, selectedPerspectiveIds, maxSelectedPerspectives,
-  perspectivesLoading, perspectiveError, loadPerspectives, togglePerspective, clearPerspectives,
+  stockAskProfile, updateStockAskProfile,
   dataMaterials, requiredMaterials, selectedDataMaterialIds, preselectedDataMaterialIds,
   maxSelectedDataMaterials, materialsAdjusted, materialReport, materialsLoading, materialError,
   loadDataMaterials, toggleDataMaterial, resetDataMaterials, switchMode,
@@ -65,7 +64,7 @@ defineExpose({ refresh })
     <header class="stock-ask-page__header">
       <div class="page-heading">
         <h1 id="stock-ask-page-title">问股</h1>
-        <p class="page-subtitle">{{ mode === 'free' ? '自由问答：直接讨论市场、板块与交易研究问题；识别到单只股票时自动切入受治理问股。' : '专属盘中问股：先锁定单只 A 股，再围绕当前动作、风险边界、失效条件和证据完整性提问。' }}</p>
+        <p class="page-subtitle">{{ mode === 'free' ? '自由问答：直接讨论市场、板块与交易研究问题；识别到单只股票时自动切入受治理问股。' : '确定性问股：服务端按画像、五类证据、六桶评分和 RiskGate 冻结动作与风险边界。' }}</p>
       </div>
       <div class="stock-ask-mode-switch" role="tablist" aria-label="问股模式">
         <button type="button" role="tab" :aria-selected="mode === 'stock'" @click="switchMode('stock')">盘中问股</button>
@@ -107,11 +106,8 @@ defineExpose({ refresh })
         :chat-error="chatError"
         :save-warning="saveWarning"
         :can-ask="canAsk"
-        :perspectives="perspectives"
-        :selected-perspective-ids="selectedPerspectiveIds"
-        :max-selected-perspectives="maxSelectedPerspectives"
-        :perspectives-loading="perspectivesLoading"
-        :perspective-error="perspectiveError"
+        :stock-ask-profile="stockAskProfile"
+        :quote-price="core?.quote?.price"
         @code-input="codeInput = $event"
         @submit-code="submitCode"
         @update:prompt="prompt = $event"
@@ -119,9 +115,7 @@ defineExpose({ refresh })
         @remove-image="removePendingImage"
         @send="send()"
         @stop="stop"
-        @toggle-perspective="togglePerspective"
-        @clear-perspectives="clearPerspectives"
-        @retry-perspectives="loadPerspectives"
+        @update:stock-ask-profile="updateStockAskProfile"
       />
       <StockAskMaterials
         v-if="mode === 'free'"
@@ -154,7 +148,7 @@ defineExpose({ refresh })
     </div>
 
     <footer class="stock-ask-page__governance">
-      <span>{{ mode === 'free' ? '自由问答不会绕过单股风险闸；识别到单股后自动进入受治理问股。' : '盘中问股保持受治理单股链路，不提供组合持仓判断或产业链挖掘。' }}</span>
+      <span>{{ mode === 'free' ? '自由问答不会绕过单股风险闸；识别到单股后自动进入受治理问股。' : '个股主输出不调用模型；评分、动作、价格和风险闸均由服务端确定性规则产生。' }}</span>
       <span>未完整回答不保存；历史消息只追加，不覆盖既有事实。</span>
     </footer>
     <dl class="stock-ask-page__stamp data-footnote-stamp" :aria-label="mode === 'free' ? '问答模式、数据时点与注入状态' : '问股标的、数据时点与证据状态'">

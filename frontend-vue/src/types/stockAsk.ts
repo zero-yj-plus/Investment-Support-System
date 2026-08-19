@@ -1,7 +1,6 @@
 export type StockAskRequestKey =
   | 'core'
   | 'enrichment'
-  | 'perspectiveCatalog'
   | 'materialCatalog'
   | 'materialPreselect'
   | 'conversationList'
@@ -111,7 +110,6 @@ export interface ConversationMessagePayload {
   content?: string
   ts?: string
   has_image?: boolean
-  perspectives?: StockPerspectiveSummary[]
   data_materials?: DataMaterialReport
 }
 
@@ -166,25 +164,6 @@ export interface DataMaterialPreselectResponse {
   error?: string
 }
 
-export interface StockPerspectiveSummary {
-  id: string
-  name: string
-  version: string
-}
-
-export interface StockPerspective extends StockPerspectiveSummary {
-  category: string
-  description: string
-  tags: string[]
-}
-
-export interface StockPerspectiveListResponse {
-  ok?: boolean
-  max_selected?: number
-  perspectives?: StockPerspective[]
-  error?: string
-}
-
 export interface ConversationListResponse {
   ok?: boolean
   conversations?: ConversationMeta[]
@@ -213,7 +192,6 @@ export interface StockAskMessage {
   ts?: string
   code?: string
   imageCount?: number
-  perspectives?: StockPerspectiveSummary[]
   dataMaterials?: DataMaterialReport
   state: StockAskMessageState
 }

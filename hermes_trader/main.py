@@ -235,9 +235,11 @@ def create_app(config_path: str) -> FastAPI:
         # complete 缓存继续参与负向身份判断。
         async def _refresh_stock_universe() -> None:
             try:
-                from .data import free_source  # noqa: PLC0415
+                from .data import free_source, stock_search  # noqa: PLC0415
 
                 await asyncio.to_thread(free_source.stock_universe)
+                # 拼音派生约 1 秒，但只在后台构建一次；首个用户输入不承担该成本。
+                await asyncio.to_thread(stock_search.search_stock_catalog, "")
             except Exception:  # noqa: BLE001 -- 名录失败必须降级，不能阻断主服务
                 log.exception("TDX 股票名录启动刷新失败（保留降级缓存）")
 

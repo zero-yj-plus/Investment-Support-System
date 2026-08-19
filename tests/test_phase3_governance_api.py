@@ -370,7 +370,7 @@ async def test_actionable_chat_modes_cannot_fall_back_to_raw_model_stream(
 
 
 @pytest.mark.asyncio
-async def test_governed_stock_chat_answers_the_actual_question(monkeypatch) -> None:
+async def test_governed_stock_chat_renders_deterministic_six_bucket_report(monkeypatch) -> None:
     async def fake_card(_state, _code, *, source="问股"):
         return {
             "name": "平安银行", "action": "持有", "signal_action": "持有",
@@ -398,11 +398,10 @@ async def test_governed_stock_chat_answers_the_actual_question(monkeypatch) -> N
     ]
     answer = "".join(chunks)
 
-    assert "可以继续持有，但不是无条件死拿" in answer
+    assert "六桶综合分" in answer
     assert "有效跌破 10.63" in answer
-    assert "现价 10.85" in answer
-    assert "·最近交易日回答" in answer
-    assert "·盘中回答" not in answer
+    assert "10.85" in answer
+    assert "## 数据说明" in answer
     assert "proposal_" not in answer
 
 
@@ -410,7 +409,7 @@ async def test_governed_stock_chat_answers_the_actual_question(monkeypatch) -> N
 async def test_holding_question_does_not_translate_market_entry_veto_into_forced_exit(
     monkeypatch,
 ) -> None:
-    received = {}
+    explain_called = False
 
     async def fake_card(_state, _code, *, source="问股"):
         return {
@@ -425,7 +424,8 @@ async def test_holding_question_does_not_translate_market_entry_veto_into_forced
         }
 
     async def explain(_message, card, *, history):
-        received.update(card)
+        nonlocal explain_called
+        explain_called = True
         yield ""
 
     monkeypatch.setattr(routes, "_governed_and_record_diagnosis", fake_card)
@@ -435,18 +435,18 @@ async def test_holding_question_does_not_translate_market_entry_veto_into_forced
     answer = "".join([
         chunk async for chunk in routes._governed_stock_chat_stream(
             state, "000001", "能否继续持有？",
+            stock_ask_profile={"holding_status": "held"},
         )
     ])
 
-    assert "已有仓位可以条件性持有，但当前不加仓" in answer
-    assert "### 现在怎么做" not in answer
-    assert "当前动作：**回避**" not in answer
+    assert "持仓研判" in answer
+    assert "建议将该持仓降低100%" not in answer
     assert "有效跌破 10.63" in answer
-    assert received["action"] == "持有（不加仓）"
+    assert explain_called is False
 
 
 @pytest.mark.asyncio
-async def test_stock_chat_emits_only_one_complete_model_answer(monkeypatch) -> None:
+async def test_stock_chat_does_not_call_model_even_when_model_is_available(monkeypatch) -> None:
     async def fake_card(_state, _code, *, source="问股"):
         return {
             "code": "000001", "name": "平安银行", "action": "观望",
@@ -465,8 +465,11 @@ async def test_stock_chat_emits_only_one_complete_model_answer(monkeypatch) -> N
         "### 下一交易日推演\n强于预期时等待确认，正常震荡时保持耐心，弱于预期时优先控制风险。"
     )
 
+    explain_called = False
+
     async def explain(_message, _card, *, history):
-        assert history == []
+        nonlocal explain_called
+        explain_called = True
         yield model_answer[:80]
         yield model_answer[80:]
 
@@ -483,14 +486,14 @@ async def test_stock_chat_emits_only_one_complete_model_answer(monkeypatch) -> N
         )
     ])
 
-    assert answer == model_answer
-    assert "### 现在怎么做" not in answer
-    assert "### 为什么" not in answer
-    assert "针对你这句话的补充" not in answer
+    assert explain_called is False
+    assert answer != model_answer
+    assert "六桶综合分" in answer
+    assert "## 执行计划" in answer
 
 
 @pytest.mark.asyncio
-async def test_stock_chat_discards_partial_model_answer(monkeypatch) -> None:
+async def test_stock_chat_never_starts_partial_model_answer(monkeypatch) -> None:
     async def fake_card(_state, _code, *, source="问股"):
         return {
             "code": "000001", "name": "平安银行", "action": "观望",
@@ -502,7 +505,11 @@ async def test_stock_chat_discards_partial_model_answer(monkeypatch) -> None:
             "missing": ["集合竞价暂无专用源"],
         }
 
+    explain_called = False
+
     async def explain(_message, _card, *, history):
+        nonlocal explain_called
+        explain_called = True
         yield "这是一段不应展示的半截模型正文"
         raise RuntimeError("stream interrupted")
 
@@ -517,14 +524,13 @@ async def test_stock_chat_discards_partial_model_answer(monkeypatch) -> None:
     ])
 
     assert "这是一段不应展示的半截模型正文" not in answer
-    assert "次日不做无条件猜涨跌" in answer
-    assert "模型未返回可采信的完整终态" in answer
+    assert explain_called is False
+    assert "六桶综合分" in answer
     assert "集合竞价暂无专用源" in answer
-    assert "不是深度成稿失败原因" in answer
 
 
 @pytest.mark.asyncio
-async def test_stock_chat_keeps_complete_unsafe_answer_with_validation_labels(
+async def test_stock_chat_never_uses_complete_unsafe_model_answer(
     monkeypatch,
 ) -> None:
     async def fake_card(_state, _code, *, source="问股"):
@@ -540,7 +546,11 @@ async def test_stock_chat_keeps_complete_unsafe_answer_with_validation_labels(
 
     unsafe = "## 平安银行（000001）\n\n模型原文建议现在买入，并关注 99.99 元。"
 
+    explain_called = False
+
     async def explain(_message, card, *, history):
+        nonlocal explain_called
+        explain_called = True
         card["_explanation_failure_reason"] = "safety_validation_failed"
         card["_explanation_warning_codes"] = [
             "frozen_action_conflict", "unsupported_price_claim",
@@ -557,12 +567,11 @@ async def test_stock_chat_keeps_complete_unsafe_answer_with_validation_labels(
         )
     ])
 
-    assert unsafe in answer
-    assert "以下模型全文予以保留，但未全部采信" in answer
-    assert "买卖动作与服务端冻结结论冲突" in answer
-    assert "服务端已核验结论" in answer
+    assert explain_called is False
+    assert unsafe not in answer
+    assert "99.99" not in answer
+    assert "六桶综合分" in answer
     assert "个股资金流为上一交易日数据" in answer
-    assert "深度成稿未采用" not in answer
 
 
 @pytest.mark.asyncio
@@ -939,7 +948,7 @@ async def test_engine_rejects_short_missing_stop_after_rewrite_still_incomplete(
 
 
 @pytest.mark.asyncio
-async def test_stock_chat_displays_exact_missing_stop_reason(monkeypatch) -> None:
+async def test_stock_chat_reports_missing_data_without_model_terminal_reason(monkeypatch) -> None:
     async def fake_card(_state, _code, *, source="问股"):
         return {
             "code": "600519", "name": "贵州茅台", "action": "观望",
@@ -948,7 +957,11 @@ async def test_stock_chat_displays_exact_missing_stop_reason(monkeypatch) -> Non
             "missing": ["基础财务"],
         }
 
+    explain_called = False
+
     async def explain(_message, card, *, history):
+        nonlocal explain_called
+        explain_called = True
         card["_explanation_failure_reason"] = "model_missing_stop"
         yield ""
 
@@ -962,9 +975,10 @@ async def test_stock_chat_displays_exact_missing_stop_reason(monkeypatch) -> Non
         )
     ])
 
-    assert "上游未提供标准的 stop 终态" in answer
+    assert explain_called is False
+    assert "上游未提供标准的 stop 终态" not in answer
     assert "基础财务" in answer
-    assert "不是深度成稿失败原因" in answer
+    assert "## 数据说明" in answer
 
 
 @pytest.mark.asyncio

@@ -60,7 +60,7 @@ BAT 优先调用 PowerShell 7，找不到时才回退到 Windows PowerShell 5.1�
 把示例路径替换为本机实际路径：
 
 ```powershell
-$projectRoot = 'C:\WUDI-1.4.2'
+$projectRoot = 'C:\WUDI-1.5.1'
 $tdxExe = 'C:\new_tdx64\TdxW.exe'
 ```
 

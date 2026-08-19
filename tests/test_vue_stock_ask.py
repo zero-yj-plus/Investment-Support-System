@@ -39,7 +39,6 @@ def test_vue_stock_ask_uses_only_real_stock_chat_and_history_endpoints() -> None
         "/chat/conversations",
         "/chat/conversations/${encodeURIComponent(id)}",
         "/chat/conversations/${encodeURIComponent(conversationId)}/messages",
-        "/chat/perspectives",
         "/chat/data-materials",
         "/chat/data-materials/preselect",
         "postEventStream('/chat'",
@@ -50,34 +49,32 @@ def test_vue_stock_ask_uses_only_real_stock_chat_and_history_endpoints() -> None
     assert "/stock/${encodeURIComponent(code)}/charts" not in source
     assert "/market/" not in source
     assert "item.mode === mode.value" in source
-    assert "perspective_ids: perspectiveIds" in source
+    assert "stock_ask_profile: requestProfile" in source
+    assert "perspective_ids" not in source
+    assert "/chat/perspectives" not in source
 
 
-def test_vue_stock_ask_supports_accessible_multi_perspective_selection() -> None:
+def test_vue_stock_ask_supports_accessible_deterministic_profile() -> None:
     page = _read("src/components/StockAskPage.vue")
     conversation = _read("src/components/StockAskConversation.vue")
-    selector = _read("src/components/StockAskPerspectives.vue")
+    profile = _read("src/components/StockAskProfileForm.vue")
     message = _read("src/components/StockAskMessage.vue")
 
-    assert "<StockAskPerspectives" in conversation
-    assert ':max-selected-perspectives="maxSelectedPerspectives"' in page
-    assert 'type="checkbox"' in selector
-    assert ':aria-expanded="expanded"' in selector
-    assert 'aria-live="polite"' in selector
-    assert "const expanded = ref(true)" in selector
-    assert "watch(() => props.disabled" in selector
-    assert "if (disabled) expanded.value = false" in selector
-    assert "selectedIds.length >= props.maxSelected" in selector
-    assert "item.description" not in selector
-    assert "aria-describedby" not in selector
-    assert "每个视角独立分析，最后汇总共识与分歧；不会改写服务端风险结论。" not in selector
-    assert "max-height: min(18dvh, 180px)" not in selector
-    assert "overflow-y: auto" not in selector
-    assert conversation.index("<StockAskPerspectives") < conversation.index('class="stock-ask-conversation__messages"')
-    assert "每轮最多选择 ${maxSelectedPerspectives.value} 个分析视角" in _read("src/composables/useStockAsk.ts")
-    assert "@media (max-width: 720px)" in selector
-    assert "@media (prefers-reduced-motion: reduce)" in selector
-    assert "message.perspectives?.length" in message
+    assert "<StockAskProfileForm" in conversation
+    assert ':stock-ask-profile="stockAskProfile"' in page
+    assert ':aria-expanded="expanded"' in profile
+    assert 'aria-controls="stock-ask-profile-fields"' in profile
+    assert "const expanded = ref(true)" in profile
+    assert "watch(() => props.disabled" in profile
+    assert "if (disabled) expanded.value = false" in profile
+    for label in ("持仓状态", "参考价", "持仓成本", "当前仓位 %", "分析场景", "持有周期", "风险预算 %", "最大仓位 %"):
+        assert label in profile
+    assert "risk_budget_explicit: true" in profile
+    assert "1.5% 仅为提示值" in profile
+    assert "min-height: 44px" in profile
+    assert "@media (max-width: 720px)" in profile
+    assert "StockAskPerspectives" not in conversation + page
+    assert "message.perspectives" not in message
 
 
 def test_vue_stock_ask_preserves_missing_partial_and_identity_semantics() -> None:
@@ -117,10 +114,12 @@ def test_vue_stock_ask_uses_safe_markdown_and_native_interactions() -> None:
     paths = (
         "src/components/StockAskPage.vue",
         "src/components/StockAskConversation.vue",
+        "src/components/StockAskProfileForm.vue",
         "src/components/StockAskComposer.vue",
         "src/components/StockAskHistory.vue",
         "src/components/StockAskMessage.vue",
         "src/components/StockAskEvidence.vue",
+        "src/components/StockAutocomplete.vue",
     )
     sources = "\n".join(_read(path) for path in paths)
 
@@ -131,7 +130,7 @@ def test_vue_stock_ask_uses_safe_markdown_and_native_interactions() -> None:
     assert 'role="log"' in sources
     assert 'aria-live="polite"' in sources
     assert '<label for="stock-ask-code">' in sources
-    assert 'inputmode="numeric"' in sources
+    assert 'inputmode="search"' in sources
 
 
 def test_vue_stock_ask_keeps_compact_equal_height_composer_and_free_mode() -> None:
@@ -151,6 +150,8 @@ def test_vue_stock_ask_keeps_compact_equal_height_composer_and_free_mode() -> No
     assert "textarea" in composer and "resize: none" in composer
     assert "@media (max-width: 800px)" in composer
     assert "mode === 'free' ? '自由问答问题' : '问股问题'" in composer
+    assert 'v-if="mode === \'free\'"' in composer
+    assert "确定性问股不读取图片" in composer
     assert '<label for="stock-ask-prompt">你的问题</label>' not in composer
     assert "图片只用于本轮上下文，不写入历史" not in composer
 
@@ -168,6 +169,7 @@ def test_vue_stock_ask_responsive_contract_and_audit_scenarios() -> None:
     assert "stock-ask-selector panel" not in page
     assert 'class="stock-ask-conversation__selector"' in conversation
     assert "grid-template-rows: auto auto minmax(96px, 1fr) auto auto" in conversation
+    assert "<StockAskProfileForm" in conversation
     assert ".stock-ask-conversation__messages { min-height: 0; overflow-y: auto;" in conversation
     assert '.stock-ask-conversation__selector button[type="submit"]' in audit
     assert 'aria-expanded="expanded"' in history
@@ -185,13 +187,13 @@ def test_vue_stock_ask_responsive_contract_and_audit_scenarios() -> None:
         assert scenario in audit
     for endpoint in (
         "/api/chat/conversations",
-        "/api/chat/perspectives",
         "/api/chat/data-materials",
         "/api/chat/data-materials/preselect",
         "/api/stock/600519/core",
         "/api/stock/600519/enrichment",
     ):
         assert endpoint in audit
+    assert "/api/chat/perspectives" not in audit
 
 
 def test_vue_free_chat_material_selector_matches_contract() -> None:

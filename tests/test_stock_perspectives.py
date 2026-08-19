@@ -67,23 +67,30 @@ def test_perspective_prompt_keeps_views_separate_and_subordinate() -> None:
 
 
 @pytest.mark.asyncio
-async def test_perspective_api_lists_catalog_and_rejects_more_than_four() -> None:
-    catalog = await routes.chat_perspectives()
-    assert catalog["ok"] is True
-    assert catalog["max_selected"] == 4
-    assert len(catalog["perspectives"]) == 17
-
+async def test_perspective_api_is_retired_and_chat_rejects_legacy_selection() -> None:
+    assert not hasattr(routes, "chat_perspectives")
     response = await routes.chat(Request(body={
         "mode": "stock",
         "message": "明天怎么看？",
         "code": "600519",
-        "perspective_ids": [
-            "92kobe", "asking", "aizaibingchuan", "chaoguyangjia", "chenxiaoqun",
-        ],
+        "perspective_ids": ["92kobe"],
     }))
     assert isinstance(response, JSONResponse)
     assert response.status_code == 400
-    assert json.loads(response.body)["error_code"] == "invalid_perspective_selection"
+    assert json.loads(response.body)["error_code"] == "perspective_selection_retired"
+
+
+@pytest.mark.asyncio
+async def test_deterministic_stock_chat_rejects_unread_images() -> None:
+    response = await routes.chat(Request(body={
+        "mode": "stock",
+        "message": "结合图片分析",
+        "code": "600519",
+        "images": ["data:image/png;base64,AAAA"],
+    }))
+    assert isinstance(response, JSONResponse)
+    assert response.status_code == 400
+    assert json.loads(response.body)["error_code"] == "stock_ask_images_not_supported"
 
 
 @pytest.mark.asyncio

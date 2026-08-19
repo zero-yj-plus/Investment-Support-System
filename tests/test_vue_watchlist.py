@@ -107,7 +107,8 @@ def test_vue_watchlist_uses_safe_text_and_responsive_accessible_semantics() -> N
     page = _read("src/components/WatchlistPage.vue")
     row = _read("src/components/WatchlistItemRow.vue")
     editor = _read("src/components/WatchlistEditor.vue")
-    combined = page + row + editor
+    autocomplete = _read("src/components/StockAutocomplete.vue")
+    combined = page + row + editor + autocomplete
 
     for source in (page, row, editor):
         assert "v-html" not in source
@@ -117,7 +118,7 @@ def test_vue_watchlist_uses_safe_text_and_responsive_accessible_semantics() -> N
     assert 'aria-live="polite"' in page
     assert 'role="alert"' in page and 'role="status"' in page
     assert '<form @submit.prevent="submit">' in editor
-    assert 'required' in editor and 'inputmode="numeric"' in editor
+    assert 'required' in editor and 'inputmode="search"' in autocomplete
     assert '<dialog' in editor and "showModal()" in editor
     assert '@cancel.prevent="requestClose"' in editor
     assert "position: sticky" in editor and "bottom: -14px" in editor

@@ -14,17 +14,17 @@ import type {
   StockAskRequestKey,
   StockCoreResponse,
   StockEnrichmentResponse,
-  StockPerspective,
-  StockPerspectiveListResponse,
-  StockPerspectiveSummary,
   StockAskMode,
   RequiredMaterialDefinition,
 } from '../types/stockAsk'
+import {
+  createDefaultStockAskProfile,
+  type StockAskProfile,
+} from '../types/stockAskProfile'
 
 const CODE_RE = /^\d{6}$/
 const CONVERSATION_CODE_KEY = 'wudi.stockAsk.conversationCodes'
-const PERSPECTIVE_SELECTION_KEY = 'wudi.stockAsk.perspectiveIds'
-const DEFAULT_MAX_PERSPECTIVES = 4
+const STOCK_ASK_PROFILE_KEY = 'wudi.stockAsk.profilesByCode'
 const DEFAULT_MAX_MATERIALS = 4
 
 function nowLabel() {
@@ -53,6 +53,47 @@ function loadConversationCodes(): Record<string, string> {
   }
 }
 
+function profileNumber(value: unknown, fallback: number | null, minimum: number, maximum?: number) {
+  if (value === null || value === '') return null
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed) || parsed < minimum || (maximum !== undefined && parsed > maximum)) return fallback
+  return parsed
+}
+
+function normalizeStoredProfile(value: unknown): StockAskProfile {
+  const defaults = createDefaultStockAskProfile()
+  if (!value || typeof value !== 'object') return defaults
+  const row = value as Partial<StockAskProfile>
+  return {
+    holding_status: ['unheld', 'held', 'unspecified'].includes(String(row.holding_status))
+      ? row.holding_status as StockAskProfile['holding_status'] : defaults.holding_status,
+    current_price: profileNumber(row.current_price, null, 0.01),
+    holding_cost: profileNumber(row.holding_cost, null, 0.01),
+    position_pct: profileNumber(row.position_pct, null, 0.01, 100),
+    scenario: ['intraday', 'after_close'].includes(String(row.scenario))
+      ? row.scenario as StockAskProfile['scenario'] : defaults.scenario,
+    horizon: ['NEXT_DAY', 'SHORT_TERM', 'SWING'].includes(String(row.horizon))
+      ? row.horizon as StockAskProfile['horizon'] : defaults.horizon,
+    risk_budget_pct: profileNumber(row.risk_budget_pct, defaults.risk_budget_pct, 0.1, 10) ?? defaults.risk_budget_pct,
+    risk_budget_explicit: row.risk_budget_explicit === true,
+    max_position_pct: profileNumber(row.max_position_pct, defaults.max_position_pct, 1, 100) ?? defaults.max_position_pct,
+    allow_add: row.allow_add === true,
+  }
+}
+
+function loadStockAskProfiles(): Record<string, StockAskProfile> {
+  try {
+    const value = JSON.parse(localStorage.getItem(STOCK_ASK_PROFILE_KEY) || '{}') as Record<string, unknown>
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([code]) => CODE_RE.test(code))
+        .map(([code, profile]) => [code, normalizeStoredProfile(profile)]),
+    )
+  } catch {
+    return {}
+  }
+}
+
 export function useStockAsk() {
   const mode = ref<StockAskMode>('stock')
   const codeInput = ref('')
@@ -69,11 +110,7 @@ export function useStockAsk() {
   const chatError = ref('')
   const saveWarning = ref('')
   const conversations = ref<ConversationMeta[]>([])
-  const perspectives = ref<StockPerspective[]>([])
-  const selectedPerspectiveIds = ref<string[]>([])
-  const maxSelectedPerspectives = ref(DEFAULT_MAX_PERSPECTIVES)
-  const perspectivesLoading = ref(true)
-  const perspectiveError = ref('')
+  const stockAskProfile = ref<StockAskProfile>(createDefaultStockAskProfile())
   const dataMaterials = ref<DataMaterialDefinition[]>([])
   const requiredMaterials = ref<RequiredMaterialDefinition[]>([])
   const selectedDataMaterialIds = ref<string[]>([])
@@ -95,7 +132,6 @@ export function useStockAsk() {
   const generations: Record<StockAskRequestKey, number> = {
     core: 0,
     enrichment: 0,
-    perspectiveCatalog: 0,
     materialCatalog: 0,
     materialPreselect: 0,
     conversationList: 0,
@@ -110,83 +146,19 @@ export function useStockAsk() {
   let materialPreselectTimer: ReturnType<typeof setTimeout> | null = null
   let stopRequested = false
   let conversationCodes: Record<string, string> = {}
+  let profilesByCode: Record<string, StockAskProfile> = {}
 
   const quote = computed(() => core.value?.quote || null)
   const stockName = computed(() => quote.value?.name || core.value?.recognition?.name || '')
   const stockLoading = computed(() => coreLoading.value || enrichmentLoading.value)
-  const refreshing = computed(() => stockLoading.value || conversationsLoading.value || perspectivesLoading.value || materialsLoading.value)
+  const refreshing = computed(() => stockLoading.value || conversationsLoading.value || materialsLoading.value)
   const canAsk = computed(() => mode.value === 'free' || (CODE_RE.test(selectedCode.value) && core.value?.recognized !== false))
-  const selectedPerspectives = computed<StockPerspectiveSummary[]>(() => selectedPerspectiveIds.value
-    .map((id) => perspectives.value.find((item) => item.id === id))
-    .filter((item): item is StockPerspective => Boolean(item))
-    .map(({ id, name, version }) => ({ id, name, version })))
 
-  function persistPerspectiveSelection() {
-    localStorage.setItem(PERSPECTIVE_SELECTION_KEY, JSON.stringify(selectedPerspectiveIds.value))
-  }
-
-  function restorePerspectiveSelection() {
-    let stored: unknown = []
-    try {
-      stored = JSON.parse(localStorage.getItem(PERSPECTIVE_SELECTION_KEY) || '[]')
-    } catch {
-      stored = []
-    }
-    const allowed = new Set(perspectives.value.map((item) => item.id))
-    selectedPerspectiveIds.value = (Array.isArray(stored) ? stored : [])
-      .map((item) => String(item || ''))
-      .filter((item, index, rows) => allowed.has(item) && rows.indexOf(item) === index)
-      .slice(0, maxSelectedPerspectives.value)
-    persistPerspectiveSelection()
-  }
-
-  async function loadPerspectives() {
-    const guard = requestGuard('perspectiveCatalog', 12_000)
-    perspectivesLoading.value = true
-    perspectiveError.value = ''
-    try {
-      const payload = await getJson<StockPerspectiveListResponse>('/chat/perspectives', guard.controller.signal)
-      if (!guard.current()) return
-      if (payload.ok === false || !Array.isArray(payload.perspectives)) {
-        throw new Error(payload.error || '视角列表返回不可用状态')
-      }
-      perspectives.value = payload.perspectives.filter((item) => item?.id && item?.name)
-      const serverLimit = Number(payload.max_selected)
-      maxSelectedPerspectives.value = Number.isInteger(serverLimit)
-        ? Math.min(DEFAULT_MAX_PERSPECTIVES, Math.max(1, serverLimit))
-        : DEFAULT_MAX_PERSPECTIVES
-      restorePerspectiveSelection()
-    } catch (error) {
-      if (!guard.current()) return
-      perspectiveError.value = guard.timedOut()
-        ? '分析视角读取超过 12 秒；默认问股仍可使用'
-        : errorText(error, '分析视角暂不可用；默认问股仍可使用')
-    } finally {
-      guard.finish()
-      if (alive) perspectivesLoading.value = false
-    }
-  }
-
-  function togglePerspective(id: string) {
-    if (streaming.value) return
-    perspectiveError.value = ''
-    if (!perspectives.value.some((item) => item.id === id)) return
-    if (selectedPerspectiveIds.value.includes(id)) {
-      selectedPerspectiveIds.value = selectedPerspectiveIds.value.filter((item) => item !== id)
-    } else if (selectedPerspectiveIds.value.length >= maxSelectedPerspectives.value) {
-      perspectiveError.value = `每轮最多选择 ${maxSelectedPerspectives.value} 个分析视角；请先取消一个`
-      return
-    } else {
-      selectedPerspectiveIds.value = [...selectedPerspectiveIds.value, id]
-    }
-    persistPerspectiveSelection()
-  }
-
-  function clearPerspectives() {
-    if (streaming.value) return
-    perspectiveError.value = ''
-    selectedPerspectiveIds.value = []
-    persistPerspectiveSelection()
+  function updateStockAskProfile(value: StockAskProfile) {
+    stockAskProfile.value = normalizeStoredProfile(value)
+    if (!CODE_RE.test(selectedCode.value)) return
+    profilesByCode[selectedCode.value] = stockAskProfile.value
+    localStorage.setItem(STOCK_ASK_PROFILE_KEY, JSON.stringify(profilesByCode))
   }
 
   async function loadDataMaterials() {
@@ -370,6 +342,7 @@ export function useStockAsk() {
     }
     codeInput.value = code
     selectedCode.value = code
+    stockAskProfile.value = normalizeStoredProfile(profilesByCode[code])
     core.value = null
     enrichment.value = null
     coreError.value = ''
@@ -482,9 +455,6 @@ export function useStockAsk() {
         content: String(item.content || ''),
         ts: String(item.ts || '').slice(11, 19),
         imageCount: item.has_image ? 1 : 0,
-        perspectives: Array.isArray(item.perspectives)
-          ? item.perspectives.slice(0, DEFAULT_MAX_PERSPECTIVES)
-          : [],
         dataMaterials: item.data_materials,
         state: 'complete',
       }))
@@ -536,7 +506,6 @@ export function useStockAsk() {
     imageCount: number,
     assistantText: string,
     code = '',
-    perspectiveIds: string[] = [],
     dataMaterialReport: DataMaterialReport | null = null,
   ) {
     saveWarning.value = ''
@@ -556,7 +525,6 @@ export function useStockAsk() {
             { role: 'user', content: userText, has_image: imageCount > 0 },
             {
               role: 'assistant', content: assistantText,
-              perspective_ids: perspectiveIds,
               data_materials: dataMaterialReport || undefined,
             },
           ],
@@ -608,9 +576,7 @@ export function useStockAsk() {
     const requestMode = mode.value
     const code = requestMode === 'stock' ? selectedCode.value : ''
     const images = pendingImages.value.map((item) => item.dataUrl)
-    const perspectiveIds = requestMode === 'stock' ? [...selectedPerspectiveIds.value] : []
-    const perspectiveMeta = requestMode === 'stock'
-      ? selectedPerspectives.value.map((item) => ({ ...item })) : []
+    const requestProfile = requestMode === 'stock' ? { ...stockAskProfile.value } : null
     const dataMaterialIds = requestMode === 'free' ? [...selectedDataMaterialIds.value] : []
     const history = messages.value
       .filter((item) => item.state === 'complete' && (item.role === 'user' || item.role === 'assistant'))
@@ -625,16 +591,14 @@ export function useStockAsk() {
     })
     const assistant: StockAskMessage = {
       id: messageId('assistant'), role: 'assistant', content: '', code: code || undefined,
-      ts: nowLabel(), perspectives: perspectiveMeta, state: 'streaming',
+      ts: nowLabel(), state: 'streaming',
     }
     messages.value.push(assistant)
     prompt.value = ''
     pendingImages.value = []
     stageText.value = requestMode === 'free'
       ? '正在判断问题类型并准备本轮上下文…'
-      : (perspectiveIds.length
-        ? `正在核验行情、证据与风险闸，并准备 ${perspectiveIds.length} 个分析视角…`
-        : '正在核验行情、证据与风险闸…')
+      : '正在采集五类证据并执行六桶评分与风险闸…'
     stageSeconds.value = 0
     clearStageTimer()
     stageTimer = setInterval(() => { stageSeconds.value += 1 }, 1000)
@@ -647,7 +611,7 @@ export function useStockAsk() {
     try {
       await postEventStream('/chat', {
         mode: requestMode, message: userText, code, industry: '', history, images,
-        perspective_ids: perspectiveIds,
+        ...(requestMode === 'stock' ? { stock_ask_profile: requestProfile } : {}),
         ...(requestMode === 'free' ? { data_material_ids: dataMaterialIds } : {}),
       }, {
         signal: guard.controller.signal,
@@ -679,8 +643,7 @@ export function useStockAsk() {
       if (!completed || !assistant.content.trim()) throw new Error('回答流未返回完整内容，已拒绝保存')
       assistant.state = 'complete'
       await saveExchange(
-        userText, images.length, assistant.content, code, perspectiveIds,
-        completedMaterialReport,
+        userText, images.length, assistant.content, code, completedMaterialReport,
       )
     } catch (error) {
       if (!guard.current()) return
@@ -720,7 +683,7 @@ export function useStockAsk() {
       streaming.value = false
       clearStageTimer()
     }
-    const tasks: Promise<unknown>[] = [loadConversations(), loadPerspectives(), loadDataMaterials()]
+    const tasks: Promise<unknown>[] = [loadConversations(), loadDataMaterials()]
     if (selectedCode.value) tasks.push(loadStock(selectedCode.value))
     await Promise.allSettled(tasks)
   }
@@ -741,13 +704,14 @@ export function useStockAsk() {
   onMounted(async () => {
     alive = true
     conversationCodes = loadConversationCodes()
+    profilesByCode = loadStockAskProfiles()
     document.addEventListener('visibilitychange', onVisibilityChange)
     const pendingCode = sessionStorage.getItem('hermes.chat.code') || ''
     const pendingPrompt = sessionStorage.getItem('hermes.chat.prompt') || ''
     sessionStorage.removeItem('hermes.chat.code')
     sessionStorage.removeItem('hermes.chat.prompt')
     if (CODE_RE.test(pendingCode)) mode.value = 'stock'
-    await Promise.all([loadConversations(), loadPerspectives(), loadDataMaterials()])
+    await Promise.all([loadConversations(), loadDataMaterials()])
     if (CODE_RE.test(pendingCode)) {
       await loadStock(pendingCode)
       if (pendingPrompt && core.value?.recognized !== false) {
@@ -772,11 +736,10 @@ export function useStockAsk() {
     coreLoading, enrichmentLoading, stockLoading, coreError, enrichmentError, codeError,
     composerError, chatError, saveWarning, conversations, conversationsLoading,
     conversationError, activeConversationId, messages, pendingImages, streaming,
-    stageText, stageSeconds, refreshing, canAsk, perspectives, selectedPerspectiveIds,
-    selectedPerspectives, maxSelectedPerspectives, perspectivesLoading, perspectiveError,
+    stageText, stageSeconds, refreshing, canAsk, stockAskProfile,
     dataMaterials, requiredMaterials, selectedDataMaterialIds, preselectedDataMaterialIds,
     maxSelectedDataMaterials, materialsAdjusted, materialReport, materialsLoading, materialError,
-    loadStock, loadConversations, loadPerspectives, togglePerspective, clearPerspectives,
+    loadStock, loadConversations, updateStockAskProfile,
     loadDataMaterials, toggleDataMaterial, resetDataMaterials, switchMode,
     newConversation, switchConversation, deleteConversation, addPendingImages,
     removePendingImage, send, stop, refresh,

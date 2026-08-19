@@ -143,13 +143,14 @@ def test_vue_company_research_responsive_rules_contain_wide_content_and_keep_tar
     form = read(FORM)
     evidence = read(EVIDENCE)
     history = read(HISTORY)
+    autocomplete = read(ROOT / "frontend-vue/src/components/StockAutocomplete.vue")
     styles = read(ROOT / "frontend-vue/src/styles.css")
 
     assert "grid-template-columns: minmax(0, 1fr) 280px" in page
     assert "@media (max-width: 1039px)" in page
     assert "grid-template-columns: minmax(0, 1fr);" in page
     assert "@media (max-width: 720px)" in page
-    assert "min-height: 44px" in form
+    assert "min-height: 44px" in form + autocomplete
     assert "min-height: 44px" in evidence
     assert "min-height: 64px" in history
     assert "min-height: 44px" in history

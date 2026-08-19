@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { nextTick, ref } from 'vue'
 import type { TimingReading } from '../types/timing'
+import StockAutocomplete from './StockAutocomplete.vue'
 import TimingRegionCard from './TimingRegionCard.vue'
 
 defineProps<{
@@ -14,7 +15,7 @@ defineProps<{
 const emit = defineEmits<{ query: [code: string] }>()
 const code = ref('')
 const validationError = ref('')
-const input = ref<HTMLInputElement | null>(null)
+const input = ref<InstanceType<typeof StockAutocomplete> | null>(null)
 
 function submit() {
   const normalized = code.value.trim()
@@ -39,24 +40,18 @@ function submit() {
       <form class="timing-stock-form" novalidate @submit.prevent="submit">
         <label for="timing-stock-code">股票代码</label>
         <div>
-          <input
-            id="timing-stock-code"
+          <StockAutocomplete
             ref="input"
             v-model="code"
+            input-id="timing-stock-code"
             name="stock-code"
-            type="text"
-            inputmode="numeric"
-            autocomplete="off"
-            maxlength="6"
-            pattern="[0-9]{6}"
-            placeholder="6 位股票代码"
+            placeholder="代码 / 中文 / 拼音 / 首字母"
             :aria-invalid="Boolean(validationError)"
             aria-describedby="timing-stock-help timing-stock-error"
-            @input="validationError = ''"
           />
           <button class="secondary-button" type="submit" :disabled="loading">{{ loading ? '查询中' : '查询' }}</button>
         </div>
-        <span id="timing-stock-help">仅支持 6 位 A 股代码</span>
+        <span id="timing-stock-help">中文或拼音需选择候选；完整六位代码可直接查询</span>
         <strong v-if="validationError" id="timing-stock-error" role="alert">{{ validationError }}</strong>
       </form>
     </header>
@@ -95,8 +90,6 @@ function submit() {
 .timing-stock-form { display: grid; min-width: 310px; gap: 3px; }
 .timing-stock-form > label { color: var(--text-2); font-size: 13px; font-weight: 700; }
 .timing-stock-form > div { display: grid; grid-template-columns: minmax(150px, 1fr) auto; gap: 8px; }
-.timing-stock-form input { width: 100%; min-height: 44px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); color: var(--text); font-family: "SFMono-Regular", Consolas, monospace; font-variant-numeric: tabular-nums; }
-.timing-stock-form input[aria-invalid="true"] { border-color: var(--danger); }
 .timing-stock-form > span { color: var(--text-3); font-size: 12px; }
 .timing-stock-form > strong { color: var(--danger); font-size: 12px; }
 .timing-stock-loading { padding: 14px; }

@@ -181,6 +181,18 @@ const reportCenterFixture = {
 }
 
 const fixtures = {
+  '/api/stocks/search': {
+    ok: true,
+    state: 'ready',
+    query: 'audit',
+    results: [
+      { code: '600519', name: '贵州茅台' },
+      { code: '000001', name: '平安银行' },
+    ],
+    pinyin_available: true,
+    universe: { count: 5400, complete: true, stale: false, refresh_required: false, as_of: '2026-08-19', source: 'TDX 数据 API 股票列表', authority: 'tdx_instruments_a' },
+    missing: [],
+  },
   '/api/archive/dates': {
     ok: true,
     dates: ['2026-07-28', '2026-07-27', '2026-07-24'],
@@ -266,7 +278,7 @@ const fixtures = {
   '/api/status': {
     ok: true,
     client: { name: '审计个人投资者', id: 'audit' },
-    version: '1.4.2-audit',
+    version: '1.5.1-audit',
     date: '2026-07-28',
     data_source: '客户授权 TDX API + 免费公开源',
     model_connection: { configured: true, connected: true, status: 'connected', required_for_core: false },
@@ -318,7 +330,7 @@ const fixtures = {
   '/api/shell-status': {
     ok: true,
     client: { name: '审计个人投资者', id: 'audit', brand: '审计白标', brand_sub: 'A 股决策支持' },
-    version: '1.4.2-audit',
+    version: '1.5.1-audit',
     is_trade_day: true,
     market_session: 'intraday',
     market_context: {
@@ -1146,21 +1158,6 @@ const fixtures = {
       { id: 'abc123', title: '贵州茅台盘中承接', mode: 'stock', updated_at: '2026-07-22 10:31:40', msg_count: 4 },
       { id: 'def456', title: '旧自由问答不会出现在本页', mode: 'free', updated_at: '2026-07-22 10:20:00', msg_count: 2 },
     ],
-  },
-  '/api/chat/perspectives': {
-    ok: true,
-    max_selected: 4,
-    perspectives: [
-      ['92kobe', '92科比', 'A股短线与游资'], ['aizaibingchuan', '爱在冰川', 'A股短线与游资'],
-      ['chaoguyangjia', '炒股养家', 'A股短线与游资'], ['chenxiaoqun', '陈小群', 'A股短线与游资'],
-      ['huadongdandaodan', '华东大导弹', 'A股短线与游资'], ['ningbogansidui', '宁波敢死队', 'A股短线与游资'],
-      ['tuixuechaogu', '退学炒股', 'A股短线与游资'], ['yishunliuguang', '一瞬流光', 'A股短线与游资'],
-      ['zhaolao-ge', '赵老哥', 'A股短线与游资'], ['asking', 'Asking', 'A股短线与游资'],
-      ['beijing-chaogu', '北京炒家', 'A股短线与游资'], ['huanle-haian', '欢乐海岸', 'A股短线与游资'],
-      ['qiao-bangzhu', '乔帮主', 'A股短线与游资'], ['zhang-mengzhu', '章盟主', 'A股短线与游资'],
-      ['geweidong', '葛卫东', '宏观与趋势交易'], ['renzeping', '任泽平', '宏观与趋势交易'],
-      ['livermore', '利弗莫尔', '宏观与趋势交易'],
-    ].map(([id, name, category]) => ({ id, name, category, description: `${name}结构化分析视角`, tags: [], version: '2026-08-06' })),
   },
   '/api/chat/data-materials': {
     ok: true,
@@ -2687,10 +2684,9 @@ try {
     modeSwitchVisible: document.body.innerText.includes('盘中问股') && document.body.innerText.includes('自由问答'),
     evidenceLoading: Boolean(document.querySelector('.stock-evidence__loading')),
     equalComposerHeight: (() => {
-      const upload = document.querySelector('.stock-ask-upload')?.getBoundingClientRect().height
       const input = document.querySelector('#stock-ask-prompt')?.getBoundingClientRect().height
       const send = document.querySelector('.stock-ask-send')?.getBoundingClientRect().height
-      return Boolean(upload && input && send && upload === input && input === send)
+      return Boolean(input && send && input === send)
     })(),
     mobileComposerStatic: getComputedStyle(document.querySelector('.stock-ask-composer')).position === 'static',
   }))
@@ -2713,21 +2709,18 @@ try {
     return route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', body: JSON.stringify(body || { error: 'audit fixture missing' }) })
   })
   await stockAskEmptyPage.goto('http://127.0.0.1:4175/#/research?tab=ask', { waitUntil: 'networkidle' })
-  const materialInputs = stockAskEmptyPage.locator('.stock-ask-materials fieldset input')
-  for (let index = 0; index < 4; index += 1) await materialInputs.nth(index).check()
   await stockAskEmptyPage.addScriptTag({ content: axeSource })
   const stockAskEmptyState = await stockAskEmptyPage.evaluate(() => {
     const text = document.body.innerText
     return {
       noHistory: text.includes('暂无问答记录'),
-      directQuestion: text.includes('直接提出一个问题'),
+      firstStep: text.includes('先选择一只股票'),
       missingNotZero: !text.includes('0.00 元') && !text.includes('0.00%'),
       modeSwitch: document.querySelectorAll('.stock-ask-mode-switch button').length === 2,
       onePresetRow: getComputedStyle(document.querySelector('.stock-ask-presets')).gridTemplateRows.split(' ').length === 1,
-      requiredCount: document.querySelectorAll('.stock-ask-materials__required').length === 3,
-      materialCount: document.querySelectorAll('.stock-ask-materials fieldset input').length === 6,
-      materialLimit: document.querySelectorAll('.stock-ask-materials fieldset input:checked').length === 4
-        && document.querySelectorAll('.stock-ask-materials fieldset input:disabled:not(:checked)').length === 2,
+      profileVisible: document.body.innerText.includes('问股参数') && document.body.innerText.includes('六桶评分'),
+      profileFields: document.querySelectorAll('.stock-ask-profile input, .stock-ask-profile select').length >= 8,
+      deterministicBoundary: text.includes('个股主输出不调用模型'),
     }
   })
   const stockAskEmptyAxe = await stockAskEmptyPage.evaluate(async () => window.axe.run(document, {

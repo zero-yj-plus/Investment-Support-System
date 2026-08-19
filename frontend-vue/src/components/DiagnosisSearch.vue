@@ -1,5 +1,8 @@
 <script setup lang="ts">
-defineProps<{
+import { computed } from 'vue'
+import StockAutocomplete from './StockAutocomplete.vue'
+
+const props = defineProps<{
   code: string
   busy: boolean
   error?: string
@@ -11,9 +14,10 @@ const emit = defineEmits<{
   submit: [code: string]
 }>()
 
-function clean(value: string) {
-  emit('update:code', value.replace(/\D/g, '').slice(0, 6))
-}
+const codeModel = computed({
+  get: () => props.code,
+  set: (value: string) => emit('update:code', value),
+})
 </script>
 
 <template>
@@ -22,25 +26,20 @@ function clean(value: string) {
       <div class="diagnosis-search__field">
         <label id="diagnosis-search-title" for="diagnosis-code">A 股代码</label>
         <div class="diagnosis-search__controls">
-          <input
-            id="diagnosis-code"
-            :value="code"
+          <StockAutocomplete
+            v-model="codeModel"
+            input-id="diagnosis-code"
             name="stock-code"
-            inputmode="numeric"
-            autocomplete="off"
-            maxlength="6"
-            pattern="[0-9]{6}"
+            placeholder="代码 / 中文 / 拼音 / 首字母"
             aria-describedby="diagnosis-code-hint diagnosis-code-error"
             :aria-invalid="Boolean(error)"
-            placeholder="输入 6 位代码"
-            @input="clean(($event.target as HTMLInputElement).value)"
           />
           <button class="primary-button diagnosis-search__submit" type="submit" :disabled="busy">
             {{ busy ? '诊断中…' : '开始诊断' }}
           </button>
         </div>
       </div>
-      <p id="diagnosis-code-hint">报价只用于核对；动作只认服务端诊断卡。</p>
+      <p id="diagnosis-code-hint">从本地名录选择；完整六位代码可直接核验，动作只认服务端诊断卡。</p>
       <p v-if="error" id="diagnosis-code-error" class="diagnosis-search__error" aria-live="polite">{{ error }}</p>
     </form>
 
@@ -64,8 +63,6 @@ function clean(value: string) {
 .diagnosis-search__field { display: grid; gap: 4px; }
 .diagnosis-search__controls { display: grid; grid-template-columns: minmax(180px, 250px) auto; gap: 8px; }
 .diagnosis-search label { font-size: 13px; font-weight: 750; }
-.diagnosis-search input { width: 100%; min-height: 44px; padding: 8px 11px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--surface-2); color: var(--text); font: 700 17px/1.4 "SFMono-Regular", Consolas, monospace; letter-spacing: .12em; }
-.diagnosis-search input[aria-invalid="true"] { border-color: var(--danger); }
 .diagnosis-search__submit { min-width: 126px; }
 .diagnosis-search form > p { align-self: end; margin: 0 0 2px; color: var(--text-3); font-size: 12px; }
 .diagnosis-search__error { grid-column: 1 / -1; color: var(--danger) !important; }

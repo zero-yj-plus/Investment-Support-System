@@ -9,6 +9,7 @@ import type {
   SimulationOrderSide,
   SimulationOrderType,
 } from '../types/simulation'
+import StockAutocomplete from './StockAutocomplete.vue'
 
 const props = defineProps<{
   mode: SimulationDialogMode
@@ -25,7 +26,8 @@ const emit = defineEmits<{
 
 const dialog = ref<HTMLDialogElement | null>(null)
 const firstField = ref<HTMLInputElement | null>(null)
-const symbol = ref(props.initialIntent?.symbol ?? '')
+const stockInput = ref<InstanceType<typeof StockAutocomplete> | null>(null)
+const symbol = ref(String(props.initialIntent?.symbol ?? '').split('.', 1)[0].replace(/\D/g, '').slice(0, 6))
 const side = ref<SimulationOrderSide>(props.initialIntent?.side ?? 'buy')
 const orderType = ref<SimulationOrderType>(props.initialIntent?.order_type ?? 'limit')
 const quantity = ref(String(props.initialIntent?.quantity ?? 100))
@@ -111,7 +113,7 @@ function submit() {
     const normalizedLimit = limitPrice.value.trim() ? Number(limitPrice.value) : null
     if (!/^\d{6}$/.test(normalizedSymbol)) {
       localError.value = '股票代码必须是 6 位数字。'
-      void nextTick(() => firstField.value?.focus())
+      void nextTick(() => stockInput.value?.focus())
       return
     }
     if (!Number.isInteger(normalizedQuantity) || normalizedQuantity <= 0) {
@@ -156,7 +158,10 @@ function submit() {
 
 onMounted(() => {
   dialog.value?.showModal()
-  void nextTick(() => firstField.value?.focus())
+  void nextTick(() => {
+    if (props.mode === 'create') stockInput.value?.focus()
+    else firstField.value?.focus()
+  })
 })
 
 onBeforeUnmount(() => {
@@ -218,10 +223,17 @@ onBeforeUnmount(() => {
 
         <template v-else-if="mode === 'create'">
           <div class="simulation-dialog__grid">
-            <label>
-              <span>股票代码</span>
-              <input ref="firstField" v-model="symbol" inputmode="numeric" maxlength="6" autocomplete="off" required placeholder="例如 600519" :readonly="isPositionSell" />
-            </label>
+            <StockAutocomplete
+              ref="stockInput"
+              v-model="symbol"
+              class="simulation-dialog__stock-field"
+              input-id="simulation-stock-code"
+              label="股票代码"
+              placeholder="代码 / 中文 / 拼音 / 首字母"
+              required
+              :readonly="isPositionSell"
+              :aria-invalid="Boolean(localError && !/^\d{6}$/.test(symbol))"
+            />
             <label>
               <span>买卖方向</span>
               <select v-model="side" :disabled="isPositionSell"><option value="buy">买入</option><option value="sell">卖出</option></select>

@@ -2,6 +2,7 @@
 import { nextTick, onMounted, ref } from 'vue'
 import type { HoldingDraft, HoldingPeriod, NewHoldingInput, TargetMode } from '../types/holdings'
 import { finiteNumber, formatMoney } from '../utils/holdingsFormat'
+import StockAutocomplete from './StockAutocomplete.vue'
 
 const props = defineProps<{
   adding: boolean
@@ -26,7 +27,7 @@ const targetMode = ref<TargetMode>(props.initial?.riskPlan?.target_mode || 'remi
 const fees = ref('')
 const note = ref(props.initial?.note || '')
 const localError = ref('')
-const codeInput = ref<HTMLInputElement | null>(null)
+const codeInput = ref<InstanceType<typeof StockAutocomplete> | null>(null)
 
 function expectedCost(): string {
   const parsedCost = finiteNumber(cost.value)
@@ -92,11 +93,21 @@ onMounted(() => codeInput.value?.focus())
     </header>
     <form @submit.prevent="submit">
       <div class="holding-editor__fields">
-        <label>
-          <span>股票代码</span>
-          <input ref="codeInput" v-model="code" :disabled="props.mode === 'replan'" required inputmode="numeric" maxlength="6" autocomplete="off" aria-describedby="holding-code-hint" />
+        <div class="holding-editor__stock-field">
+          <StockAutocomplete
+            ref="codeInput"
+            v-model="code"
+            input-id="holding-stock-code"
+            label="股票代码"
+            placeholder="代码 / 中文 / 拼音 / 首字母"
+            required
+            :readonly="props.mode === 'replan'"
+            :display-name="props.initial?.name || ''"
+            :aria-invalid="Boolean(localError && !/^\d{6}$/.test(code))"
+            aria-describedby="holding-code-hint"
+          />
           <small id="holding-code-hint">提交前通过真实单票接口核验</small>
-        </label>
+        </div>
         <label>
           <span>成本价（元/股）</span>
           <input v-model="cost" required inputmode="decimal" autocomplete="off" />
@@ -122,12 +133,12 @@ onMounted(() => codeInput.value?.focus())
           <small>默认短线；到期后持续显示</small>
         </label>
         <label>
-          <span>客户风险线（可选）</span>
+          <span>止损线（可选）</span>
           <input v-model="customerRiskPrice" inputmode="decimal" autocomplete="off" />
           <small>实时触及会建议降低100%</small>
         </label>
         <label>
-          <span>客户目标价（可选）</span>
+          <span>止盈线（可选）</span>
           <input v-model="customerTargetPrice" inputmode="decimal" autocomplete="off" />
           <small>默认只提醒</small>
         </label>
@@ -165,10 +176,10 @@ onMounted(() => codeInput.value?.focus())
 .holding-editor h2 { margin: 0; font-size: 18px; }
 .holding-editor form { padding: 14px; }
 .holding-editor__fields { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
-.holding-editor label { display: grid; min-width: 0; gap: 5px; color: var(--text-2); font-size: 13px; font-weight: 680; }
+.holding-editor label, .holding-editor__stock-field { display: grid; min-width: 0; align-content: start; gap: 5px; color: var(--text-2); font-size: 13px; font-weight: 680; }
 .holding-editor input, .holding-editor select { width: 100%; min-height: 44px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); color: var(--text); }
 .holding-editor input:focus, .holding-editor select:focus { border-color: var(--focus); }
-.holding-editor small { color: var(--text-3); font-size: 12px; font-weight: 500; }
+.holding-editor small, .holding-editor__stock-field > small { color: var(--text-3); font-size: 12px; font-weight: 500; }
 .holding-editor__footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
 .holding-editor__footer p { margin: 0; color: var(--text-2); }
 .holding-editor__footer strong { color: var(--text); font-size: 17px; }

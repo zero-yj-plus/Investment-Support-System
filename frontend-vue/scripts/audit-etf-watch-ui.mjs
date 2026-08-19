@@ -17,7 +17,7 @@ const shellFixtures = {
   '/api/shell-status': {
     ok: true,
     client: { name: 'ETF审计实例', id: 'audit', brand: 'W.U.D.I.', brand_sub: 'A股决策支持' },
-    version: '1.4.2-audit', is_trade_day: true, market_session: 'intraday',
+    version: '1.5.1-audit', is_trade_day: true, market_session: 'intraday',
     market_context: { now: '2026-08-13T10:31:00+08:00', is_trade_day: true, market_session: 'intraday' },
   },
   '/api/pulse': { ok: true, regime: '结构轮动', risk_level: 3, risk_label: '中等风险', senti: 52, senti_label: '中性', '定格时点': '2026-08-13 10:30' },

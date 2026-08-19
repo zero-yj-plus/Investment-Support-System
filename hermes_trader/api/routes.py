@@ -26,7 +26,7 @@ from ..data import (market, stock, news, capital_tracker, xverify as xverify_mod
                     overseas_source as overseas, deriv_source, mainforce_source as mainforce,
                     free_source as public_data, tdx_api_source as tdx_api,
                     official_disclosure, official_interaction, official_longhu_source,
-                    etf as etf_data)
+                    etf as etf_data, stock_search as stock_search_mod)
 from ..data.base import (
     is_trade_day, next_trade_day, now_cn, prev_trade_day,
     relay_proxy, trade_day_status, ttl_cache,
@@ -57,7 +57,8 @@ from ..analysis import (sentiment as senti, features, timing as timing_mod, quan
                         advice_proposal as proposal_mod, mainline_timeline, mainline_runtime,
                         engine as engine_mod, stock_analysis_contract,
                         chat_materials as chat_materials_mod,
-                        stock_perspectives as stock_perspectives_mod,
+                        stock_ask_data as stock_ask_data_mod,
+                        stock_ask_profile as stock_ask_profile_mod,
                         watchlist_zones as watchlist_zones_mod,
                         holdings_risk as holdings_risk_mod,
                         technical_screener as technical_screener_mod)
@@ -2149,6 +2150,21 @@ async def evidence_detail(evidence_id: str, request: Request, include_raw: bool 
 
 # ---------------------------------------------------------------- 个股
 
+@router.get("/stocks/search")
+async def search_stocks(q: str = "", limit: int = 8):
+    """从本地 A 股主名录按代码、中文、全拼或首字母返回候选。"""
+    query = str(q or "").strip()
+    if len(query) > 64:
+        return JSONResponse(
+            {"ok": False, "error_code": "query_too_long", "error": "搜索内容不能超过 64 个字符"},
+            status_code=400,
+        )
+    return await asyncio.to_thread(
+        stock_search_mod.search_stock_catalog,
+        query,
+        limit=min(8, max(1, int(limit or 8))),
+    )
+
 @router.get("/stock/{code}")
 async def stock_detail(code: str):
     """已弃用的基础快照兼容端点；不聚合增强层。"""
@@ -2280,18 +2296,175 @@ async def _governed_and_record_diagnosis(
     *,
     source: str = "问股",
     data_material_ids: tuple[str, ...] | None = None,
+    stock_ask: bool = False,
+    stock_ask_profile: dict | None = None,
 ) -> dict:
     """生成结构化诊断，并在返回任何正式动作前完成统一建议留痕。"""
+    async def stock_ask_overview_with_budget() -> dict:
+        try:
+            value = await asyncio.wait_for(
+                asyncio.to_thread(market.market_overview), timeout=5.5
+            )
+            return value if isinstance(value, dict) else {
+                "ok": False, "missing": ["市场总览返回格式不可用"],
+            }
+        except Exception:  # noqa: BLE001
+            log.warning("问股市场总览在预算内未返回 code=%s", code)
+            return {"ok": False, "missing": ["市场总览在本轮预算内未返回"]}
+
+    async def cancel_overview_task(task) -> None:
+        if task is None or task.done():
+            return
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    overview_task = (
+        asyncio.create_task(stock_ask_overview_with_budget()) if stock_ask else None
+    )
     diagnosis_kwargs = {}
+    if stock_ask and data_material_ids is None:
+        data_material_ids = ("technical", "sector", "fundamental")
     if data_material_ids is not None:
         try:
             if "data_material_ids" in inspect.signature(governed_diagnosis_card).parameters:
                 diagnosis_kwargs["data_material_ids"] = data_material_ids
         except (TypeError, ValueError):
             diagnosis_kwargs["data_material_ids"] = data_material_ids
-    card = await governed_diagnosis_card(st, code, **diagnosis_kwargs)
+    try:
+        card = await governed_diagnosis_card(st, code, **diagnosis_kwargs)
+    except BaseException:
+        await cancel_overview_task(overview_task)
+        raise
     if card.get("recognized") is False or card.get("error_code") == "stock_not_found":
+        await cancel_overview_task(overview_task)
         return card
+    if stock_ask:
+        holdings = [
+            row for row in st.store.holdings()
+            if isinstance(row, dict)
+            and str(row.get("code") or row.get("symbol") or "").split(".", 1)[0] == code
+        ]
+        holding = holdings[0] if holdings else None
+        profile = stock_ask_profile_mod.normalize_profile(
+            stock_ask_profile,
+            holding=holding,
+            quote=card.get("market_quote") or {},
+        )
+        overview = await overview_task if overview_task is not None else {}
+        trade_plan = card.get("trade_plan") or _deterministic_trade_plan(
+            card, has_holding=profile.get("holding_status") == "held"
+        )
+        analysis = stock_ask_data_mod.build_analysis(
+            card, profile, overview, trade_plan
+        )
+        action_for_gate = {
+            "CONDITIONAL_BUY": "买入",
+            "CONDITIONAL_ADD": "加仓",
+            "REDUCE": "减仓",
+            "REDUCE_100": "减仓",
+            "HOLD": "持有",
+            "AVOID": "回避",
+            "OBSERVE": "观望",
+            "DATA_INSUFFICIENT": "观望",
+        }.get(str(analysis.get("action_code") or ""), "观望")
+        evidence_ids = [
+            str(row.get("evidence_id"))
+            for row in (card.get("decision_market_evidence") or [])
+            if isinstance(row, dict) and row.get("evidence_id")
+        ]
+        evidence_complete = bool(
+            evidence_ids
+            and ((analysis.get("context") or {}).get("technical") or {}).get("complete")
+            and analysis.get("reference_price") is not None
+        )
+        position_cap = (
+            (analysis.get("risk_reward") or {}).get("position_max_pct")
+            if action_for_gate in {"买入", "加仓"}
+            else None
+        )
+        risk = await _server_risk_decision(
+            st,
+            {
+                "direction": action_for_gate,
+                "code": code,
+                "confidence": float((analysis.get("confidence") or {}).get("score") or 0) / 100.0,
+                "evidence_ids": evidence_ids,
+                "position_cap_pct": position_cap,
+            },
+            evidence_complete=evidence_complete,
+            interactive=True,
+        )
+        display_risk = dict(risk)
+        if "major_event" in set(risk.get("reason_codes") or []):
+            display_risk["raw_reasons"] = list(risk.get("reasons") or [])
+            display_risk["reasons"] = [
+                "全市场指数破位/跌停潮风险触发，暂停新增风险；这不是该公司的重大事件结论"
+                if str(reason) == "存在重大事件风险，禁止买入或加仓"
+                else f"{str(reason)}；这是全市场风险，不是该公司的重大事件结论"
+                for reason in (risk.get("reasons") or [])
+            ]
+            display_risk["event_scope"] = "market_systemic"
+        analysis = stock_ask_data_mod.apply_risk_veto(analysis, display_risk)
+        final_advice_direction = {
+            "CONDITIONAL_BUY": "买入",
+            "CONDITIONAL_ADD": "加仓",
+            "REDUCE": "减仓",
+            "REDUCE_100": "减仓",
+            "HOLD": "持有",
+            "AVOID": "回避",
+            "OBSERVE": "观望",
+            "DATA_INSUFFICIENT": "观望",
+        }.get(str(analysis.get("action_code") or ""), "观望")
+        final_position_cap = (
+            position_cap if final_advice_direction in {"买入", "加仓"} else None
+        )
+        confidence_score = float((analysis.get("confidence") or {}).get("score") or 0)
+        card.update({
+            "stock_ask_profile": profile,
+            "stock_ask_context": analysis.get("context"),
+            "stock_ask_analysis": analysis,
+            "decision_authority": "stock_ask_six_bucket+risk_gate",
+            "deterministic_signal": {
+                "action": action_for_gate,
+                "confidence": confidence_score / 100.0,
+                "signal_score": analysis.get("score"),
+                "complete": analysis.get("decision_grade") != "E",
+                "reasons": analysis.get("decision_reasons") or [],
+                "reference_price": analysis.get("reference_price"),
+                "rule_version": stock_ask_data_mod.RULE_VERSION,
+            },
+            "trade_plan": trade_plan,
+            "risk_decision": display_risk,
+            "signal_action": action_for_gate,
+            "action": analysis.get("action"),
+            "action_code": analysis.get("action_code"),
+            "advice_direction": final_advice_direction,
+            "confidence": confidence_score / 100.0,
+            "conviction": "高" if confidence_score >= 80 else "中" if confidence_score >= 60 else "低",
+            "position_cap_pct": final_position_cap,
+            "summary": (
+                f"{analysis.get('decision_grade')}级状态，六桶综合分 "
+                f"{float(analysis.get('score') or 0):+.2f}，当前动作「{analysis.get('action')}」。"
+            ),
+            "model_explanation_status": "not_requested",
+        })
+        card["analysis_contract"] = stock_analysis_contract.build(
+            entry="governed_stock_ask",
+            current_stage="stock_ask_six_bucket",
+            analysis_executed=True,
+            deterministic_method="stock_ask_six_bucket+risk_gate",
+            deterministic_rule_version=stock_ask_data_mod.RULE_VERSION,
+            data_status=str(((card.get("market_evidence_quality") or {}).get("status") or "missing")),
+            data_as_of=(analysis.get("execution") or {}).get("as_of"),
+            expected=(card.get("market_evidence_quality") or {}).get("requested"),
+            present=(card.get("market_evidence_quality") or {}).get("captured"),
+            missing=(analysis.get("context") or {}).get("missing") or [],
+            ai_status="not_requested",
+            decision_authority="stock_ask_six_bucket+risk_gate",
+        )
     # 结构化诊断是正式动作入口：返回客户前先写 proposal，并仅在当前价证据和
     # 已冻结 RiskGate 回执完整时晋级 RecommendationEvent。
     price_row = next((
@@ -2303,7 +2476,7 @@ async def _governed_and_record_diagnosis(
     # 仍不能绑定推荐价，也不能伪装成正式推荐证据。
     price_bindable = _reference_price_evidence_bindable(price_row)
     price_evidence_id = (price_row or {}).get("evidence_id") if price_bindable else None
-    action = str(card.get("action") or "观望")
+    action = str(card.get("advice_direction") or card.get("action") or "观望")
     try:
         advice_record = await _authorize_and_record_advice(
             st,
@@ -2336,7 +2509,12 @@ async def _governed_and_record_diagnosis(
         card["advice_record"] = advice_record
         if advice_record.get("blocked") and action in {"买入", "加仓"}:
             card["original_action"] = action
-            card["action"] = "观望"
+            card["action"] = "观察，不追高"
+            card["action_code"] = "OBSERVE"
+            if isinstance(card.get("stock_ask_analysis"), dict):
+                card["stock_ask_analysis"]["action"] = card["action"]
+                card["stock_ask_analysis"]["action_code"] = card["action_code"]
+                card["stock_ask_analysis"]["risk_adjustment"] = "建议留痕前最终复核未通过，暂停新增风险"
             card["summary"] = "建议留痕前的最终风险复核未通过，已改为观望。"
     except Exception:  # noqa: BLE001 — 留痕失败时新增风险必须 fail closed
         log.exception("结构化诊断建议留痕失败 code=%s", code)
@@ -2347,7 +2525,12 @@ async def _governed_and_record_diagnosis(
         }
         if action in {"买入", "加仓"}:
             card["original_action"] = action
-            card["action"] = "观望"
+            card["action"] = "观察，不追高"
+            card["action_code"] = "OBSERVE"
+            if isinstance(card.get("stock_ask_analysis"), dict):
+                card["stock_ask_analysis"]["action"] = card["action"]
+                card["stock_ask_analysis"]["action_code"] = card["action_code"]
+                card["stock_ask_analysis"]["risk_adjustment"] = "建议留痕失败，暂停新增风险"
             card["position_cap_pct"] = 0.0
             card["summary"] = "建议留痕未完成，已暂停新增风险；请稍后重试。"
     return card
@@ -2930,21 +3113,23 @@ def _annotated_stock_model_answer(
 
 async def _governed_stock_chat_stream(
     st, code: str, message: str = "", history: list[dict] | None = None,
-    perspective_ids: tuple[str, ...] | None = None,
     data_material_ids: tuple[str, ...] | None = None,
     material_report: dict | None = None,
+    stock_ask_profile: dict | None = None,
 ):
-    """个股问答只输出一份已治理完整成稿，失败时回退自然语言安全说明。"""
+    """个股问答只输出六桶规则与 RiskGate 共同冻结的确定性成稿。"""
     try:
         diagnosis_kwargs = {}
-        if data_material_ids is not None:
-            try:
-                if "data_material_ids" in inspect.signature(
-                    _governed_and_record_diagnosis
-                ).parameters:
-                    diagnosis_kwargs["data_material_ids"] = data_material_ids
-            except (TypeError, ValueError):
-                diagnosis_kwargs["data_material_ids"] = data_material_ids
+        try:
+            parameters = inspect.signature(_governed_and_record_diagnosis).parameters
+        except (TypeError, ValueError):
+            parameters = {}
+        if data_material_ids is not None and (not parameters or "data_material_ids" in parameters):
+            diagnosis_kwargs["data_material_ids"] = data_material_ids
+        if not parameters or "stock_ask" in parameters:
+            diagnosis_kwargs["stock_ask"] = True
+        if not parameters or "stock_ask_profile" in parameters:
+            diagnosis_kwargs["stock_ask_profile"] = stock_ask_profile
         card = await _governed_and_record_diagnosis(st, code, **diagnosis_kwargs)
     except Exception:  # noqa: BLE001
         log.exception("盘中问股治理失败 code=%s", code)
@@ -2961,106 +3146,29 @@ async def _governed_stock_chat_stream(
             "因此本次不会把指数别名或错误代码当成个股，也不会生成“观望/买入”等动作。"
         )
         return
-    direct = _stock_question_answer(message, card)
-    holding_question = any(
-        word in str(message or "")
-        for word in ("继续持有", "能持有", "要不要拿", "能拿")
-    )
-    holding_only_action = bool(
-        holding_question
-        and card.get("signal_action") in {"买入", "加仓", "持有"}
-        and card.get("action") in {"观望", "回避"}
-    )
-    display_action = "持有（不加仓）" if holding_only_action else (card.get("action") or "观望")
-    try:
-        market_context = await asyncio.to_thread(build_market_context)
-    except Exception:  # noqa: BLE001
-        log.warning("个股问答无法取得交易阶段，使用中性标题 code=%s", code)
-        market_context = {}
-    stage_label = _stock_chat_stage_label(market_context)
-    explanation_card = dict(card)
-    explanation_card.setdefault("code", code)
-    explanation_card["action"] = display_action
-    explanation_card["direct_answer"] = direct
-    explanation_card["answer_stage"] = stage_label
-    selected_perspectives = stock_perspectives_mod.selected_metadata(
-        perspective_ids or ()
-    )
-    explanation_card["selected_perspectives"] = selected_perspectives
     if material_report is not None:
-        explanation_card["用户持仓"] = await _chat_holdings_context(st)
-        _populate_stock_material_report(explanation_card, material_report)
-    if holding_only_action:
-        # 只调整这一轮问答的表达上下文；原始诊断卡和 RiskGate 回执
-        # 保持不变，避免“不授权加仓”被扩写成“已有仓位必须退出”。
-        explanation_card["summary"] = direct
-
-    # 深度模型先在服务端完成并通过校验，之后才作为唯一正文下发。
-    # 若上游中途失败，已收集的半截内容会被丢弃，不进入会话历史。
-    explain = getattr(st.engine, "governed_stock_explanation_stream", None)
-    failure_reason = "model_unavailable"
-    if callable(explain) and message:
-        parts: list[str] = []
-        total = 0
-        try:
-            explain_kwargs = {"history": history or []}
-            if perspective_ids:
-                explain_kwargs["perspective_ids"] = perspective_ids
-            if data_material_ids is not None:
-                explain_kwargs["data_material_ids"] = data_material_ids
-                explain_kwargs["material_report"] = material_report
-            async for delta in explain(message, explanation_card, **explain_kwargs):
-                text = str(delta or "")
-                if not text:
-                    continue
-                total += len(text)
-                if total > 12_000:
-                    parts = []
-                    failure_reason = "output_too_large"
-                    break
-                parts.append(text)
-        except Exception:  # noqa: BLE001 — 半截模型正文必须丢弃
-            parts = []
-            failure_reason = "model_incomplete"
-            log.warning("盘中问股深度成稿未返回，使用确定性回退 code=%s", code)
-        answer = "".join(parts).strip()
-        warning_codes = [
-            str(item).strip()
-            for item in (explanation_card.get("_explanation_warning_codes") or [])
-            if str(item).strip()
-        ]
-        if answer and warning_codes:
-            yield _annotated_stock_model_answer(
-                answer,
-                explanation_card,
-                direct,
-                warning_codes,
-            )
-            if material_report is not None:
-                chat_materials_mod.finalize_report(material_report, model_used=True)
-            return
-        if _stock_model_answer_is_displayable(answer, explanation_card):
-            boundary = _stock_data_boundary_markdown(explanation_card)
-            yield answer + (f"\n\n{boundary}" if boundary else "")
-            if material_report is not None:
-                chat_materials_mod.finalize_report(material_report, model_used=True)
-            return
-        if answer:
-            failure_reason = "safety_validation_failed"
-            log.warning("盘中问股成稿未保留冻结边界，使用确定性回退 code=%s", code)
-        else:
-            failure_reason = str(
-                explanation_card.get("_explanation_failure_reason") or failure_reason
-            )
-
-    if material_report is not None:
+        card["用户持仓"] = await _chat_holdings_context(st)
+        _populate_stock_material_report(card, material_report)
         chat_materials_mod.finalize_report(material_report, model_used=False)
-    yield _deterministic_stock_chat_fallback(
-        explanation_card,
-        direct,
-        stage_label,
-        failure_reason=failure_reason,
-    )
+    analysis = card.get("stock_ask_analysis")
+    if not isinstance(analysis, dict):
+        # 兼容仍返回旧诊断卡的客户扩展/测试桩；同样只走确定性六桶，
+        # 不恢复已经退役的模型成稿路径。
+        profile = stock_ask_profile_mod.normalize_profile(
+            stock_ask_profile,
+            quote=card.get("market_quote") or {},
+        )
+        analysis = stock_ask_data_mod.build_analysis(
+            card,
+            profile,
+            {},
+            card.get("trade_plan") or {},
+        )
+        analysis = stock_ask_data_mod.apply_risk_veto(
+            analysis, card.get("risk_decision") or {}
+        )
+        card = {**card, "code": card.get("code") or code, "stock_ask_analysis": analysis}
+    yield stock_ask_data_mod.render_markdown(card)
 
 
 async def _governed_position_chat_stream(
@@ -3487,16 +3595,6 @@ async def _with_material_report(gen, material_report: dict | None):
             continue
         yield event
 
-@router.get("/chat/perspectives")
-async def chat_perspectives():
-    """返回问股可选择的服务端白名单；前端不得自行注入提示词。"""
-    return {
-        "ok": True,
-        "max_selected": stock_perspectives_mod.MAX_SELECTED_PERSPECTIVES,
-        "perspectives": stock_perspectives_mod.public_perspectives(),
-    }
-
-
 @router.get("/chat/data-materials")
 async def chat_data_materials():
     """返回自由问答材料白名单；采集能力仍以每轮真实结果为准。"""
@@ -3538,6 +3636,36 @@ async def chat(request: Request):
     industry = str(body.get("industry", "")).strip()
     research_contract = str(body.get("research_contract", "")).strip()
     history = body.get("history") or []
+    if body.get("perspective_ids") not in (None, []):
+        return JSONResponse(
+            {
+                "ok": False,
+                "error_code": "perspective_selection_retired",
+                "error": "个股问股已改为六桶确定性分析，不再接受模型分析视角",
+            },
+            status_code=400,
+        )
+    stock_ask_profile = body.get("stock_ask_profile")
+    if stock_ask_profile is not None and mode != "stock":
+        return JSONResponse(
+            {
+                "ok": False,
+                "error_code": "stock_ask_profile_mode_not_supported",
+                "error": "问股画像目前只支持盘中问股模式",
+            },
+            status_code=400,
+        )
+    try:
+        stock_ask_profile = stock_ask_profile_mod.validate_profile_payload(stock_ask_profile)
+    except stock_ask_profile_mod.StockAskProfileError as exc:
+        return JSONResponse(
+            {
+                "ok": False,
+                "error_code": "invalid_stock_ask_profile",
+                "error": str(exc),
+            },
+            status_code=400,
+        )
     data_material_ids: tuple[str, ...] | None = None
     material_report: dict | None = None
     if mode == "free":
@@ -3560,28 +3688,19 @@ async def chat(request: Request):
             },
             status_code=400,
         )
-    try:
-        perspective_ids = stock_perspectives_mod.resolve_perspective_ids(
-            body.get("perspective_ids")
-        )
-    except stock_perspectives_mod.PerspectiveSelectionError as exc:
-        return JSONResponse(
-            {"ok": False, "error_code": "invalid_perspective_selection", "error": str(exc)},
-            status_code=400,
-        )
-    if perspective_ids and mode != "stock":
-        return JSONResponse(
-            {
-                "ok": False,
-                "error_code": "perspective_mode_not_supported",
-                "error": "分析视角目前只支持盘中问股模式",
-            },
-            status_code=400,
-        )
     # 多模态图片：只收 data:image/* base64，最多 4 张、单张 ≤8MB（防请求体/视觉 token 爆）。
     _imgs = body.get("images") or []
     images = [u for u in _imgs if isinstance(u, str) and u.startswith("data:image/") and len(u) <= 8_000_000][:4] \
         if isinstance(_imgs, list) else []
+    if mode == "stock" and images:
+        return JSONResponse(
+            {
+                "ok": False,
+                "error_code": "stock_ask_images_not_supported",
+                "error": "确定性问股不读取图片；如需图片解读，请使用自由问答模式",
+            },
+            status_code=400,
+        )
     # 持仓诊断勾选子集（仅 position 模式生效）：6 位代码，最多 50；空=诊断全部持仓
     _codes = body.get("codes") or []
     codes = ([c for c in (str(x).strip() for x in _codes) if _CODE_RE.match(c)][:50]
@@ -3648,10 +3767,6 @@ async def chat(request: Request):
                 },
             ))
     if mode == "stock":
-        perspective_stage = (
-            f"正在核验行情、证据与风险闸，并准备 {len(perspective_ids)} 个分析视角…"
-            if perspective_ids else "正在核验行情、证据与风险闸…"
-        )
         return _sse(_governed_chat_sse_events(
             _invoke_governed_chat_stream(
                 _governed_stock_chat_stream,
@@ -3659,9 +3774,9 @@ async def chat(request: Request):
                 code,
                 message=message,
                 history=history,
-                perspective_ids=perspective_ids,
+                stock_ask_profile=stock_ask_profile,
             ),
-            stage=perspective_stage,
+            stage="正在采集五类证据并执行六桶评分与风险闸…",
         ))
     if mode == "position":
         return _sse(_governed_chat_sse_events(
@@ -3908,21 +4023,9 @@ async def chat_conversation_add(cid: str, request: Request):
         if not isinstance(message_row, dict):
             continue
         row = dict(message_row)
-        try:
-            selected_ids = stock_perspectives_mod.resolve_perspective_ids(
-                row.pop("perspective_ids", None)
-            )
-        except stock_perspectives_mod.PerspectiveSelectionError as exc:
-            return JSONResponse(
-                {
-                    "ok": False,
-                    "error_code": "invalid_perspective_selection",
-                    "error": str(exc),
-                },
-                status_code=400,
-            )
-        if row.get("role") == "assistant" and selected_ids:
-            row["perspectives"] = stock_perspectives_mod.selected_metadata(selected_ids)
+        # 17 视角问股已经退役；不再接受或向新历史写入模型视角元数据。
+        row.pop("perspective_ids", None)
+        row.pop("perspectives", None)
         if row.get("role") == "assistant":
             stored_report = chat_materials_mod.sanitize_report(row.get("data_materials"))
             if stored_report is not None:

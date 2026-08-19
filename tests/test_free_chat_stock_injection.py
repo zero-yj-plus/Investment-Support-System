@@ -223,7 +223,7 @@ async def test_api_ambiguous_free_stock_question_requests_clarification(
 
 
 @pytest.mark.asyncio
-async def test_free_stock_governed_path_passes_saved_holdings_to_model_card(
+async def test_free_stock_governed_path_reports_saved_holdings_without_model(
     monkeypatch,
 ) -> None:
     async def fake_card(_state, _code, **_kwargs):
@@ -238,7 +238,7 @@ async def test_free_stock_governed_path_passes_saved_holdings_to_model_card(
             "risk_decision": {"decision": "watch"},
         }
 
-    received: dict = {}
+    explain_called = False
 
     async def holdings_context():
         return [{
@@ -250,7 +250,8 @@ async def test_free_stock_governed_path_passes_saved_holdings_to_model_card(
         }]
 
     async def explain(_message, card, **_kwargs):
-        received.update(card)
+        nonlocal explain_called
+        explain_called = True
         yield ""
 
     monkeypatch.setattr(routes, "_governed_and_record_diagnosis", fake_card)
@@ -274,7 +275,7 @@ async def test_free_stock_governed_path_passes_saved_holdings_to_model_card(
         )
     ])
 
-    assert received["用户持仓"][0]["cost"] == 100.0
+    assert explain_called is False
     holdings_result = next(row for row in report["required"] if row["id"] == "holdings")
     assert holdings_result["state"] == "complete"
     assert "1 条持仓" in holdings_result["reason"]

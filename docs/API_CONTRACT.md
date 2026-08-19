@@ -23,7 +23,7 @@ Agent 权限、证据库健康或任务中心，因此不得因运维上游超�
   "ok": true,
   "status_scope": "shell",
   "client": {"name": "本地客户", "id": "local", "brand": "W.U.D.I.", "brand_sub": "A 股决策支持"},
-  "version": "1.4.2",
+  "version": "1.5.1",
   "date": "2026-06-10",
   "is_trade_day": true,
   "market_session": "intraday",
@@ -600,6 +600,32 @@ phase 枚举：`冰点期` `修复期` `发酵期` `高潮期` `分歧期` `退�
 
 ## 4. 个股
 
+### GET /api/stocks/search?q={query}&limit=8
+
+从当前客户实例的本地全 A 股主名录搜索股票候选，不在交互请求中刷新 TDX 或调用外部网站。`q` 支持六位代码/代码前缀、官方中文简称及其任意部分、全拼和拼音首字母；忽略 `*ST/ST/XD/XR/DR/N/C` 等临时名称前缀后再生成附加搜索键，但返回名称始终保留名录中的当前正式值。服务端最多返回 8 条，排序固定为完整代码/名称、前缀、中文包含、全拼、首字母。
+
+```json
+{
+  "ok": true,
+  "state": "ready",
+  "query": "gzmt",
+  "results": [{"code": "600519", "name": "贵州茅台"}],
+  "pinyin_available": true,
+  "universe": {
+    "count": 5400,
+    "complete": true,
+    "stale": false,
+    "refresh_required": false,
+    "as_of": "2026-08-19",
+    "source": "TDX 数据 API 股票列表",
+    "authority": "tdx_instruments_a"
+  },
+  "missing": []
+}
+```
+
+`state=degraded|unavailable`、`universe.stale=true` 或 `missing` 非空时，前端必须显示名录边界；允许保留正向候选，但不得据此硬判股票不存在。候选只负责把中文/拼音转换为六位代码，不替代 `/api/quote/{code}`、诊断、研究、持仓、观察池或模拟订单各自已有的真实身份/行情/风险核验。完整六位代码即使没有候选也可继续提交原业务接口；中文或拼音必须先明确选择候选。
+
 ### GET /api/stock/{code}
 code 为 6 位数字（自动识别沪深）。
 ```json
@@ -618,7 +644,7 @@ code 为 6 位数字（自动识别沪深）。
 ```
 `minute` 为当日分时（约 240 点）；`daily` 为最近 120 个交易日 K 线。
 
-## 5. AI 对话（与 Hermes Agent 打通，SSE 流式）
+## 5. 统一对话（SSE 流式；个股问股为确定性规则）
 
 ### POST /api/chat  → `text/event-stream`
 请求：
@@ -628,14 +654,27 @@ code 为 6 位数字（自动识别沪深）。
   "message": "这票现在能持有吗？冲高回落怎么应对？",
   "code": "002131",
   "industry": "",
-  "perspective_ids": ["92kobe", "aizaibingchuan"],
+  "stock_ask_profile": {
+    "holding_status": "held",
+    "current_price": null,
+    "holding_cost": 12.30,
+    "position_pct": 20,
+    "scenario": "intraday",
+    "horizon": "SHORT_TERM",
+    "risk_budget_pct": 1.5,
+    "risk_budget_explicit": false,
+    "max_position_pct": 70,
+    "allow_add": false
+  },
   "history": [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]
 }
 ```
 - `mode`: `free`(自由问答) | `stock`(盘中问股，需 code) | `position`(持仓诊断，后端自动读取已保存持仓) | `chain`(产业链挖掘，需 industry) | `company`(单公司深研，需 code) | `restructuring`(重组拆解，code 可选)
-- `perspective_ids`：仅 `stock` 模式可用的分析视角 ID 数组；取值必须来自 `GET /api/chat/perspectives` 服务端白名单，去重后最多 4 个。未知 ID、非数组、超过上限或在其他模式使用均返回 HTTP 400。空数组保持默认问股逻辑。
+- `stock_ask_profile`：仅 `stock` 模式可用。`holding_status=unheld|held|unspecified`，`scenario=intraday|after_close`，`horizon=NEXT_DAY|SHORT_TERM|SWING`；价格必须 `>=0.01`，仓位 `0.01—100`，风险预算 `0.1—10`，最大仓位 `1—100`。`unspecified` 自动读取当前客户实例的本地持仓；缺成本或仓位保持缺失。用户选择盘中但当前不在工作日 `09:30—11:30 / 13:00—15:00` 连续交易时段时，服务端自动按盘后规则执行。只有 `risk_budget_explicit=true` 时风险预算才是硬约束。
+- `perspective_ids` 已退役；提交非空值返回 HTTP 400 `perspective_selection_retired`。
+- `stock` 模式不读取图片；提交图片返回 HTTP 400 `stock_ask_images_not_supported`，避免把未参与规则计算的图片伪装为已分析证据。图片解读仅保留在 `free` 模式。
 - `data_material_ids`：仅 `free` 模式可用的本轮最终材料 ID 数组；省略时使用服务端确定性预选，显式空数组表示不选任何可选材料，去重后最多 4 项。未知 ID、非数组、超过上限或在其他模式使用均返回 HTTP 400。该选择同时控制是否启动对应数据源和是否进入模型上下文，禁止先全量采集后裁剪。
-- 后端自动注入对应实时数据上下文（个股盘口/板块/资金/市场情绪），再调 Hermes。
+- `stock` 后端自动采集并核验个股盘口、技术、行业/估值/事件和市场证据，不调用 Hermes；其它需要模型的模式仍按各自契约执行。
 
 `free` 模式请求示例：
 
@@ -652,11 +691,7 @@ code 为 6 位数字（自动识别沪深）。
 
 未识别到单股时，`fundamental` 不启动个股财务源并标记 `missing`；`technical` 只能使用市场指数行情、`fund_flow` 只能使用全市场资金方向时均标记 `degraded`，上下文同时携带 scope 警告，禁止把它们表述成某只股票的分时/日 K/指标或今日个股资金流。
 
-`stock` 模式先冻结确定性诊断、RiskGate 动作、强化条件和失效条件，再把同一诊断快照中的技术结构、量价、资金、板块、财务及市场背景组成统一分析资料包。未选择视角时，模型只负责生成一份约 800—1300 个中文字符的自然语言深度成稿；选择 1—4 个视角时目标约 1200—2320 字符，每个视角必须单独给出有证据的判断，随后汇总“多视角共识与分歧”。视角只改变观察框架，无权修改冻结动作、价位、风险等级或缺失语义，也不得冒充人物本人、另行联网或调用原 Skill 脚本。遗漏任一已选视角或共识分歧段属于校验错误。问股不另设低于连接配置的 `max_tokens`，使用模型连接的统一预算（默认 8000）；服务端缓存生成增量并读取真实 `finish_reason`。收到可信 `stop` 终态后执行分级校验：与冻结动作冲突、出现资料包外关键数字/越界价格属于未采信项；篇幅偏短、未原样复述动作或执行边界属于软质量问题，均先自动补写一次。若完整正文修订后仍有未采信项，接口保留模型全文，并在正文前显著列出冲突项以及服务端冻结动作、强化条件和失效条件；缺失或上一交易日数据由服务端统一在文末标注，只限制对应维度。若首稿因 `length` 截断，已生成正文会作为上下文重写一次完整终稿；再次截断、真实流中断或空响应因不构成完整正文，才回退确定性说明并显示准确原因。上游已返回正文但遗漏标准 `stop` 时仍进入同一校验；若正文完整但质量不足，则以带校验标注的全文展示，不再伪装为“没有内容”。响应不再拼接“固定治理卡 + 针对问题补充”两段正文。
-
-### GET /api/chat/perspectives
-
-返回问股视角白名单：`{"ok":true,"max_selected":4,"perspectives":[{"id","name","category","description","tags","version"}]}`。当前固定提供 17 个视角，前端按 `category` 分组。会话历史中的 assistant 消息可附带服务端规范化后的 `perspectives:[{id,name,version}]`，用于复核该轮实际采用的视角；历史事实只追加，不覆盖。
+`stock` 模式的唯一决策权威是 `stock-ask-six-bucket-v2`。服务端先规范化画像，再汇集市场与板块（MV）、固定方法论解释（FV，不计分）、量价与威科夫（WV）、质量/估值/催化（QV）、趋势与相对强度（TV）、技术指标（IV），按周期权重计算 `-2—2` 综合分和数据置信度，再进入 A—E 状态机与 RiskGate。缺失信号不进入分子或分母，无法取得的行业历史、同行估值、官方事件或 60 分钟确认保持 `missing/partial` 并扣置信度，不得补 0。RiskGate 只能否决新增风险，不能把全市场风险改写为公司重大负面，也不能自动要求已有持仓退出。最终 Markdown 由 Python 确定性模板生成；SSE 顺序为 `stage → delta → done`，`done.truncated=false`。
 
 ### GET /api/chat/data-materials
 
@@ -671,7 +706,7 @@ code 为 6 位数字（自动识别沪深）。
 - `GET /api/chat/conversations?mode=free|stock`：按模式返回会话；省略 `mode` 保持旧调用方的全量列表。
 - `POST /api/chat/conversations`：以 `{"mode":"free"}` 或 `{"mode":"stock"}` 建立会话。
 - `GET /api/chat/conversations/{cid}`：读取元数据和追加式消息。
-- `POST /api/chat/conversations/{cid}/messages`：完整一轮结束后追加消息；自由问答 assistant 消息可附服务端白名单清洗后的 `data_materials` 报告，问股 assistant 消息可附 `perspectives`。图片只保留 `has_image`，不把 base64 写入历史。
+- `POST /api/chat/conversations/{cid}/messages`：完整一轮结束后追加消息；自由问答 assistant 消息可附服务端白名单清洗后的 `data_materials` 报告。新问股历史不再写入模型视角元数据；既有历史事实不覆盖。图片只保留 `has_image`，不把 base64 写入历史。
 - `DELETE /api/chat/conversations/{cid}`：删除指定会话。前端必须按 `mode` 隔离列表和活动会话；模式/会话切换时取消在途 SSE，旧响应不得写入新会话。
 
 `company` 模式把行情、板块、龙虎榜、财务、市场资金、市场总览和情绪拆成独立并行有界请求；任一增强源超时只降级对应维度。模型正文完成治理后，服务端固定追加行情/估值、最近报告期财务、确定性技术结构、官方公告与互动问答附录。长篇 `chain` 请求使用至少 16000 token、`company` 使用至少 20000 token 的专用生成预算，模型请求单次上限为 300 秒。长篇请求发生模型读取超时后不重放整次请求，避免总等待翻倍。调用方显式传入 `max_tokens` 时仍以显式值为准。

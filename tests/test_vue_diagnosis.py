@@ -94,6 +94,7 @@ def test_vue_diagnosis_uses_safe_text_and_native_interaction_semantics() -> None
         _read("src/components/DiagnosisDecision.vue"),
         _read("src/components/DiagnosisEvidence.vue"),
         _read("src/components/DiagnosisDataHealth.vue"),
+        _read("src/components/StockAutocomplete.vue"),
     ]
     combined = "".join(sources)
 
@@ -103,7 +104,7 @@ def test_vue_diagnosis_uses_safe_text_and_native_interaction_semantics() -> None
     assert '<form' in combined and '<label' in combined and '<input' in combined
     assert '<button' in combined
     assert '<a href="#/research?tab=ask"' in combined
-    assert 'inputmode="numeric"' in combined
+    assert 'inputmode="search"' in combined
     assert 'aria-live="polite"' in combined
     assert "min-height: 44px" in combined
 

@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import type { WatchlistInput, WatchlistItem } from '../types/watchlist'
+import type { StockSearchItem } from '../types/stockSearch'
 import { finiteNumber } from '../utils/watchlistFormat'
+import StockAutocomplete from './StockAutocomplete.vue'
 
 const props = defineProps<{
   item: WatchlistItem | null
@@ -34,7 +36,7 @@ const abandonCondition = ref(String(props.item?.abandon_condition || ''))
 const abandonPrice = ref(props.item?.abandon_price == null ? '' : String(props.item.abandon_price))
 const note = ref(String(props.item?.note || ''))
 const localError = ref('')
-const codeInput = ref<HTMLInputElement | null>(null)
+const codeInput = ref<InstanceType<typeof StockAutocomplete> | null>(null)
 const dialog = ref<HTMLDialogElement | null>(null)
 
 function optionalPositive(raw: string, label: string): { value: number | null; error: string } {
@@ -85,6 +87,10 @@ function requestClose() {
   emit('cancel')
 }
 
+function selectStock(item: StockSearchItem) {
+  if (!props.item?.id) name.value = item.name
+}
+
 function handleBackdrop(event: MouseEvent) {
   if (event.target === dialog.value) requestClose()
 }
@@ -121,20 +127,22 @@ onBeforeUnmount(() => {
         风险边界等级由服务端计算，本表单不采集、不覆盖该字段。
       </p>
       <div class="watchlist-editor__grid">
-        <label>
-          <span>股票代码 <b aria-hidden="true">*</b></span>
-          <input
+        <div class="watchlist-editor__stock-field">
+          <StockAutocomplete
             ref="codeInput"
             v-model="code"
-            inputmode="numeric"
-            maxlength="6"
-            autocomplete="off"
+            input-id="watchlist-stock-code"
+            label="股票代码"
+            placeholder="代码 / 中文 / 拼音 / 首字母"
             required
             :readonly="Boolean(item?.id)"
+            :display-name="name"
+            :aria-invalid="Boolean(localError && !/^\d{6}$/.test(code))"
             aria-describedby="watchlist-code-hint"
+            @selected="selectStock"
           />
           <small id="watchlist-code-hint">新增时通过真实单票接口核验；编辑时不改变代码。</small>
-        </label>
+        </div>
         <label>
           <span>名称（可选）</span>
           <input v-model="name" maxlength="30" autocomplete="off" />
@@ -206,8 +214,8 @@ onBeforeUnmount(() => {
 .watchlist-editor form { padding: 14px; }
 .watchlist-editor__description { margin: 0 0 12px; padding: 9px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); color: var(--text-2); font-size: 13px; }
 .watchlist-editor__grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px 12px; }
-.watchlist-editor__grid > label { grid-column: span 2; }
-.watchlist-editor label { display: grid; min-width: 0; align-content: start; gap: 5px; color: var(--text-2); font-size: 13px; font-weight: 680; }
+.watchlist-editor__grid > label, .watchlist-editor__stock-field { grid-column: span 2; }
+.watchlist-editor label, .watchlist-editor__stock-field { display: grid; min-width: 0; align-content: start; gap: 5px; color: var(--text-2); font-size: 13px; font-weight: 680; }
 .watchlist-editor label b { color: var(--danger); }
 .watchlist-editor input, .watchlist-editor textarea { width: 100%; min-height: 44px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); color: var(--text); }
 .watchlist-editor textarea { min-height: 48px; resize: vertical; }
@@ -226,7 +234,7 @@ onBeforeUnmount(() => {
 @media (max-width: 720px) {
   .watchlist-editor { width: calc(100vw - 16px); max-height: calc(100dvh - 16px); font-size: 18px; }
   .watchlist-editor__grid { grid-template-columns: minmax(0, 1fr); }
-  .watchlist-editor__grid > label, .watchlist-editor__wide, .watchlist-editor__half, .watchlist-editor__two-thirds { grid-column: auto !important; }
+  .watchlist-editor__grid > label, .watchlist-editor__stock-field, .watchlist-editor__wide, .watchlist-editor__half, .watchlist-editor__two-thirds { grid-column: auto !important; }
 }
 @media (max-width: 520px) {
   .watchlist-editor__band { grid-template-columns: minmax(0, 1fr); align-items: stretch; }

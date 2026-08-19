@@ -1,9 +1,11 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import type { TechnicalCatalogResponse, TechnicalHistoryEvent, TechnicalStatusResponse } from '../types/technicalScreener'
 import { formatTechnicalInteger, formatTechnicalMetrics } from '../utils/technicalScreenerFormat'
 import DataStatus from './DataStatus.vue'
+import StockAutocomplete from './StockAutocomplete.vue'
 
-defineProps<{
+const props = defineProps<{
   catalog: TechnicalCatalogResponse | null
   status: TechnicalStatusResponse | null
   catalogError: string
@@ -20,6 +22,11 @@ const emit = defineEmits<{
   loadHistory: []
 }>()
 
+const historyCodeModel = computed({
+  get: () => props.historyCode,
+  set: (value: string) => emit('updateHistoryCode', value),
+})
+
 function statusState(status: TechnicalStatusResponse | null): 'complete' | 'partial' | 'missing' {
   if (!status || status.state === 'missing') return 'missing'
   return status.state === 'ready' ? 'complete' : 'partial'
@@ -31,8 +38,14 @@ function statusState(status: TechnicalStatusResponse | null): 'complete' | 'part
     <section class="panel technical-history" aria-labelledby="technical-history-title">
       <header><div><p class="eyebrow">追加式事件</p><h2 id="technical-history-title">历史信号命中</h2></div><span>不计算收益或胜率</span></header>
       <form @submit.prevent="emit('loadHistory')">
-        <label for="technical-history-code">股票代码</label>
-        <input id="technical-history-code" :value="historyCode" inputmode="numeric" maxlength="6" placeholder="6 位股票代码" @input="emit('updateHistoryCode', ($event.target as HTMLInputElement).value)">
+        <StockAutocomplete
+          v-model="historyCodeModel"
+          class="technical-history-autocomplete"
+          input-id="technical-history-code"
+          label="股票代码"
+          placeholder="代码 / 中文 / 拼音 / 首字母"
+          :aria-invalid="Boolean(historyError)"
+        />
         <button class="secondary-button" type="submit" :disabled="historyLoading">{{ historyLoading ? '查询中' : '查询历史命中' }}</button>
       </form>
       <p v-if="historyError" class="technical-history-error" role="alert">{{ historyError }}</p>
@@ -72,9 +85,7 @@ function statusState(status: TechnicalStatusResponse | null): 'complete' | 'part
 .technical-history > header, .technical-health > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .technical-history h2, .technical-health h2 { margin: 0; font-size: 18px; }
 .technical-history > header > span { color: var(--text-3); font-size: 12px; }
-.technical-history form { display: grid; grid-template-columns: auto minmax(160px, 220px) auto; align-items: end; gap: 8px; margin-top: 12px; }
-.technical-history form label { grid-column: 1 / -1; color: var(--text-2); font-size: 13px; }
-.technical-history form input { min-height: 44px; padding: 7px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); color: var(--text); }
+.technical-history form { display: grid; grid-template-columns: minmax(220px, 1fr) auto; align-items: end; gap: 8px; margin-top: 12px; }
 .technical-history-list { display: grid; gap: 0; margin: 12px 0 0; padding: 0; list-style: none; }
 .technical-history-list li { display: grid; grid-template-columns: 110px minmax(140px, 210px) minmax(0, 1fr); gap: 8px; padding: 8px 4px; border-bottom: 1px solid var(--border); }
 .technical-history-list span, .technical-history-empty { color: var(--text-3); }

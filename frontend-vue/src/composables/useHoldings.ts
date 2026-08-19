@@ -128,12 +128,6 @@ export function useHoldings() {
     markDirty()
   }
 
-  function removeHolding(clientKey: string) {
-    holdings.value = holdings.value.filter((row) => row.clientKey !== clientKey)
-    markDirty()
-    feedback.value = '已从待保存列表移除；保存前可通过重新载入恢复。'
-  }
-
   async function refreshQuotes() {
     const codes = [...new Set(holdings.value.map((row) => row.code).filter((code) => /^\d{6}$/.test(code)))]
     if (!codes.length || quotesLoading.value) return
@@ -228,17 +222,17 @@ export function useHoldings() {
 
   async function refresh() {
     if (dirty.value) {
-      feedback.value = '检测到未保存编辑，本次只刷新报价，没有重新载入持仓账本。'
+      feedback.value = '检测到等待自动保存的编辑，本次只刷新报价，没有重新载入持仓账本。'
       await refreshQuotes()
       return
     }
     await loadHoldings()
   }
 
-  function validateForSave(): string {
+  function validateForSave(rows: HoldingDraft[]): string {
     if (!loaded.value) return '持仓账本尚未成功加载，保存已锁定。'
     const seen = new Set<string>()
-    for (const [index, row] of holdings.value.entries()) {
+    for (const [index, row] of rows.entries()) {
       const position = index + 1
       if (!/^\d{6}$/.test(row.code)) return `第 ${position} 条持仓的股票代码必须是 6 位数字。`
       if (seen.has(row.code)) return `股票代码 ${row.code} 重复，请合并后再保存。`
@@ -249,12 +243,12 @@ export function useHoldings() {
     return ''
   }
 
-  async function save() {
-    if (saving.value) return
-    const validationError = validateForSave()
+  async function persistHoldings(rows: HoldingDraft[], successMessage: string): Promise<boolean> {
+    if (saving.value) return false
+    const validationError = validateForSave(rows)
     if (validationError) {
       saveError.value = validationError
-      return
+      return false
     }
     saveController?.abort()
     const controller = new AbortController()
@@ -262,7 +256,7 @@ export function useHoldings() {
     saving.value = true
     saveError.value = ''
     feedback.value = ''
-    const payloadRows: SaveHoldingPayload[] = holdings.value.map((row) => {
+    const payloadRows: SaveHoldingPayload[] = rows.map((row) => {
       const item: SaveHoldingPayload = {
         code: row.code,
         name: row.name || quotes.value[row.code]?.name || '',
@@ -281,20 +275,33 @@ export function useHoldings() {
       const payload = await putJson<HoldingsResponse>('/holdings', {
         holdings: payloadRows,
       }, controller.signal)
-      if (!alive || controller !== saveController) return
+      if (!alive || controller !== saveController) return false
       if (payload.ok === false) throw new ApiError(payload.error || '服务端拒绝保存持仓')
       const returned = Array.isArray(payload.holdings) ? payload.holdings : payloadRows
       holdings.value = returned.map(toDraft)
       riskStates.value = payload.risk_states && typeof payload.risk_states === 'object' ? payload.risk_states : riskStates.value
       dirty.value = false
-      feedback.value = '持仓已保存；行业以服务端核验结果为准，页面汇总已自动更新。'
+      feedback.value = successMessage
+      return true
     } catch (caught) {
-      if (!alive || controller !== saveController || (caught instanceof DOMException && caught.name === 'AbortError')) return
+      if (!alive || controller !== saveController || (caught instanceof DOMException && caught.name === 'AbortError')) return false
       saveError.value = errorMessage(caught, '持仓保存失败')
+      return false
     } finally {
       if (controller === saveController) saveController = null
       if (alive) saving.value = false
     }
+  }
+
+  async function save(): Promise<boolean> {
+    if (!dirty.value) return true
+    return persistHoldings(holdings.value, '持仓变更已自动保存；页面汇总已同步更新。')
+  }
+
+  async function removeHolding(clientKey: string): Promise<boolean> {
+    const nextHoldings = holdings.value.filter((row) => row.clientKey !== clientKey)
+    if (nextHoldings.length === holdings.value.length) return false
+    return persistHoldings(nextHoldings, '该持仓已取消关注，账本已自动更新。')
   }
 
   async function addHolding(input: NewHoldingInput): Promise<boolean> {
@@ -303,49 +310,61 @@ export function useHoldings() {
       addError.value = '该股票已经在持仓中，请编辑原记录。'
       return false
     }
-    verifyController?.abort()
-    const controller = new AbortController()
-    verifyController = controller
     adding.value = true
     addError.value = ''
-    let quote: HoldingQuote | null = null
-    let name = ''
     try {
-      const payload = await getJson<QuoteResponse>(`/quote/${input.code}`, controller.signal)
-      if (!alive || controller !== verifyController) return false
-      if (payload.recognized === false || payload.state === 'not_found') {
-        addError.value = payload.error || '该代码不在当前完整 A 股名录中。'
+      verifyController?.abort()
+      const controller = new AbortController()
+      verifyController = controller
+      let quote: HoldingQuote | null = null
+      let name = ''
+      try {
+        const payload = await getJson<QuoteResponse>(`/quote/${input.code}`, controller.signal)
+        if (!alive || controller !== verifyController) return false
+        if (payload.recognized === false || payload.state === 'not_found') {
+          addError.value = payload.error || '该代码不在当前完整 A 股名录中。'
+          return false
+        }
+        quote = payload.quote || null
+        name = String(payload.quote?.name || payload.identity?.name || '')
+      } catch (caught) {
+        if (!alive || controller !== verifyController || (caught instanceof DOMException && caught.name === 'AbortError')) return false
+        addError.value = `${errorMessage(caught, '股票代码核验失败')}；当前未写入持仓，请重试。`
+        return false
+      } finally {
+        if (controller === verifyController) verifyController = null
+      }
+
+      const nextHoldings = [...holdings.value, toDraft({
+        code: input.code,
+        name,
+        cost: input.cost,
+        shares: input.shares,
+        note: input.note,
+        risk_plan: {
+          period: input.period,
+          buy_date: input.buyDate,
+          customer_risk_price: input.customerRiskPrice,
+          customer_target_price: input.customerTargetPrice,
+          target_mode: input.targetMode,
+          confirmed_reduction_pct: 0,
+        },
+      })]
+      const persisted = await persistHoldings(
+        nextHoldings,
+        quote
+          ? '持仓已核验并加入，账本和页面汇总已自动更新。'
+          : '持仓已核验并加入；当前报价缺失，账本已更新但不计算盈亏。',
+      )
+      if (!persisted) {
+        addError.value = saveError.value || '持仓写入失败，请重试。'
         return false
       }
-      quote = payload.quote || null
-      name = String(payload.quote?.name || payload.identity?.name || '')
-    } catch (caught) {
-      if (!alive || controller !== verifyController || (caught instanceof DOMException && caught.name === 'AbortError')) return false
-      addError.value = `${errorMessage(caught, '股票代码核验失败')}；当前未加入列表，请重试。`
-      return false
+      if (quote) quotes.value = { ...quotes.value, [input.code]: quote }
+      return true
     } finally {
-      if (controller === verifyController) verifyController = null
       if (alive) adding.value = false
     }
-    holdings.value = [...holdings.value, toDraft({
-      code: input.code,
-      name,
-      cost: input.cost,
-      shares: input.shares,
-      note: input.note,
-      risk_plan: {
-        period: input.period,
-        buy_date: input.buyDate,
-        customer_risk_price: input.customerRiskPrice,
-        customer_target_price: input.customerTargetPrice,
-        target_mode: input.targetMode,
-        confirmed_reduction_pct: 0,
-      },
-    })]
-    if (quote) quotes.value = { ...quotes.value, [input.code]: quote }
-    markDirty()
-    feedback.value = quote ? '已加入待保存持仓，并取得当前报价。' : '已加入待保存持仓；当前报价缺失，不计算盈亏。'
-    return true
   }
 
   async function resetPlan(code: string, input: NewHoldingInput, reason = 'manual_replan'): Promise<boolean> {

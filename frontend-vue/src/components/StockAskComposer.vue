@@ -80,6 +80,10 @@ function readFile(file: File): Promise<PendingStockImage | null> {
 
 async function addFiles(fileList: FileList | File[]) {
   fileError.value = ''
+  if (props.mode !== 'free') {
+    fileError.value = '确定性问股不读取图片；如需图片解读，请切换到自由问答'
+    return
+  }
   const files = Array.from(fileList)
   const loaded = (await Promise.all(files.map(readFile))).filter((item): item is PendingStockImage => Boolean(item))
   if (alive && loaded.length) emit('addImages', loaded)
@@ -97,12 +101,13 @@ function onPaste(event: ClipboardEvent) {
     .map((item) => item.getAsFile())
     .filter((file): file is File => Boolean(file))
   if (!files.length) return
+  if (props.mode !== 'free') return
   event.preventDefault()
   void addFiles(files)
 }
 
 function onDrop(event: DragEvent) {
-  if (event.dataTransfer?.files?.length) void addFiles(event.dataTransfer.files)
+  if (props.mode === 'free' && event.dataTransfer?.files?.length) void addFiles(event.dataTransfer.files)
 }
 
 function onKeydown(event: KeyboardEvent) {
@@ -134,10 +139,12 @@ onBeforeUnmount(() => {
 
     <div
       class="stock-ask-input-row"
+      :class="{ 'without-upload': mode !== 'free' }"
       @dragover.prevent
       @drop.prevent="onDrop"
     >
       <button
+        v-if="mode === 'free'"
         type="button"
         class="stock-ask-upload"
         :disabled="streaming || pendingImages.length >= 4"
@@ -145,7 +152,7 @@ onBeforeUnmount(() => {
         title="上传图片，支持粘贴或拖入"
         @click="fileInput?.click()"
       ><AppIcon name="upload" :size="20" /></button>
-      <input ref="fileInput" class="sr-only" type="file" accept="image/*" multiple :aria-label="mode === 'free' ? '选择本轮自由问答图片' : '选择本轮问股图片'" @change="onFileChange">
+      <input v-if="mode === 'free'" ref="fileInput" class="sr-only" type="file" accept="image/*" multiple aria-label="选择本轮自由问答图片" @change="onFileChange">
       <textarea
         id="stock-ask-prompt"
         ref="promptInput"
@@ -191,6 +198,7 @@ onBeforeUnmount(() => {
 .stock-ask-images button { position: absolute; top: -5px; right: -5px; width: 44px; height: 44px; overflow: hidden; border: 0; border-radius: 50%; background: var(--danger); color: transparent; cursor: pointer; clip-path: circle(12px at 32px 12px); }
 .stock-ask-images button::after { position: absolute; top: 2px; right: 6px; color: #fff; content: "×"; font-size: 18px; line-height: 20px; }
 .stock-ask-input-row { display: grid; grid-template-columns: var(--composer-control-height) minmax(0, 1fr) auto; gap: 8px; min-width: 0; align-items: stretch; }
+.stock-ask-input-row.without-upload { grid-template-columns: minmax(0, 1fr) auto; }
 .stock-ask-upload, .stock-ask-send, .stock-ask-input-row textarea { height: var(--composer-control-height); min-height: var(--composer-control-height); max-height: var(--composer-control-height); border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface-2); }
 .stock-ask-upload { display: grid; width: var(--composer-control-height); place-items: center; padding: 0; color: var(--text-2); cursor: pointer; }
 .stock-ask-input-row textarea { min-width: 0; resize: none; padding: 13px 14px; color: var(--text); line-height: 24px; }

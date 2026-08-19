@@ -8,6 +8,7 @@ apscheduler>=3.10,<4
 akshare>=1.18.64,<1.19  # 行业资金流 worker 按 1.18.x 列名/亿元口径校验
 certifi>=2024.2.2       # 腾讯 HTTPS 严格证书链（直接 import，不依赖传递安装）
 openpyxl>=3.1,<4        # 深交所官方 XLSX 股票列表解析
+pypinyin>=0.51,<1       # 本地股票简称全拼/首字母索引；搜索输入不逐次访问外部数据源
 # 上界 <3.1：让 pip 在「有现成 wheel」的范围内自动选版本——
 #   · 64 位 Python 3.11–3.14 → 装 pandas 3.0.x（与开发机一致，有现成 wheel，不编译）
 #   · 64 位 Python 3.9–3.10  → 退到 pandas 2.2.x（同样有现成 wheel）
