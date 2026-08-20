@@ -15,13 +15,13 @@ const {
   coreLoading, enrichmentLoading, stockLoading, coreError, enrichmentError, codeError,
   composerError, chatError, saveWarning, conversations, conversationsLoading,
   conversationError, activeConversationId, messages, pendingImages, streaming,
-  stageText, stageSeconds, refreshing, canAsk, loadStock, loadConversations,
+  stageText, stageSeconds, refreshing, canAsk, loadConversations,
   stockAskProfile, updateStockAskProfile,
   dataMaterials, requiredMaterials, selectedDataMaterialIds, preselectedDataMaterialIds,
   maxSelectedDataMaterials, materialsAdjusted, materialReport, materialsLoading, materialError,
   loadDataMaterials, toggleDataMaterial, resetDataMaterials, switchMode,
   newConversation, switchConversation, deleteConversation, addPendingImages,
-  removePendingImage, send, stop, refresh,
+  removePendingImage, send, stop, refresh, queryStock,
 } = useStockAsk()
 
 const dataStamp = computed(() => {
@@ -52,7 +52,7 @@ const healthLabel = computed(() => {
 })
 
 async function submitCode() {
-  await loadStock(codeInput.value)
+  await queryStock(codeInput.value)
 }
 
 watch(refreshing, (value) => emit('refresh-state', value), { immediate: true })

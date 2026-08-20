@@ -201,6 +201,8 @@ def test_vue_decision_overview_has_responsive_and_accessible_shell() -> None:
     assert "theme === 'dark' ? '日间模式' : '夜间模式'" in app
     assert "theme === 'dark' ? '切换到日间模式' : '切换到夜间模式'" in app
     assert ".theme-button { display: inline-flex" in styles
+    assert "--content-max-width: 1920px" in styles
+    assert "main { width: 100%; max-width: var(--content-max-width)" in styles
 
 
 def test_vue_shell_uses_configured_client_brand_instead_of_hardcoded_customer_name() -> None:

@@ -109,6 +109,7 @@ const codeModel = computed({
     <StockAskProfileForm
       v-if="mode === 'stock'"
       :model-value="stockAskProfile"
+      :stock-code="selectedCode"
       :quote-price="quotePrice"
       :disabled="streaming"
       @update:model-value="emit('update:stockAskProfile', $event)"

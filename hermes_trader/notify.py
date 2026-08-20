@@ -20,6 +20,8 @@ import re
 
 import httpx
 
+from .report_push_summary import build_report_public_url, build_report_push_summary
+
 log = logging.getLogger("hermes.notify")
 
 _DISCOVER_TIMEOUT = 15
@@ -261,7 +263,12 @@ class GatewaySender:
                 await asyncio.sleep(delay)
         return False, last
 
-    async def _push_body_result(self, body: str) -> dict:
+    async def _push_body_result(
+        self,
+        body: str,
+        *,
+        target_bodies: dict[str, str] | None = None,
+    ) -> dict:
         async with self._send_lock:
             targets = await self._targets()
             if not targets:
@@ -273,7 +280,8 @@ class GatewaySender:
                 }
             results = []
             for plat in targets:
-                ok, detail = await self._deliver_retry(plat, body)
+                target_body = (target_bodies or {}).get(plat, body)
+                ok, detail = await self._deliver_retry(plat, target_body)
                 ambiguous = "ambiguous timeout" in str(detail).lower()
                 results.append({
                     "target": plat,
@@ -324,14 +332,22 @@ class GatewaySender:
         return result
 
     async def push_report(self, meta: dict, rec: dict) -> dict:
-        # 与飞书路径一致：标题冠客户名号
+        # 非飞书目标保持原报告正文；经 Hermes 网关投递到飞书时与直发路径一致，只发关键摘要。
         title = f"{meta.get('emoji', '')} {self.config.client_name}·{rec.get('title', '报告')} · {rec.get('date', '')}".strip()
         text = _md_to_text(rec.get("content_md", ""))
         if rec.get("content_hash"):
             version = rec.get("plan_version") or rec.get("report_version") or 1
             text += f"\n\n内容版本：v{version} · {str(rec['content_hash'])[:12]}"
         body = f"{title}\n\n{text}" if title else text
-        return await self._push_body_result(body)
+        summary_title = f"{title} · 关键摘要" if title else "报告关键摘要"
+        summary_text = _md_to_text(build_report_push_summary(rec))
+        summary_body = f"{summary_title}\n\n{summary_text}"
+        report_url = build_report_public_url(
+            rec, getattr(self.config, "public_base_url", "")
+        )
+        if report_url:
+            summary_body += f"\n\n查看完整报告：{report_url}"
+        return await self._push_body_result(body, target_bodies={"feishu": summary_body})
 
     async def push_test(self) -> tuple[bool, str]:
         if not self.configured:

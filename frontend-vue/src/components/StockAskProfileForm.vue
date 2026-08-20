@@ -4,6 +4,7 @@ import type { StockAskProfile } from '../types/stockAskProfile'
 
 const props = defineProps<{
   modelValue: StockAskProfile
+  stockCode: string
   disabled?: boolean
   quotePrice?: number | null
 }>()
@@ -16,6 +17,10 @@ const expanded = ref(true)
 
 watch(() => props.disabled, (disabled) => {
   if (disabled) expanded.value = false
+})
+
+watch(() => props.stockCode, (stockCode, previousCode) => {
+  if (stockCode && stockCode !== previousCode) expanded.value = true
 })
 
 function patch(values: Partial<StockAskProfile>) {

@@ -815,7 +815,11 @@ Markdown 表格中的失败行仍保持相同列数，只移除未通过校验�
 **阶段事件（`stage`）**：首个 `delta` 前先发 `{"stage":"采集行情数据…"}`（采集前）→ `{"stage":"生成报告中…"}`（调 Hermes 前）；前端处理同 §5。
 
 ### POST /api/reports/{rtype}/push
-把已生成的报告推送到飞书。首次推送 body 可选 `{"date":"2026-06-10"}`。已经成功推送过的同版报告默认保持幂等；用户明确点击“再次推送”时，body 必须传 `{"date":"2026-06-10","force_resend":true,"resend_id":"客户端生成的8-80位幂等键"}`，服务端会创建独立、可审计的手工重发 intent，相同 `resend_id` 的网络重试不会重复外发。返回 `{"ok":true,"resent":false|true}` 或 `{"ok":false,"error":"..."}`。
+把已生成报告的**客户关键摘要**推送到飞书。完整 `content_md` 仍是系统报告中心/PDF 的唯一正式定稿，飞书不会再发送全量正文；摘要按报告类型从已通过治理的原文章节确定性摘取，不调用模型二次改写，并保留原报告内容版本标识。结构异常的旧报告只发送有界节选，不回退为全量长文。
+
+若客户配置了合法的 `server.public_base_url`，飞书互动卡片末尾增加“查看完整报告”按钮；经 Hermes 网关投递到飞书时附同一纯文本链接。报告类型映射到正式 Vue 路由：`morning → #/premarket?tab=report`、`tail → #/tail?tab=decision`、`close → #/review?tab=close`、`evening → #/review?tab=tomorrow`、`trend → #/history?tab=reports&section=trend`。未配置、配置非法或内部 `midday` 草案均不生成链接；系统不通过网卡、外部 IP 服务或请求 Host 猜测公网地址。
+
+首次推送 body 可选 `{"date":"2026-06-10"}`。已经成功推送过的同版报告默认保持幂等；用户明确点击“再次推送”时，body 必须传 `{"date":"2026-06-10","force_resend":true,"resend_id":"客户端生成的8-80位幂等键"}`，服务端会创建独立、可审计的手工重发 intent，相同 `resend_id` 的网络重试不会重复外发。返回 `{"ok":true,"resent":false|true}` 或 `{"ok":false,"error":"..."}`。
 `date` 非法（非字符串或不符 `YYYY-MM-DD`）时返回 HTTP 400 `{"ok":false,"error":"日期格式应为 YYYY-MM-DD"}`。
 
 ## 7. 持仓
@@ -961,6 +965,7 @@ body 可选 `{source_report_ids,evidence_ids,sample_count}`。无真实来源或
  "settings": {
    "feishu_webhook": "https://open.feishu.cn/open-apis/bot/v2/hook/xxx",
    "feishu_secret": "",
+   "public_base_url": "https://wudi.example.com",
    "push_enabled": true,
    "hermes_base_url": "http://127.0.0.1:8874/v1",
    "hermes_model": "hermes-agent",

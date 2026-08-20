@@ -21,6 +21,7 @@ from pathlib import Path
 import httpx
 
 from ..data.base import now_cn  # 时钟铁律:给人看/落盘的时间戳必须走北京时区,禁用本机裸时钟
+from ..report_push_summary import build_report_public_url, build_report_push_summary
 
 log = logging.getLogger("hermes.feishu")
 
@@ -457,27 +458,41 @@ class FeishuPusher:
         return ok
 
     async def push_report(self, meta: dict, rec: dict) -> dict:
-        # 报告卡片标题冠以客户名号（按客户 config.client.name 定制）
-        title = f"{meta.get('emoji', '')} {self.config.client_name}·{rec.get('title', '报告')} · {rec.get('date', '')}"
+        # 完整定稿留在 Web/PDF；客户飞书只收取从正式正文确定性摘取的关键摘要。
+        title = (
+            f"{meta.get('emoji', '')} {self.config.client_name}·"
+            f"{rec.get('title', '报告')} · {rec.get('date', '')} · 关键摘要"
+        )
         color = HEADER_COLORS.get(rec.get("rtype", ""), "blue")
         self._last_message_ids = []
-        content = rec.get("content_md", "")
-        if rec.get("content_hash"):
-            version = rec.get("plan_version") or rec.get("report_version") or 1
-            content += f"\n\n---\n内容版本：v{version} · {str(rec['content_hash'])[:12]}"
+        content = build_report_push_summary(rec)
         groups = _card_element_groups(content)
         total = len(groups)
+        report_url = build_report_public_url(
+            rec, getattr(self.config, "public_base_url", "")
+        )
         target = "feishu_home" if self._bot_ready() and not self.config.feishu_webhook else "feishu_webhook"
         target_results = []
         for i, elements in enumerate(groups):
             suffix = f"（{i + 1}/{total}）" if total > 1 else ""
+            card_elements = list(elements)
+            if report_url and i == total - 1:
+                card_elements.append({
+                    "tag": "action",
+                    "actions": [{
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": "查看完整报告"},
+                        "type": "primary",
+                        "url": report_url,
+                    }],
+                })
             card = {
                 "config": {"wide_screen_mode": True},
                 "header": {
                     "template": color,
                     "title": {"tag": "plain_text", "content": f"{title.strip()}{suffix}"},
                 },
-                "elements": elements,
+                "elements": card_elements,
             }
             before = len(self._last_message_ids)
             ok = await self._send({"msg_type": "interactive", "card": card})

@@ -77,6 +77,27 @@ def test_vue_stock_ask_supports_accessible_deterministic_profile() -> None:
     assert "message.perspectives" not in message
 
 
+def test_vue_stock_ask_collapses_profile_after_send_and_separates_new_targets() -> None:
+    page = _read("src/components/StockAskPage.vue")
+    profile = _read("src/components/StockAskProfileForm.vue")
+    composable = _read("src/composables/useStockAsk.ts")
+
+    assert ':disabled="streaming"' in _read("src/components/StockAskConversation.vue")
+    assert ':stock-code="selectedCode"' in _read("src/components/StockAskConversation.vue")
+    assert "if (disabled) expanded.value = false" in profile
+    assert "watch(() => props.stockCode" in profile
+    assert "if (stockCode && stockCode !== previousCode) expanded.value = true" in profile
+    assert "await queryStock(codeInput.value)" in page
+    assert "const targetChanged = CODE_RE.test(code) && code !== selectedCode.value" in composable
+    assert "if (!recognized || !targetChanged || selectedCode.value !== code) return recognized" in composable
+    assert "if (stockQuerying.value) return false" in composable
+    assert "stockLoading = computed(() => stockQuerying.value" in composable
+    assert "activeConversationId.value = ''" in composable
+    assert "messages.value = []" in composable
+    assert "await createConversation(false, code)" in composable
+    assert "if (activeConversationId.value) bindConversationCode(activeConversationId.value, code)" not in composable
+
+
 def test_vue_stock_ask_preserves_missing_partial_and_identity_semantics() -> None:
     composable = _read("src/composables/useStockAsk.ts")
     evidence = _read("src/components/StockAskEvidence.vue")

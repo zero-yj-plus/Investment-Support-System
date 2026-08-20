@@ -15,7 +15,7 @@ from hermes_trader.delivery import (
 from hermes_trader.delivery_outbox import DeliveryOutbox
 from hermes_trader.knowledge.store import Store
 from hermes_trader.notify import GatewaySender
-from hermes_trader.feishu.push import FeishuPusher
+from hermes_trader.feishu.push import FeishuPusher, _card_element_groups
 from hermes_trader.api import routes
 
 
@@ -474,6 +474,75 @@ async def test_gateway_bridge_uses_only_configured_home_platform(monkeypatch, tm
 
 
 @pytest.mark.asyncio
+async def test_gateway_uses_compact_body_only_for_feishu_target(monkeypatch, tmp_path) -> None:
+    sender = GatewaySender(SimpleNamespace(
+        push_gateway_cli=str(tmp_path / "python"),
+        push_gateway_targets=["feishu", "weixin"],
+        client_name="test",
+        public_base_url="http://111.231.173.220",
+    ))
+    delivered: dict[str, str] = {}
+
+    async def targets():
+        return ["feishu", "weixin"]
+
+    async def deliver(target, body):
+        delivered[target] = body
+        return True, ""
+
+    monkeypatch.setattr(sender, "_targets", targets)
+    monkeypatch.setattr(sender, "_deliver_retry", deliver)
+    result = await sender.push_report({}, {
+        "title": "早盘内参",
+        "date": "2026-08-20",
+        "rtype": "morning",
+        "content_md": (
+            "# 早盘内参\n## 一、今日行动\n谨慎参与。\n"
+            "## 二、昨夜美股对 A 股影响\n完整外盘证据。"
+        ),
+    })
+
+    assert result["ok"] is True
+    assert "关键摘要" in delivered["feishu"]
+    assert "完整外盘证据" not in delivered["feishu"]
+    assert "查看完整报告：http://111.231.173.220/#/premarket?tab=report" in delivered["feishu"]
+    assert "完整外盘证据" in delivered["weixin"]
+    assert "查看完整报告" not in delivered["weixin"]
+
+
+@pytest.mark.asyncio
+async def test_feishu_report_card_adds_public_report_button(monkeypatch, tmp_path) -> None:
+    cfg = SimpleNamespace(
+        feishu_webhook="https://example.invalid/hook", feishu_secret="",
+        feishu_app_id="", feishu_app_secret="", data_dir=tmp_path,
+        client_name="test", client_id="test",
+        public_base_url="http://111.231.173.220",
+    )
+    pusher = FeishuPusher(cfg)
+    payloads = []
+
+    async def send(payload):
+        payloads.append(payload)
+        return True
+
+    monkeypatch.setattr(pusher, "_send", send)
+    result = await pusher.push_report({}, {
+        "title": "早盘内参", "date": "2026-08-20", "rtype": "morning",
+        "content_md": "# 早盘内参\n## 一、今日行动\n谨慎参与。",
+    })
+
+    assert result["ok"] is True
+    action = payloads[0]["card"]["elements"][-1]
+    assert action["tag"] == "action"
+    assert action["actions"] == [{
+        "tag": "button",
+        "text": {"tag": "plain_text", "content": "查看完整报告"},
+        "type": "primary",
+        "url": "http://111.231.173.220/#/premarket?tab=report",
+    }]
+
+
+@pytest.mark.asyncio
 async def test_gateway_honours_reported_weixin_cooldown(monkeypatch, tmp_path) -> None:
     sender = GatewaySender(SimpleNamespace(
         push_gateway_cli=str(tmp_path / "python"), push_gateway_targets=["weixin"],
@@ -501,34 +570,7 @@ async def test_gateway_honours_reported_weixin_cooldown(monkeypatch, tmp_path) -
 
 
 @pytest.mark.asyncio
-async def test_feishu_multichunk_partial_is_not_flattened_to_terminal_failure(monkeypatch, tmp_path) -> None:
-    cfg = SimpleNamespace(
-        feishu_webhook="https://example.invalid/hook", feishu_secret="",
-        feishu_app_id="", feishu_app_secret="", data_dir=tmp_path,
-        client_name="test", client_id="test",
-    )
-    pusher = FeishuPusher(cfg)
-    calls = 0
-
-    async def send(_payload):
-        nonlocal calls
-        calls += 1
-        pusher._last_send_ambiguous = False
-        return calls == 1
-
-    monkeypatch.setattr(pusher, "_send", send)
-    result = await pusher.push_report({}, {
-        "title": "R", "date": "2026-07-13", "rtype": "morning",
-        "content_md": "中" * 7000,
-    })
-
-    assert calls == 2
-    assert result["status"] == "partial"
-    assert result["ok"] is False
-
-
-@pytest.mark.asyncio
-async def test_feishu_report_does_not_silently_drop_chunks_after_legacy_cap(monkeypatch, tmp_path) -> None:
+async def test_feishu_report_compacts_long_body_to_one_customer_summary(monkeypatch, tmp_path) -> None:
     cfg = SimpleNamespace(
         feishu_webhook="https://example.invalid/hook", feishu_secret="",
         feishu_app_id="", feishu_app_secret="", data_dir=tmp_path,
@@ -542,18 +584,31 @@ async def test_feishu_report_does_not_silently_drop_chunks_after_legacy_cap(monk
         return True
 
     monkeypatch.setattr(pusher, "_send", send)
-    tail_marker = "TAIL_MARKER_AFTER_LEGACY_CAP"
     result = await pusher.push_report({}, {
-        "title": "超长报告", "date": "2026-07-31", "rtype": "morning",
-        "content_md": "中" * 30000 + tail_marker,
+        "title": "R", "date": "2026-07-13", "rtype": "morning",
+        "content_md": (
+            "# 早盘内参\n\n"
+            "## 一、今日行动\n" + "中" * 7000 + "\n\n"
+            "## 二、昨夜美股对 A 股影响\n这是完整报告中的证据长文。"
+        ),
     })
 
     assert result["status"] == "accepted"
-    assert len(payloads) > 3
-    assert tail_marker in payloads[-1]["card"]["elements"][-1]["content"]
-    assert payloads[-1]["card"]["header"]["title"]["content"].endswith(
-        f"（{len(payloads)}/{len(payloads)}）"
-    )
+    assert result["ok"] is True
+    assert len(payloads) == 1
+    card_text = str(payloads[0]["card"])
+    assert "客户推送摘要" in card_text
+    assert "这是完整报告中的证据长文" not in card_text
+    assert "关键摘要" in payloads[0]["card"]["header"]["title"]["content"]
+
+
+@pytest.mark.asyncio
+async def test_feishu_card_grouping_still_does_not_drop_content_after_legacy_cap() -> None:
+    tail_marker = "TAIL_MARKER_AFTER_LEGACY_CAP"
+    groups = _card_element_groups("中" * 30000 + tail_marker)
+
+    assert len(groups) > 3
+    assert tail_marker in groups[-1][-1]["content"]
 
 
 @pytest.mark.asyncio
@@ -574,12 +629,14 @@ async def test_feishu_report_renders_gfm_table_as_native_card_table(monkeypatch,
     result = await pusher.push_report({}, {
         "title": "报告", "date": "2026-07-30", "rtype": "morning",
         "content_md": (
-            "# 主线评分\n\n"
+            "# 早盘内参\n\n"
+            "## 一、今日行动\n\n"
             "| 方向 | 分数 | 依据 |\n"
             "| :--- | ---: | :---: |\n"
             "| AI | 86 | [资金验证](https://example.com) |\n"
             "| 医药 | 72 | 待观察 |\n\n"
-            "结论：优先跟踪 AI。"
+            "结论：优先跟踪 AI。\n\n"
+            "## 二、昨夜美股对 A 股影响\n完整证据长文。"
         ),
     })
 
@@ -587,7 +644,9 @@ async def test_feishu_report_renders_gfm_table_as_native_card_table(monkeypatch,
     assert len(payloads) == 1
     elements = payloads[0]["card"]["elements"]
     assert [element["tag"] for element in elements] == ["markdown", "table", "markdown"]
-    assert elements[0]["content"].startswith("**主线评分**")
+    assert "客户推送摘要" in elements[0]["content"]
+    assert "**一、今日行动**" in elements[0]["content"]
+    assert "完整证据长文" not in str(elements)
     table = elements[1]
     assert [column["display_name"] for column in table["columns"]] == ["方向", "分数", "依据"]
     assert [column["horizontal_align"] for column in table["columns"]] == ["left", "right", "center"]

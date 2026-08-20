@@ -7,6 +7,9 @@ client:
 server:
   host: 127.0.0.1
   port: 18869
+  # 客户可访问的 Web 根地址；飞书报告摘要据此显示“查看完整报告”。
+  # 生产环境应使用 HTTPS 域名；没有公网入口的客户留空，系统不会自动猜 IP。
+  public_base_url: ""
   data_dir: ./data
 
 ui:

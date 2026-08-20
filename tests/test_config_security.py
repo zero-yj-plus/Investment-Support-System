@@ -41,6 +41,49 @@ def test_settings_view_never_returns_credentials(tmp_path: Path) -> None:
     assert view["feishu_secret_set"] is True
     assert view["hermes_api_key"] == ""
     assert view["hermes_api_key_set"] is True
+    assert view["public_base_url"] == ""
+
+
+def test_public_base_url_is_explicit_normalized_and_visible(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "config.yaml"
+    cfg_path.write_text(
+        """
+client: {id: test, name: Test}
+server:
+  data_dir: ./data
+  public_base_url: http://111.231.173.220/
+""",
+        encoding="utf-8",
+    )
+
+    cfg = Config(cfg_path)
+
+    assert cfg.public_base_url == "http://111.231.173.220"
+    assert cfg.settings_view()["public_base_url"] == "http://111.231.173.220"
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "ftp://example.com",
+        "https://user:pass@example.com",
+        "https://example.com/app",
+        "https://example.com?next=bad",
+        "https://example.com/#/premarket",
+    ],
+)
+def test_public_base_url_rejects_unsafe_or_non_root_values(
+    tmp_path: Path,
+    value: str,
+) -> None:
+    cfg_path = tmp_path / "config.yaml"
+    cfg_path.write_text(
+        f"client: {{id: test, name: Test}}\nserver:\n  data_dir: ./data\n  public_base_url: {value!r}\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="server.public_base_url"):
+        Config(cfg_path)
 
 
 def test_gateway_bridge_can_reuse_restricted_gateway_key_during_init(tmp_path: Path) -> None:

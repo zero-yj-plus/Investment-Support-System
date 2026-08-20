@@ -13,6 +13,8 @@ from typing import Any
 
 import yaml
 
+from .report_push_summary import normalize_public_base_url
+
 _ENV_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 _SETTINGS_LOCK = threading.Lock()
 
@@ -122,6 +124,11 @@ class Config:
         server = self._raw.get("server", {})
         self.host: str = server.get("host", "0.0.0.0")
         self.port: int = int(server.get("port", 8868))
+        # 客户访问地址必须由部署方显式配置。定时推送没有可信请求 Host，
+        # 禁止通过外部 IP 服务或网卡/NAT 猜测公网地址。
+        self.public_base_url: str = normalize_public_base_url(
+            server.get("public_base_url", "")
+        )
         data_dir = server.get("data_dir", "./data")
         # data_dir 相对于配置文件所在目录解析，保证两个客户目录互不串数据
         self.data_dir: Path = (self.config_path.parent / data_dir).resolve()
@@ -697,5 +704,6 @@ class Config:
             "agent_allowed_toolsets": list(self.agent_allowed_toolsets),
             "agent_require_profile_attestation": self.agent_require_profile_attestation,
             "push_via": self.push_via,                     # gateway / feishu → 前端据此决定推送卡形态
+            "public_base_url": self.public_base_url,
             "schedule": self.schedule,
         }

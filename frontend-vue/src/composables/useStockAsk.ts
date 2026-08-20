@@ -103,6 +103,7 @@ export function useStockAsk() {
   const enrichment = ref<StockEnrichmentResponse | null>(null)
   const coreLoading = ref(false)
   const enrichmentLoading = ref(false)
+  const stockQuerying = ref(false)
   const coreError = ref('')
   const enrichmentError = ref('')
   const codeError = ref('')
@@ -150,7 +151,7 @@ export function useStockAsk() {
 
   const quote = computed(() => core.value?.quote || null)
   const stockName = computed(() => quote.value?.name || core.value?.recognition?.name || '')
-  const stockLoading = computed(() => coreLoading.value || enrichmentLoading.value)
+  const stockLoading = computed(() => stockQuerying.value || coreLoading.value || enrichmentLoading.value)
   const refreshing = computed(() => stockLoading.value || conversationsLoading.value || materialsLoading.value)
   const canAsk = computed(() => mode.value === 'free' || (CODE_RE.test(selectedCode.value) && core.value?.recognized !== false))
 
@@ -348,10 +349,33 @@ export function useStockAsk() {
     coreError.value = ''
     enrichmentError.value = ''
     chatError.value = ''
-    if (activeConversationId.value) bindConversationCode(activeConversationId.value, code)
     await Promise.allSettled([loadStockPart('core', code), loadStockPart('enrichment', code)])
     const loadedCore = core.value as StockCoreResponse | null
     return loadedCore?.recognized !== false
+  }
+
+  async function queryStock(rawCode = codeInput.value) {
+    if (stockQuerying.value) return false
+    stockQuerying.value = true
+    const code = String(rawCode || '').trim()
+    try {
+      const targetChanged = CODE_RE.test(code) && code !== selectedCode.value
+      const recognized = await loadStock(code)
+      if (!recognized || !targetChanged || selectedCode.value !== code) return recognized
+
+      // A stock conversation belongs to one target. Detach from the previous
+      // conversation before creating the new one so a create failure cannot mix
+      // messages from different stocks; saveExchange can retry creation on send.
+      abortRequest('conversationSave')
+      activeConversationId.value = ''
+      messages.value = []
+      materialReport.value = null
+      saveWarning.value = ''
+      await createConversation(false, code)
+      return true
+    } finally {
+      stockQuerying.value = false
+    }
   }
 
   async function loadConversations() {
@@ -377,7 +401,7 @@ export function useStockAsk() {
     }
   }
 
-  async function createConversation(resetMessages = true) {
+  async function createConversation(resetMessages = true, stockCode = selectedCode.value) {
     const guard = requestGuard('conversationCreate', 12_000)
     try {
       const payload = await postJson<ConversationCreateResponse>(
@@ -386,7 +410,7 @@ export function useStockAsk() {
       if (!guard.current() || !payload.conversation?.id) return ''
       activeConversationId.value = payload.conversation.id
       if (resetMessages) messages.value = []
-      if (mode.value === 'stock' && selectedCode.value) bindConversationCode(payload.conversation.id, selectedCode.value)
+      if (mode.value === 'stock' && stockCode) bindConversationCode(payload.conversation.id, stockCode)
       conversations.value = [payload.conversation, ...conversations.value.filter((item) => item.id !== payload.conversation?.id)]
       return payload.conversation.id
     } catch (error) {
@@ -739,7 +763,7 @@ export function useStockAsk() {
     stageText, stageSeconds, refreshing, canAsk, stockAskProfile,
     dataMaterials, requiredMaterials, selectedDataMaterialIds, preselectedDataMaterialIds,
     maxSelectedDataMaterials, materialsAdjusted, materialReport, materialsLoading, materialError,
-    loadStock, loadConversations, updateStockAskProfile,
+    loadStock, queryStock, loadConversations, updateStockAskProfile,
     loadDataMaterials, toggleDataMaterial, resetDataMaterials, switchMode,
     newConversation, switchConversation, deleteConversation, addPendingImages,
     removePendingImage, send, stop, refresh,

@@ -25,6 +25,7 @@
   --radius-sm: 6px;
   --radius: 8px;
   --sidebar-width: 216px;
+  --content-max-width: 1920px;
   --ease: 180ms ease;
   font-family: Inter, "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
   font-synthesis: none;
@@ -139,7 +140,7 @@ a { color: inherit; }
 .data-status.is-degraded { color: var(--warning); }
 .data-status.is-partial, .data-status.is-missing { color: var(--danger); }
 
-main { width: 100%; max-width: 1600px; margin: 0 auto; padding: 16px clamp(16px, 2.4vw, 32px) 32px; }
+main { width: 100%; max-width: var(--content-max-width); margin: 0 auto; padding: 16px clamp(16px, 2.4vw, 32px) 32px; }
 .eyebrow { display: none; }
 .page-heading { display: flex; min-width: 0; flex: 1 1 auto; flex-wrap: wrap; align-items: baseline; gap: 2px 14px; }
 .page-heading > h1 { flex: 0 0 auto; line-height: 1.2; }

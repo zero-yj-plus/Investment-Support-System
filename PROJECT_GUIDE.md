@@ -175,6 +175,7 @@ flowchart LR
 | `integrity.py` | 对 `hermes_trader/` 与 `frontend/` 生成/校验核心 SHA-256 清单和指纹。 |
 | `mcp_server.py` | 独立 stdio MCP Server；暴露市场、资金、决策、公告、任务、回执等只读工具。 |
 | `notify.py` | `GatewaySender`，通过 Hermes `/sethome` 绑定的唯一 home channel 推送。 |
+| `report_push_summary.py` | 从已治理的正式报告原文确定性摘取客户消息摘要，并按显式公网基址生成报告原文路由；完整定稿仍留在 Web/PDF。 |
 | `product_state.py` | 北京时间交易阶段、推荐路由和旧路由重定向的确定性状态机。 |
 | `research_runs.py` | 产业链/单公司持久化后台任务；原子保存状态和正文、去重活跃任务、显式取消及启动期中断收口。 |
 | `simulation.py` | 无券商连接的 SQLite 模拟挂单状态机、DAY 到期、幂等、服务端定价模式和追加式审计事件。 |
@@ -662,6 +663,7 @@ data/
 | 配置 | 含义 |
 | --- | --- |
 | `server.data_dir` | 客户运行数据隔离根。 |
+| `server.public_base_url` | 客户可访问的 Web 根地址；飞书摘要据此附原文按钮，留空时不猜测公网 IP。生产环境应使用 HTTPS。 |
 | `ui.frontend` | 正式入口；当前只允许 `vue`。 |
 | `ui.legacy_enabled` | 重启后是否提供 `/legacy/` 旧版对照入口；默认 `false`。 |
 | `data_source.policy` | 当前只允许 `free_only`。 |
