@@ -77,7 +77,7 @@ def _parse_hhmm(value: str, fallback: str) -> tuple[int, int]:
     return int(h), int(m)
 
 
-def build_scheduler(config, engine) -> AsyncIOScheduler:
+def build_scheduler(config, engine, maintenance_queue=None) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone=config.timezone)
 
     store = getattr(engine, "store", None)
@@ -318,6 +318,20 @@ def build_scheduler(config, engine) -> AsyncIOScheduler:
     async def _technical_signal_refresh() -> None:
         if config.trading_days_only and not await asyncio.to_thread(is_trade_day):
             return
+        if maintenance_queue is not None:
+            stamp = now_cn()
+            refresh_job, created = await asyncio.to_thread(
+                maintenance_queue.enqueue,
+                "technical_signal_refresh",
+                {"workers": technical_refresh_workers, "max_symbols": None},
+                origin="scheduled",
+                idempotency_key=f"scheduled:{stamp:%Y%m%d%H%M}",
+            )
+            return {
+                "ok": True,
+                "state": "queued" if created else str(refresh_job.get("status") or "queued"),
+                "job_id": refresh_job.get("job_id"),
+            }
         started = time.monotonic()
         stamp = now_cn().strftime("%Y-%m-%d %H:%M:%S")
         if store:
@@ -636,7 +650,7 @@ def _status_row(
     }
 
 
-def jobs_status(scheduler: AsyncIOScheduler, config, store=None) -> list[dict]:
+def jobs_status(scheduler: AsyncIOScheduler, config, store=None, maintenance_queue=None) -> list[dict]:
     times = config.schedule
     states = store.get_job_states() if store is not None else {}
     out = []
@@ -647,13 +661,18 @@ def jobs_status(scheduler: AsyncIOScheduler, config, store=None) -> list[dict]:
         next_dt = getattr(job, "next_run_time", None) if job else None
         next_run = next_dt.strftime("%Y-%m-%d %H:%M:%S") if next_dt else None
         configured_time = times.get(job_id)
+        state = states.get(job_id, {})
+        if maintenance_queue is not None and job_id in {"technical_signal_refresh", "news_event_observation"}:
+            queued_state = maintenance_queue.public_state(job_id)
+            if queued_state:
+                state = queued_state
         out.append(_status_row(
             job_id,
             f"{label} {configured_time or ''}".strip(),
             kind="core",
             enabled=job is not None,
             next_run=next_run,
-            state=states.get(job_id, {}),
+            state=state,
             configured_time=configured_time,
         ))
     # 客户扩展与哨兵/资金追踪也是真实运行任务，不能只在日志里存在。
@@ -673,9 +692,9 @@ def jobs_status(scheduler: AsyncIOScheduler, config, store=None) -> list[dict]:
     return out
 
 
-def task_center_status(scheduler: AsyncIOScheduler, config, store=None) -> dict:
+def task_center_status(scheduler: AsyncIOScheduler, config, store=None, maintenance_queue=None) -> dict:
     """统一任务中心契约：内置、客户扩展与系统任务同一列表。"""
-    rows = jobs_status(scheduler, config, store)
+    rows = jobs_status(scheduler, config, store, maintenance_queue)
     by_kind = {"core": 0, "extension": 0, "system": 0}
     for row in rows:
         by_kind[row["kind"]] = by_kind.get(row["kind"], 0) + 1

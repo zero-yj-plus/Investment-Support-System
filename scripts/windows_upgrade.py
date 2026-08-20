@@ -22,6 +22,8 @@ PROTECTED_TOP_LEVEL = {".env", ".upgrade-work", ".venv", "config.yaml", "data", 
 REQUIRED_RELEASE_PATHS = {
     "hermes_trader/__init__.py",
     "hermes_trader/main.py",
+    "hermes_trader/maintenance_queue.py",
+    "hermes_trader/worker.py",
     "hermes_trader/data/__init__.py",
     "frontend-vue/dist/index.html",
     "scripts/windows_deploy.py",
@@ -32,6 +34,7 @@ REQUIRED_RELEASE_PATHS = {
     "upgrade.bat",
     "requirements.txt",
 }
+WORKER_PID_RELATIVE = Path("data") / "logs" / "maintenance-worker.pid"
 HASH_LINE = re.compile(r"^([0-9a-fA-F]{64})\s+\./(.+)$")
 
 
@@ -218,6 +221,7 @@ def _process_details(pid: int) -> dict[str, str]:
     command = (
         f"$p=Get-CimInstance Win32_Process -Filter 'ProcessId = {pid}';"
         "if($p){$p|Select-Object ProcessId,ExecutablePath,CommandLine|ConvertTo-Json -Compress}"
+        "else{Write-Output '__MISSING__'}"
     )
     completed = subprocess.run(
         [shell, "-NoProfile", "-Command", command],
@@ -229,7 +233,10 @@ def _process_details(pid: int) -> dict[str, str]:
     )
     if completed.returncode or not completed.stdout.strip():
         raise UpgradeError(f"无法读取 PID {pid} 的进程信息")
-    payload = json.loads(completed.stdout.strip())
+    output = completed.stdout.strip()
+    if output == "__MISSING__":
+        raise ProcessLookupError(pid)
+    payload = json.loads(output)
     return {key: str(payload.get(key) or "") for key in ("ExecutablePath", "CommandLine")}
 
 
@@ -259,6 +266,33 @@ def stop_owned_listener(project_root: Path, port: int, marker: str) -> bool:
             return True
         time.sleep(0.5)
     raise UpgradeError(f"端口 {port} 在停止进程后仍被占用")
+
+
+def stop_owned_pid_file(project_root: Path, pid_file: Path, marker: str) -> bool:
+    """停止无监听端口的本项目后台进程；绝不终止无法确认归属的 PID。"""
+    if not pid_file.is_file():
+        return False
+    try:
+        pid = int(pid_file.read_text(encoding="ascii").strip())
+    except (OSError, ValueError):
+        pid_file.unlink(missing_ok=True)
+        return False
+    try:
+        owned = _owned_process(pid, project_root, marker)
+    except ProcessLookupError:
+        # CIM 已明确确认进程不存在，PID 文件只是陈旧状态。
+        pid_file.unlink(missing_ok=True)
+        return False
+    if not owned:
+        print(f"[WARN] PID 文件不是当前安装目录进程，未终止 PID {pid}。")
+        pid_file.unlink(missing_ok=True)
+        return False
+    print(f"停止旧重型后台 Worker：PID {pid}")
+    completed = subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], check=False)
+    if completed.returncode:
+        raise UpgradeError(f"停止重型后台 Worker PID {pid} 失败")
+    pid_file.unlink(missing_ok=True)
+    return True
 
 
 def create_state_backup(project_root: Path, data_dir: Path, backup_root: Path) -> Path:
@@ -425,7 +459,11 @@ def start_runtime(
     config: Path,
     start_app: bool,
     start_bridge: bool,
-) -> tuple[subprocess.Popen | None, subprocess.Popen | None]:
+) -> tuple[
+    subprocess.Popen | None,
+    subprocess.Popen | None,
+    subprocess.Popen | None,
+]:
     python = project_root / ".venv" / "Scripts" / "python.exe"
     environment = _load_dotenv(project_root / ".env")
     environment["PYTHONUNBUFFERED"] = "1"
@@ -447,6 +485,24 @@ def start_runtime(
             )
         finally:
             bridge_log.close()
+    worker_process = None
+    if start_app:
+        worker_log = (log_dir / f"hermes-worker-upgrade-{stamp}.log").open("ab")
+        try:
+            worker_process = subprocess.Popen(
+                [str(python), "-m", "hermes_trader.worker", "--config", str(config)],
+                cwd=project_root,
+                env=environment,
+                stdin=subprocess.DEVNULL,
+                stdout=worker_log,
+                stderr=subprocess.STDOUT,
+                creationflags=_background_flags(),
+            )
+            worker_pid_file = project_root / WORKER_PID_RELATIVE
+            worker_pid_file.parent.mkdir(parents=True, exist_ok=True)
+            worker_pid_file.write_text(str(worker_process.pid), encoding="ascii")
+        finally:
+            worker_log.close()
     app_process = None
     if start_app:
         app_log = (log_dir / f"hermes-upgrade-{stamp}.log").open("ab")
@@ -462,7 +518,7 @@ def start_runtime(
             )
         finally:
             app_log.close()
-    return app_process, bridge_process
+    return app_process, bridge_process, worker_process
 
 
 def wait_for_status(base_url: str, process: subprocess.Popen, timeout: int) -> None:
@@ -539,14 +595,21 @@ def upgrade(args: argparse.Namespace) -> int:
         bridge_was_running = bool(_listening_pids(bridge_port))
         app_stopped = False
         bridge_stopped = False
+        worker_stopped = False
         record: dict[str, object] | None = None
         state_archive: Path | None = None
         app_process = None
         bridge_process = None
+        worker_process = None
         backup_root: Path | None = None
         try:
             if app_was_running:
                 app_stopped = stop_owned_listener(project_root, port, "hermes_trader")
+            worker_stopped = stop_owned_pid_file(
+                project_root,
+                project_root / WORKER_PID_RELATIVE,
+                "hermes_trader.worker",
+            )
             if bridge_was_running:
                 bridge_stopped = stop_owned_listener(project_root, bridge_port, "tq_tdx_bridge.py")
 
@@ -560,7 +623,7 @@ def upgrade(args: argparse.Namespace) -> int:
             dependencies_changed = install_dependencies(project_root, old_requirements_hash)
             should_start = app_was_running or args.start
             if should_start or bridge_was_running:
-                app_process, bridge_process = start_runtime(
+                app_process, bridge_process, worker_process = start_runtime(
                     project_root,
                     data_dir,
                     project_root / "config.yaml",
@@ -579,6 +642,7 @@ def upgrade(args: argparse.Namespace) -> int:
             new_app_started = app_process is not None
             terminate_started(app_process)
             terminate_started(bridge_process)
+            terminate_started(worker_process)
             if record is not None and backup_root is not None:
                 print("[WARN] 升级失败，正在恢复旧程序……", file=sys.stderr)
                 rollback_release(project_root, backup_root, record)
@@ -591,9 +655,9 @@ def upgrade(args: argparse.Namespace) -> int:
                     )
                 if new_app_started and state_archive is not None:
                     restore_state_data(project_root, data_dir, state_archive)
-            if app_stopped or bridge_stopped:
+            if app_stopped or bridge_stopped or worker_stopped:
                 print("[WARN] 正在重新启动升级前的服务……", file=sys.stderr)
-                old_app, _old_bridge = start_runtime(
+                old_app, _old_bridge, _old_worker = start_runtime(
                     project_root,
                     data_dir,
                     project_root / "config.yaml",

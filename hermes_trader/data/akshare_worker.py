@@ -60,6 +60,46 @@ def _industry_flow() -> list[dict]:
     return rows
 
 
+def _industry_summary() -> list[dict]:
+    """同花顺行业一览表的当日结构字段。"""
+    # 与行业资金流相同，AkShare/MiniRacer 只能存在于一次性子进程。
+    import akshare as ak  # noqa: PLC0415
+
+    frame = ak.stock_board_industry_summary_ths()
+    if frame is None or getattr(frame, "empty", True):
+        return []
+    required = {
+        "板块", "涨跌幅", "总成交额", "净流入", "上涨家数", "下跌家数",
+        "领涨股", "领涨股-涨跌幅",
+    }
+    if not required.issubset(set(frame.columns)):
+        raise RuntimeError("IndustrySummarySchemaMismatch")
+    # 同花顺行业一览通常约 90 行；用有界行数防止上游页面结构变化后
+    # 把错误表格或异常大响应带回主进程。
+    if not 50 <= len(frame) <= 200:
+        raise RuntimeError("IndustrySummaryRowCountMismatch")
+    rows: list[dict] = []
+    for _, row in frame.iterrows():
+        name = str(row.get("板块") or "").strip()
+        if not name:
+            continue
+        rows.append(
+            {
+                "name": name,
+                # AkShare 1.18.x 文档约定总成交额/净流入的裸数值单位为亿元；
+                # 单位换算和量级校验统一留给父进程。
+                "amount_raw": _scalar(row.get("总成交额")),
+                "net_raw": _scalar(row.get("净流入")),
+                "change_pct": _scalar(row.get("涨跌幅")),
+                "up_count": _scalar(row.get("上涨家数")),
+                "down_count": _scalar(row.get("下跌家数")),
+                "leader_name": _scalar(row.get("领涨股")),
+                "leader_change_pct": _scalar(row.get("领涨股-涨跌幅")),
+            }
+        )
+    return rows
+
+
 def _market_fund_flow() -> list[dict]:
     """同花顺个股资金榜的净流入/净流出两端。
 
@@ -129,6 +169,7 @@ def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     commands = {
         "industry-flow": (_industry_flow, "ths-industry-flow.v1"),
+        "industry-summary": (_industry_summary, "ths-industry-summary.v1"),
         "market-fund-flow": (_market_fund_flow, "ths-market-fund-flow.v1"),
     }
     if len(args) != 1 or args[0] not in commands:

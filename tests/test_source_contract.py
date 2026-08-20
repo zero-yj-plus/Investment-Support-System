@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 from types import SimpleNamespace
 
 from hermes_trader.api import routes
@@ -281,3 +282,76 @@ def test_data_health_background_refresh_collects_bounded_enrichment(monkeypatch)
     assert response["field_contract"]["schema_version"] == "field-contract-v2"
     assert hermes.calls == 1
     assert tdx_calls == 1
+
+
+def test_local_health_reads_materialized_news_summary_only(monkeypatch) -> None:
+    monkeypatch.setattr(health_monitor.tdx_api, "configured", lambda: False)
+    monkeypatch.setattr(
+        health_monitor.news_observation,
+        "observation_summary",
+        lambda: (_ for _ in ()).throw(AssertionError("health must not scan news history")),
+    )
+    monkeypatch.setattr(
+        health_monitor.news_observation,
+        "cached_observation_summary",
+        lambda: {"enabled": True, "state": "active", "tracked": 607},
+    )
+    config = SimpleNamespace(
+        model_connection_custom=False,
+        hermes_base_url="",
+        hermes_model="",
+        feishu_webhook="",
+        feishu_app_id="",
+        feishu_app_secret="",
+    )
+    monitor = DataHealthMonitor(
+        config,
+        SimpleNamespace(),
+        SimpleNamespace(get_job_states=lambda: {}),
+    )
+
+    enrichment = monitor._read_local_enrichment()
+
+    assert enrichment["news_observation"]["tracked"] == 607
+
+
+def test_timed_out_local_health_work_is_not_submitted_again(monkeypatch) -> None:
+    monkeypatch.setattr(health_monitor.tdx_api, "configured", lambda: False)
+    config = SimpleNamespace(
+        model_connection_custom=False,
+        hermes_base_url="",
+        hermes_model="",
+        feishu_webhook="",
+        feishu_app_id="",
+        feishu_app_secret="",
+    )
+    monitor = DataHealthMonitor(config, SimpleNamespace())
+    release = threading.Event()
+    calls = 0
+
+    def slow():
+        nonlocal calls
+        calls += 1
+        release.wait(2)
+        return {"ok": True}
+
+    async def exercise():
+        for _attempt in range(2):
+            try:
+                await monitor._singleflight_sync(
+                    "_local_future", monitor._local_executor, slow, timeout=0.01,
+                )
+            except asyncio.TimeoutError:
+                pass
+        assert calls == 1
+        release.set()
+        await asyncio.sleep(0.05)
+        assert await monitor._singleflight_sync(
+            "_local_future", monitor._local_executor, slow, timeout=0.1,
+        ) == {"ok": True}
+
+    try:
+        asyncio.run(exercise())
+    finally:
+        release.set()
+        monitor.close()

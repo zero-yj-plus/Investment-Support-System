@@ -1157,7 +1157,9 @@ async def status(request: Request):
         }
     agent_capability = _agent_capability_product_semantics(agent_capability)
     market_context = await asyncio.to_thread(build_market_context)
-    task_center = task_center_status(st.scheduler, st.config, st.store)
+    task_center = task_center_status(
+        st.scheduler, st.config, st.store, getattr(st, "maintenance_queue", None),
+    )
     route_contract = route_lifecycle_contract()
     evidence_store = getattr(st, "evidence_store", None)
     market_gateway = getattr(st, "market_gateway", None)
@@ -1608,7 +1610,9 @@ def _relay_health() -> dict:
 async def get_jobs(request: Request):
     """任务中心独立契约：无需发起 Hermes 连接探测即可刷新运行状态。"""
     st = _state(request)
-    return {"ok": True, **task_center_status(st.scheduler, st.config, st.store)}
+    return {"ok": True, **task_center_status(
+        st.scheduler, st.config, st.store, getattr(st, "maintenance_queue", None),
+    )}
 
 
 @router.post("/jobs/{job_id}/run")
@@ -6098,8 +6102,29 @@ async def technical_screen_catalog():
 
 
 @router.get("/technical-screen/status")
-async def technical_screen_status(include_counts: bool = True):
-    return await asyncio.to_thread(technical_screener_mod.status, include_counts=include_counts)
+async def technical_screen_status(request: Request, include_counts: bool = True):
+    result = await asyncio.to_thread(
+        technical_screener_mod.status, include_counts=include_counts,
+    )
+    queue = getattr(_state(request), "maintenance_queue", None)
+    queued = await asyncio.to_thread(queue.latest, "technical_signal_refresh") if queue is not None else None
+    if isinstance(queued, dict):
+        result["refresh_job"] = {
+            key: queued.get(key) for key in (
+                "job_id", "status", "origin", "created_at", "started_at",
+                "heartbeat_at", "finished_at", "attempts", "error_code",
+            )
+        }
+        result["refresh_job"]["progress"] = queued.get("progress") or {}
+        if queued.get("status") in {"queued", "running"}:
+            result["state"] = "running"
+            result["refresh"] = {
+                **(result.get("refresh") if isinstance(result.get("refresh"), dict) else {}),
+                **(queued.get("progress") if isinstance(queued.get("progress"), dict) else {}),
+                "state": queued.get("status"),
+                "job_id": queued.get("job_id"),
+            }
+    return result
 
 
 @router.post("/technical-screen/query")
@@ -6123,11 +6148,10 @@ async def technical_screen_refresh(request: Request):
             body = {}
     except Exception:
         body = {}
-    if technical_screener_mod.refresh_running():
-        return JSONResponse({"ok": False, "state": "running", "error_code": "refresh_already_running"}, status_code=409)
     try:
         app_state = _state(request)
         refresh_config = app_state.config.section("technical_signal_refresh")
+        worker_config = app_state.config.section("background_worker")
         default_workers = refresh_config.get("workers", 4)
         limit = body.get("max_symbols")
         limit = None if limit in (None, "") else max(1, min(int(limit), 6000))
@@ -6135,26 +6159,59 @@ async def technical_screen_refresh(request: Request):
     except (TypeError, ValueError):
         return JSONResponse({"ok": False, "state": "invalid", "error": "刷新参数不合法"}, status_code=400)
 
-    async def _run_refresh() -> None:
-        store = getattr(app_state, "store", None)
-        started = now_cn().strftime("%Y-%m-%d %H:%M:%S")
-        if store:
-            store.record_job("technical_signal_refresh", last_run=started, last_status="running", last_error=None)
-        result = await asyncio.to_thread(technical_screener_mod.refresh_all, max_symbols=limit, workers=workers)
-        if store:
-            finished = now_cn().strftime("%Y-%m-%d %H:%M:%S")
-            store.record_job(
-                "technical_signal_refresh",
-                last_status=("ok" if result.get("state") == "ready" else "warn"),
-                last_ok=(finished if result.get("state") == "ready" else None),
-                last_finished=finished, last_error=None,
-                last_result={key: result.get(key) for key in ("state", "processed", "succeeded", "failed", "coverage_ratio")},
-            )
+    if worker_config.get("enabled", True) is False:
+        return JSONResponse(
+            {
+                "ok": False,
+                "state": "missing",
+                "error_code": "maintenance_worker_disabled",
+            },
+            status_code=503,
+        )
 
-    task = asyncio.create_task(_run_refresh())
-    _bg_tasks.add(task)
-    task.add_done_callback(_bg_tasks.discard)
-    return JSONResponse({"ok": True, "state": "queued", "message": "全市场技术信号刷新已进入后台队列"}, status_code=202)
+    queue = getattr(app_state, "maintenance_queue", None)
+    if queue is None:
+        return JSONResponse(
+            {"ok": False, "state": "missing", "error_code": "maintenance_queue_unavailable"},
+            status_code=503,
+        )
+    queued, created = await asyncio.to_thread(
+        queue.enqueue,
+        "technical_signal_refresh",
+        {"max_symbols": limit, "workers": workers},
+        origin="manual",
+        idempotency_key=f"manual:{uuid.uuid4().hex}",
+    )
+    if not created:
+        return JSONResponse(
+            {
+                "ok": False,
+                "state": str(queued.get("status") or "running"),
+                "error_code": "refresh_already_running",
+                "job_id": queued.get("job_id"),
+            },
+            status_code=409,
+        )
+    return JSONResponse(
+        {
+            "ok": True,
+            "state": "queued",
+            "job_id": queued.get("job_id"),
+            "message": "全市场技术信号刷新已进入独立后台 Worker 队列",
+        },
+        status_code=202,
+    )
+
+
+@router.get("/maintenance/jobs/{job_id}")
+async def maintenance_job_status(job_id: str, request: Request):
+    queue = getattr(_state(request), "maintenance_queue", None)
+    job = await asyncio.to_thread(queue.get, job_id) if queue is not None else None
+    if job is None:
+        return JSONResponse(
+            {"ok": False, "error_code": "maintenance_job_not_found"}, status_code=404,
+        )
+    return {"ok": True, "job": job}
 
 
 @router.get("/technical-screen/history")
@@ -6330,6 +6387,31 @@ async def diy_run(request: Request):
 
 @router.post("/push/test")
 async def push_test(request: Request):
-    ok, msg = await _state(request).feishu.push_test()
+    st = _state(request)
+    kind = ""
+    try:
+        body = await request.json()
+        if isinstance(body, dict):
+            kind = str(body.get("kind") or "").strip().lower()
+    except Exception:
+        pass
+    if kind == "holdings_risk":
+        sender = getattr(st.feishu, "push_text", None)
+        if not callable(sender):
+            return JSONResponse(
+                {"ok": False, "error": "当前推送器不支持持仓提示测试"},
+                status_code=503,
+            )
+        ok = bool(await sender(holdings_risk_mod.push_test_message()))
+        return (
+            {"ok": True, "msg": "持仓提示测试消息已推送"}
+            if ok else {"ok": False, "error": "持仓提示测试消息推送失败"}
+        )
+    if kind:
+        return JSONResponse(
+            {"ok": False, "error": f"未知推送测试类型: {kind}"},
+            status_code=400,
+        )
+    ok, msg = await st.feishu.push_test()
     # 成功语放 msg、失败原因放 error，避免成功时也挂在 error 字段上显得像出错
     return {"ok": ok, **({"msg": msg} if ok else {"error": msg})} if msg else {"ok": ok}

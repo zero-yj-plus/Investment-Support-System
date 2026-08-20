@@ -221,6 +221,10 @@ GET /api/agent/runs?limit=5
 ### GET /api/jobs
 返回不需探测 Hermes 连接的轻量任务中心：
 
+`technical_signal_refresh` 与 `news_event_observation` 的状态来自客户隔离的持久维护任务队列，
+不依赖 API 进程内存。API 重启不会把仍由独立 Worker 执行的任务误标为中断；租约过期后任务
+回到 `queued` 并从已提交游标续跑。
+
 ```json
 {
   "ok": true,
@@ -235,6 +239,11 @@ GET /api/agent/runs?limit=5
 
 ### POST /api/jobs/{job_id}/run
 立即手动触发某个定时任务（异步执行）。返回 `{"ok": true, "msg": "已触发"}`。
+
+### GET /api/maintenance/jobs/{job_id}
+
+返回持久维护任务的 `queued/running/completed/partial/failed/cancelled` 状态、来源、尝试次数、
+心跳、进度游标和安全错误码。该接口不返回新闻正文、K 线内容或本地绝对路径。
 
 ### GET /api/ext/views
 返回客户扩展视图完整注册表。服务端已经“先发现并注册全部扩展 API router，再一次性应用
@@ -550,6 +559,10 @@ indexes 至少含：上证指数、深证成指、创业板指、科创50（拿�
 }
 ```
 `kind`: `industry`(行业) | `concept`(概念)。行业全量 + 概念涨幅前 40。按 change_pct 降序。
+行业结构判定要求 `change_pct/amount/up_count/down_count` 同日可用。TDX 行业榜仅在这些字段
+覆盖达标时直接采用；当前 TDX `pricevol` 未提供行业成交额时，行业段回退到隔离子进程读取的
+同花顺当日行业一览表。该表的 `amount/main_flow` 裸数值按官方亿元口径校验后统一换算为 CNY，
+TDX 行业关系仍用于涨停股到行业的精确映射。任何源失败都返回缺失/降级，不跨日补值。
 
 ### GET /api/market/top
 前 30 涨幅股：`{"ok":true,"ts":"...","missing":[],"stocks":[{"code","name","price","change_pct","amount","turnover_rate","speed"(涨速,可缺)}]}`
@@ -974,7 +987,8 @@ body 可选 `{source_report_ids,evidence_ids,sample_count}`。无真实来源或
  }}
 ```
 ### PUT /api/settings  body 为 settings 子集 → `{"ok":true}`（热生效并持久化）
-### POST /api/push/test → 发送一条飞书测试消息，返回 `{"ok":true}` / `{"ok":false,"error":"..."}`
+### POST /api/push/test
+无 body 时发送通用飞书测试消息；body `{"kind":"holdings_risk"}` 时通过与真实持仓告警相同的 `push_text` 通道发送固定演示文案。演示文案不读取真实持仓、行情或风险状态，并明确标记“不代表任何真实持仓结论”。返回 `{"ok":true,"msg":"..."}` / `{"ok":false,"error":"..."}`。
 
 ## 前端约定
 
@@ -1106,6 +1120,11 @@ stale-while-revalidate：存在六小时内的非空最近成功快照时先返�
 `data_dir/news/a-share-page-last-good.json` 隔离；前端还可在当前浏览器会话内保留最近成功响应，重进
 页面时先显示再刷新。
 
+新闻事件观察的在线账本位于客户 `data_dir/news_events/news_observation.sqlite3`，事件与观察历史
+仍为 append-only；`observation_current` 只是按事件和检查点维护的派生索引。旧版
+`events.v1.jsonl`、`observations.v1.jsonl` 由独立 Worker 流式导入并原样保留，在线追加、去重、
+汇总和 API 查询不再扫描 JSONL。健康面板只读取 Worker 在采样完成时物化的摘要。
+
 ### POST /api/news/a-share/archive
 
 请求 `{"event": <GET /api/news/a-share 返回的单条事件>}`，将用户明确选中的事件保存为
@@ -1137,7 +1156,8 @@ stale-while-revalidate：存在六小时内的非空最近成功快照时先返�
 健康快照：不会同步访问 Hermes、TDX、交易所或证据库，也不会返回中继 API、代理地址、
 Webhook 或任何凭据。普通数据源延迟继续来自被动埋点；Hermes/TDX 与本地证据统计由
 后台循环并行刷新。Hermes、TDX 和本地统计分别受 5 秒、7 秒、3 秒上限约束，任何单项
-超时只写入稳定 `error_codes` 并保留可展示快照，不把整页变成 HTTP 超时。
+超时只写入稳定 `error_codes` 并保留可展示快照，不把整页变成 HTTP 超时。同步探测使用各自
+单工作线程和单飞 future；外层超时后底层尚未结束时，下一轮不得再次提交，因此不会堆积健康线程。
 
 `health_refresh.status` 为 `pending/ready/degraded`；`request_mode` 固定为
 `passive_snapshot`。`infra.*.status=unchecked` 表示后台尚未完成首次检查，不等于失败。
@@ -1145,6 +1165,7 @@ Webhook 或任何凭据。普通数据源延迟继续来自被动埋点；Hermes
 {
   "ok": true, "source_contract": "field-route-v2", "active_policy": "free_only", "ts": "2026-06-11 14:30:00",
   "health_refresh": {"status":"ready","request_mode":"passive_snapshot","last_started_at":"2026-06-11T14:29:58+08:00","last_finished_at":"2026-06-11T14:30:00+08:00","duration_ms":1820,"error_codes":[]},
+  "background_worker": {"status":"ready","connected":true,"pid":4321,"last_seen_at":"2026-06-11T14:29:59+08:00"},
   "infra": {
     "hermes": {"name":"Hermes AI 网关","base_url":"http://127.0.0.1:8874/v1","model":"hermes-agent","kind":"本机Hermes网关","configured":true,"connected":true,"status":"ok","latency_ms":120,"checked_at":"2026-06-11T14:30:00+08:00"},
     "tdx_api": {"configured":true,"connected":true,"status":"ok","checked_at":"2026-06-11T14:30:00+08:00","pricevol":"fresh"},
@@ -1168,6 +1189,10 @@ Webhook 或任何凭据。普通数据源延迟继续来自被动埋点；Hermes
 ### 当前正式链路（`free_only`）
 
 当前正式链路：TDX API v2.8 兼容服务（客户授权远程 API，或可选的本地 TQ 只读桥；提供实时价量/盘口、代码名录、行业概念、全市场快照）、腾讯（行情备用及估值/换手/量比/市值补齐）、新浪与同花顺公开接口（资金/财务/行业资金/涨停原因）、AkShare 封装公开源、乐咕（市场宽度）、东财中继或直连（可选备用）、多源财经快讯（研究证据）。标准部署不要求安装本地通达信；选择 TQ 桥时必须先启动支持 TQ 的本地客户端和 `scripts/tq_tdx_bridge.py`。不使用按次扣积分的数据源。
+
+行业主线的当日成交额、涨跌家数、涨跌幅和领涨股可由 AkShare 隔离子进程读取同花顺行业
+一览表；金额从亿元校验并换算为元。TDX 当前负责全市场行情与个股行业关系，未提供的行业
+成交额不得由成交量估算或填零。两源只按精确行业名称关联，无法对应的涨停股保留映射缺失。
 
 全 A 股身份主名录固定为 TDX `instruments_a`。适配器按 cursor 拉到明确终页；响应若提供
 `count/total`，页内数量和终页总数必须一致，并拒绝重复 cursor、重复代码和市场后缀错误。
@@ -1322,11 +1347,16 @@ python3 scripts/data_backup_restore.py restore --archive /abs/backup.tar.gz --re
 
 ## 20. 全市场技术面选股
 
-技术面选股使用客户 `data_dir/technical_screener.sqlite3` 中的前复权 K 线和确定性信号缓存。普通查询只读本地缓存，不触发逐股历史行情 N+1。盘后 16:10 的 `technical_signal_refresh` 系统任务以及用户显式刷新动作负责更新缓存。
+技术面选股使用客户 `data_dir/technical_screener.sqlite3` 中的前复权 K 线和确定性信号缓存。普通查询只读本地缓存，不触发逐股历史行情 N+1。盘后 16:10 的 `technical_signal_refresh` 系统任务以及用户显式刷新动作只向 `maintenance_jobs.sqlite3` 入队；独立 `hermes_trader.worker` 进程负责实际刷新。
 
 刷新链路直接读取 `TDX_LOCAL_DIR`（默认 `D:\tdx`）下的 `vipdoc/{sh,sz,bj}/lday/*.day`，不复制原始行情库，也不调用 TQ 的批量 K 线接口。`.day` 提供未复权 OHLC、成交量和成交额；个股仅通过本机 `tqcenter.get_divid_factors` 读取权息事件并在进程内计算前复权，指数保留未复权口径。因子能力不可用时不得把原始价格伪装成前复权，而是按单股降级到腾讯前复权日 K。成交量统一为股、成交额统一为元。
 
-业务端每批最多只保留 `workers * 2` 只股票的 K 线、DataFrame 和信号结果；腾讯批处理降级不进入进程 TTL 缓存。`TDX_TQ_CONNECTION_PATH` 可为同机多套业务指定不同的 TQ 连接标识，避免同名实例冲突。
+业务端每批最多只保留 `workers * 2` 只股票的 K 线、DataFrame 和信号结果；每批提交后持久化
+`cursor/processed/succeeded/failed/skipped` 和 Worker 租约心跳。进程异常退出后，新 Worker 从最后
+完整批次续跑。K 线指纹和算法版本均未变化的股票直接跳过；仅算法变化时重算信号而不重写 K 线。
+进度和终态中的 `stage_seconds` 分别累计 `benchmark/universe/local_bars/compute_write/final_counts`，
+用于区分本地 `.day`/权息因子、信号计算写盘和最终物化计数耗时，不包含股票明细。
+腾讯批处理降级不进入进程 TTL 缓存。`TDX_TQ_CONNECTION_PATH` 可为同机多套业务指定不同的 TQ 连接标识，避免同名实例冲突。
 
 `config.yaml` 的 `technical_signal_refresh.enabled` 控制定时刷新是否启用，`workers` 控制计算并发，默认 `4`。对 4 GB 内存机器不建议调高；提高并发会线性增加同时驻留的 K 线、DataFrame 和信号结果。
 
@@ -1344,9 +1374,9 @@ python3 scripts/data_backup_restore.py restore --archive /abs/backup.tar.gz --re
 
 ### GET /api/technical-screen/status
 
-返回 `state ∈ {missing,running,partial,ready}`、缓存股票数/K线数/信号数、`data_date`、复权方式、算法版本、`config_schema_version=2` 和后台刷新进度。无缓存必须返回 `missing`，不能显示为 0 只符合。进程重启时若发现上次刷新停留在 `running`，`refresh.state` 改为 `interrupted` 并返回 `refresh_interrupted_by_restart`；若已有上次成功缓存，顶层 `state` 仍为 `ready`，不会误报任务仍在运行。
+返回 `state ∈ {missing,running,partial,ready}`、缓存股票数/K线数/信号数、`data_date`、复权方式、算法版本、`config_schema_version=2`、`refresh_job` 和后台刷新进度。无缓存必须返回 `missing`，不能显示为 0 只符合。`bars`、`signal_matches` 的精确数量只由 Worker 在刷新完成时统计并写入元数据；旧库尚无物化计数时返回 `null`，交互请求不得执行大表 `COUNT(*)`。
 
-可选查询参数 `include_counts=false` 用于首屏摘要：仍返回精确缓存股票数、数据日期、缓存状态和刷新进度，但 `bars`、`signal_matches` 返回 `null`，避免冷启动时扫描数百万条记录。省略参数保持完整计数契约；前端在首屏可操作后异步补取完整计数。
+可选查询参数 `include_counts=false` 用于首屏摘要：仍返回精确缓存股票数、数据日期、缓存状态和刷新进度，但 `bars`、`signal_matches` 返回 `null`。省略参数返回最近一次 Worker 物化的精确计数，同样不会扫描大表。
 
 ### POST /api/technical-screen/query
 
@@ -1412,7 +1442,8 @@ python3 scripts/data_backup_restore.py restore --archive /abs/backup.tar.gz --re
 
 ### POST /api/technical-screen/refresh
 
-显式提交重型后台刷新，立即返回 HTTP `202` 和 `state=queued`。可选维护参数：`max_symbols`（1—6000）和 `workers`（1—12）；默认全市场、4 个有界工作线程。刷新同时缓存沪深300不复权基准日线，供“近N日跑赢大盘”按同日期对齐计算。已有刷新运行时返回 `409 refresh_already_running`。
+显式提交重型后台刷新，立即返回 HTTP `202`、`state=queued` 和持久 `job_id`。可选维护参数：`max_symbols`（1—6000）和 `workers`（1—12）；默认全市场、4 个有界工作线程。刷新同时缓存沪深300不复权基准日线，供“近N日跑赢大盘”按同日期对齐计算。已有同类任务排队或运行时返回 `409 refresh_already_running`，API 进程本身不执行刷新。
+`background_worker.enabled=false` 时拒绝新刷新并返回 HTTP `503 maintenance_worker_disabled`，避免任务永久滞留在队列。
 
 ### GET /api/technical-screen/history
 

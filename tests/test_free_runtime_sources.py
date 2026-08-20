@@ -170,6 +170,40 @@ def test_isolated_worker_protocol_ignores_progress_noise(monkeypatch) -> None:
     )
 
 
+def test_industry_summary_worker_uses_separate_protocol(monkeypatch) -> None:
+    payload = {
+        "ok": True,
+        "rows": [{
+            "name": "医疗服务", "amount_raw": 321.5, "net_raw": 8.2,
+            "change_pct": 5.9, "up_count": 53, "down_count": 3,
+            "leader_name": "示例股", "leader_change_pct": 10.0,
+        }],
+        "error": None,
+        "schema": "ths-industry-summary.v1",
+        "provider_version": "1.18.64",
+    }
+    seen = {}
+
+    def fake_run(command, **_kwargs):
+        seen["command"] = command
+        return subprocess.CompletedProcess(
+            args=command, returncode=0,
+            stdout=RESULT_PREFIX + json.dumps(payload, ensure_ascii=False) + "\n",
+            stderr="",
+        )
+
+    akshare_isolated._reset_industry_summary_breaker()
+    monkeypatch.setattr(akshare_isolated.subprocess, "run", fake_run)
+    result = akshare_isolated.industry_summary(timeout=3)
+
+    assert result["ok"] is True
+    assert result["rows"] == payload["rows"]
+    assert seen["command"][1:] == [
+        "-m", "hermes_trader.data.akshare_worker", "industry-summary",
+    ]
+    akshare_isolated._reset_industry_summary_breaker()
+
+
 def test_isolated_worker_env_keeps_windows_runtime_without_secrets(monkeypatch) -> None:
     monkeypatch.setenv("SystemRoot", r"C:\Windows")
     monkeypatch.setenv("WINDIR", r"C:\Windows")
@@ -349,7 +383,10 @@ def test_capital_background_uses_complete_industry_budget(monkeypatch) -> None:
 
     def fake_flow(*_args, **kwargs):
         seen.update(kwargs)
-        return [{"name": "银行", "main_net": 1.0, "change_pct": 0.2}]
+        return [
+            {"name": f"行业{i}", "main_net": float(8 - i), "change_pct": 0.2}
+            for i in range(8)
+        ]
 
     monkeypatch.setattr(free_source, "moneyflow_ind_dc", fake_flow)
     rows, source, _data_date = capital_tracker.collect_sectors(top=10)
@@ -375,6 +412,58 @@ def test_industry_numeric_unit_shift_is_rejected_before_yi_multiplier(monkeypatc
     assert any("单位/量级校验失败" in str(item[-1]) for item in records)
 
 
+def test_industry_summary_normalizes_complete_structure_to_yuan(monkeypatch) -> None:
+    raw_rows = [
+        {
+            "name": f"行业{i}", "amount_raw": 100.0 + i, "net_raw": 2.5,
+            "change_pct": 1.2, "up_count": 18, "down_count": 2,
+            "leader_name": f"领涨{i}", "leader_change_pct": 9.9,
+        }
+        for i in range(50)
+    ]
+    records: list[tuple] = []
+    monkeypatch.setattr(
+        free_source.akshare_isolated,
+        "industry_summary",
+        lambda **_kwargs: {"ok": True, "rows": raw_rows, "latency_ms": 8.0},
+    )
+    monkeypatch.setattr(free_source, "quote_data_date", lambda: "2026-08-20")
+    monkeypatch.setattr(free_source, "_record_source", lambda *args: records.append(args))
+
+    result = free_source.industry_summary_ths.__wrapped__()
+
+    assert result["ok"] is True
+    assert result["data_date"] == "2026-08-20"
+    assert result["coverage"] == {"complete": 50, "total": 50}
+    assert result["sectors"][0]["amount"] == pytest.approx(10_000_000_000)
+    assert result["sectors"][0]["main_flow"] == pytest.approx(250_000_000)
+    assert result["sectors"][0]["up_count"] == 18
+    assert result["sectors"][0]["amount_unit"] == "CNY"
+    assert records[-1][0] == "行业一览(同花顺隔离)"
+    assert records[-1][2] is True
+
+
+def test_industry_summary_rejects_numeric_unit_shift(monkeypatch) -> None:
+    raw_rows = [
+        {
+            "name": f"行业{i}", "amount_raw": 12_000_000_000, "net_raw": 2.5,
+            "change_pct": 1.2, "up_count": 18, "down_count": 2,
+        }
+        for i in range(50)
+    ]
+    monkeypatch.setattr(
+        free_source.akshare_isolated,
+        "industry_summary",
+        lambda **_kwargs: {"ok": True, "rows": raw_rows, "latency_ms": 1.0},
+    )
+    monkeypatch.setattr(free_source, "_record_source", lambda *_args: None)
+
+    result = free_source.industry_summary_ths.__wrapped__()
+
+    assert result["ok"] is False
+    assert "单位或量级校验失败" in result["error"]
+
+
 def test_market_and_capital_callers_consume_yuan_contract(monkeypatch) -> None:
     industry_rows = [
         {"name": "银行", "main_net": 250_000_000.0, "change_pct": 1.2, "unit": "CNY"},
@@ -393,6 +482,11 @@ def test_market_and_capital_callers_consume_yuan_contract(monkeypatch) -> None:
     monkeypatch.setattr(market, "get_ak", lambda: fake_ak)
     monkeypatch.setattr(market, "_use_eastmoney", lambda: False)
     monkeypatch.setattr(mainforce_source, "industry", lambda **_kwargs: {})
+    monkeypatch.setattr(
+        free_source,
+        "industry_summary_ths",
+        lambda *_args, **_kwargs: {"ok": False, "sectors": [], "error": "测试降级"},
+    )
 
     # market_flow 的子进程适配契约：main_net 已是元，不再×1e8。
     flow = market._market_flow_raw()
@@ -415,6 +509,91 @@ def test_market_and_capital_callers_consume_yuan_contract(monkeypatch) -> None:
     bank = next(row for row in sectors["sectors"] if row["kind"] == "industry")
     assert bank["name"] == "银行"
     assert bank["main_flow"] == 250_000_000.0
+
+
+def test_market_sectors_uses_ths_summary_when_tdx_has_no_amount(monkeypatch) -> None:
+    monkeypatch.setattr(
+        market.tdxapi,
+        "industry_market",
+        lambda: {
+            "data_date": "2026-08-20",
+            "sectors": [
+                {
+                    "kind": "industry", "name": f"TDX行业{i}", "change_pct": 1.0,
+                    "amount": None, "up_count": 10, "down_count": 2,
+                }
+                for i in range(60)
+            ],
+            "coverage": {},
+        },
+    )
+    summary_rows = [
+        {
+            "kind": "industry", "name": "医疗服务", "change_pct": 5.9,
+            "amount": 32_100_000_000, "main_flow": 820_000_000,
+            "up_count": 53, "down_count": 3, "leader_name": "示例股",
+            "leader_change_pct": 10.0, "source": "同花顺行业一览表(AkShare隔离)",
+        }
+    ]
+    monkeypatch.setattr(market, "get_ak", lambda: None)
+    monkeypatch.setattr(
+        free_source,
+        "industry_summary_ths",
+        lambda *_args, **_kwargs: {
+            "ok": True, "data_date": "2026-08-20", "sectors": summary_rows,
+            "coverage": {"complete": 90, "total": 90},
+        },
+    )
+    monkeypatch.setattr(
+        mainforce_source,
+        "industry",
+        lambda **_kwargs: pytest.fail("完整行业一览成功后不应调用残缺兜底"),
+    )
+    monkeypatch.setattr(
+        free_source,
+        "moneyflow_ind_dc",
+        lambda *_args, **_kwargs: pytest.fail("完整行业一览成功后不应重复调用资金流"),
+    )
+
+    result = market.market_sectors.__wrapped__()
+    industries = [row for row in result["sectors"] if row["kind"] == "industry"]
+
+    assert industries == summary_rows
+    assert result["data_date"] == "2026-08-20"
+    assert result["coverage"]["tdx_industry"]["amount_complete"] == 0
+    assert result["coverage"]["industry_summary"] == {"complete": 90, "total": 90}
+    assert any("TDX行业榜未进入主线判定" in note for note in result["notes"])
+
+
+def test_market_sectors_keeps_tdx_when_core_fields_are_complete(monkeypatch) -> None:
+    tdx_rows = [
+        {
+            "kind": "industry", "name": f"TDX行业{i}", "change_pct": 1.0,
+            "amount": 10_000_000_000 + i, "main_flow": None,
+            "up_count": 10, "down_count": 2,
+        }
+        for i in range(60)
+    ]
+    monkeypatch.setattr(
+        market.tdxapi,
+        "industry_market",
+        lambda: {"data_date": "2026-08-20", "sectors": tdx_rows},
+    )
+    monkeypatch.setattr(market, "get_ak", lambda: None)
+    monkeypatch.setattr(
+        free_source,
+        "industry_summary_ths",
+        lambda *_args, **_kwargs: pytest.fail("TDX核心字段完整时不应切换行业分类"),
+    )
+
+    result = market.market_sectors.__wrapped__()
+    industries = [row for row in result["sectors"] if row["kind"] == "industry"]
+
+    assert industries == tdx_rows
+    assert result["data_date"] == "2026-08-20"
+    assert result["coverage"]["tdx_industry"] == {
+        "rows": 60, "amount_complete": 60, "breadth_complete": 60,
+    }
 
 
 def test_market_top_uses_tdx_full_market_snapshot_before_limitup_fallback(monkeypatch) -> None:

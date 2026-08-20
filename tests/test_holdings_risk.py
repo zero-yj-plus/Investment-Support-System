@@ -7,7 +7,11 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from hermes_trader.analysis.holdings_risk import evaluate_holding, wilder_atr
+from hermes_trader.analysis.holdings_risk import (
+    evaluate_holding,
+    push_test_message,
+    wilder_atr,
+)
 from hermes_trader.api import routes
 from hermes_trader.knowledge.store import Store
 
@@ -22,6 +26,36 @@ class Request:
 
     async def json(self):
         return self._body
+
+
+def test_holdings_risk_push_test_message_is_explicitly_non_actionable() -> None:
+    message = push_test_message()
+
+    assert "持仓仓位管理·链路测试" in message
+    assert "建议将该持仓降低25%" in message
+    assert "未读取真实触发条件" in message
+    assert "不代表任何真实持仓结论" in message
+    assert "卖出" not in message
+
+
+@pytest.mark.asyncio
+async def test_holdings_risk_push_test_uses_current_notifier_without_real_data() -> None:
+    class Notifier:
+        def __init__(self) -> None:
+            self.messages: list[str] = []
+
+        async def push_text(self, message: str) -> bool:
+            self.messages.append(message)
+            return True
+
+    notifier = Notifier()
+    result = await routes.push_test(Request(
+        SimpleNamespace(feishu=notifier),
+        {"kind": "holdings_risk"},
+    ))
+
+    assert result == {"ok": True, "msg": "持仓提示测试消息已推送"}
+    assert notifier.messages == [push_test_message()]
 
 
 def _daily(count: int = 40, *, last_close: float | None = None) -> list[dict]:

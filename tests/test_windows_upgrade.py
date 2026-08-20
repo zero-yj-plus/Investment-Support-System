@@ -34,6 +34,8 @@ def _minimal_release(root: Path, marker: str = "new") -> set[Path]:
     required = (
         "hermes_trader/__init__.py",
         "hermes_trader/main.py",
+        "hermes_trader/maintenance_queue.py",
+        "hermes_trader/worker.py",
         "hermes_trader/data/__init__.py",
         "frontend-vue/dist/index.html",
         "scripts/windows_deploy.py",

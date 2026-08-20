@@ -1005,8 +1005,9 @@ def _ths_net_to_yuan(v):
 def market_sectors() -> dict:
     """行业 + 概念涨幅榜。
 
-    行业主路径为 TDX 行业指数 + sector_members×pricevol，同一分类体系同时供
-    主线的涨停映射使用；公开板块源只作降级。已确认无效的 Zjl 资金流不参与模型。
+    TDX 行业数据完整时直接采用；当前接口不提供行业成交额时，改用同花顺
+    行业一览表补齐主线所需的成交额/涨跌家数，TDX 继续提供个股行业映射。
+    已确认无效的 Zjl 资金流不参与模型。
     """
     missing: list[str] = []
     notes: list[str] = []
@@ -1022,37 +1023,56 @@ def market_sectors() -> dict:
     }
     sectors: list[dict] = []
 
-    # TDX 行业指数可直接返回实时涨跌幅/成交额；成分关系和 pricevol 补齐涨跌家数、领涨股。
-    # 这三者与 relation 使用同一套行业名称，避免新浪49行业与涨停池细行业永远对不齐。
+    # 只有成交额和涨跌家数都达到可判定覆盖，TDX 行业榜才可直接进入主线算法。
+    # 当前 pricevol 仅含 Now/LastClose/Volume，不能把 Volume 冒充成交额。
     tdx_industry = tdxapi.industry_market()
-    if tdx_industry and tdx_industry.get("sectors"):
-        sectors.extend(dict(row) for row in tdx_industry["sectors"])
-        out["data_date"] = tdx_industry.get("data_date")
-        notes.extend(message for message in tdx_industry.get("notes", []) if message not in notes)
-        degraded.extend(
-            message for message in tdx_industry.get("degraded_factors", [])
-            if message not in degraded
+    tdx_rows = [
+        dict(row) for row in ((tdx_industry or {}).get("sectors") or [])
+        if isinstance(row, dict) and row.get("kind") == "industry"
+    ]
+    if tdx_rows:
+        amount_complete = sum(row.get("amount") is not None for row in tdx_rows)
+        breadth_complete = sum(
+            row.get("up_count") is not None and row.get("down_count") is not None
+            for row in tdx_rows
         )
-        out["coverage"] = dict(tdx_industry.get("coverage") or {})
+        required = max(50, int(len(tdx_rows) * 0.8))
+        tdx_core_complete = (
+            len(tdx_rows) >= 50
+            and amount_complete >= required
+            and breadth_complete >= required
+        )
+        notes.extend(message for message in tdx_industry.get("notes", []) if message not in notes)
+        out["coverage"] = {
+            "tdx_industry": {
+                "rows": len(tdx_rows),
+                "amount_complete": amount_complete,
+                "breadth_complete": breadth_complete,
+            }
+        }
+        if tdx_core_complete:
+            sectors.extend(tdx_rows)
+            out["data_date"] = tdx_industry.get("data_date")
+            degraded.extend(
+                message for message in tdx_industry.get("degraded_factors", [])
+                if message not in degraded
+            )
+        else:
+            notes.append(
+                "TDX行业榜未进入主线判定："
+                f"成交额覆盖{amount_complete}/{len(tdx_rows)}、"
+                f"涨跌家数覆盖{breadth_complete}/{len(tdx_rows)}"
+            )
 
     def _has_industry() -> bool:
         return any(row.get("kind") == "industry" for row in sectors)
 
     ak = get_ak()
-    if ak is None:
-        if not _has_industry():
-            missing.append("行业板块行情")
-            out["missing_fields"].append("行业板块行情")
-        degraded.append("概念板块行情（akshare 未安装）")
-        out["data_state"] = "missing" if not sectors else "degraded"
-        out["sectors"] = sectors
-        return out
 
     # 东财为主/同花顺辅：东财可达(中继 或 eastmoney_direct 境内服务器)→ 东财行业资金流为主源；
     # 东财不可达时跳到独立兜底，避免 3 个 push2 主源串行慢失败拖垮页面
     # (下方同花顺资金流 / 新浪行业 / 新浪概念，实测可达)。资金追踪 top10 板块即取这里的 main_flow。
-    _use_em = _use_eastmoney() and em_available()   # 熔断期内直接走兜底(base.em_available)
-    # TDX 行业可用时不再请求/合并另一套行业分类，更不能把两套名称硬拼。
+    _use_em = ak is not None and _use_eastmoney() and em_available()
     flow = None
     industry = None
     if not _has_industry() and _use_em:
@@ -1069,13 +1089,6 @@ def market_sectors() -> dict:
                 v = to_float(row.get(net_col))
                 if v is not None:
                     flow_map[str(row.get(name_col, ""))] = v
-    if not flow_map and not _has_industry():
-        # 东财资金流不可用 → 同花顺行业资金流隔离适配。
-        # MiniRacer/V8 只在一次性子进程中运行；此处拿到的 main_net 已统一为元。
-        for row in tx.moneyflow_ind_dc():
-            v = to_float(row.get("main_net"))
-            if v is not None:
-                flow_map[str(row.get("name", ""))] = v
     if not _has_industry() and industry is not None and not industry.empty:
         for _, row in industry.iterrows():
             name = str(row.get("板块名称", ""))
@@ -1092,8 +1105,20 @@ def market_sectors() -> dict:
                     "down_count": to_int(row.get("下跌家数")),
                 }
             )
-    elif not _has_industry():
-        missing.append("行业板块行情")
+
+    if not _has_industry():
+        # 同花顺行业一览是当前免费源中唯一同时具备当日成交额、涨跌家数、
+        # 涨跌幅和领涨股的完整行业表。AkShare/V8 只运行在隔离子进程。
+        ths_summary = tx.industry_summary_ths()
+        if ths_summary.get("ok") and ths_summary.get("sectors"):
+            sectors.extend(dict(row) for row in ths_summary["sectors"])
+            out["data_date"] = ths_summary.get("data_date")
+            out.setdefault("coverage", {})["industry_summary"] = dict(
+                ths_summary.get("coverage") or {}
+            )
+            notes.append("行业主线结构字段取自同花顺当日行业一览表；金额已统一为元")
+        elif ths_summary.get("error"):
+            notes.append(f"同花顺行业一览不可用：{str(ths_summary['error'])[:120]}")
 
     if not _has_industry():
         # 东财行情断 → 第二层：同花顺免费行业资金榜重建行业段。
@@ -1117,8 +1142,18 @@ def market_sectors() -> dict:
         except Exception:  # noqa: BLE001 — 回填层失败按缺失降级,走新浪
             pass
     if not _has_industry():
+        # 新浪兜底没有行业资金净额；只有走到该层时才调用同花顺行业资金流，
+        # 避免完整行业一览已经成功后再启动一个重复子进程。
+        if not flow_map:
+            for row in tx.moneyflow_ind_dc():
+                v = to_float(row.get("main_net"))
+                if v is not None:
+                    flow_map[str(row.get("name", ""))] = v
         # 东财行业不可用 → 新浪行业兜底（含领涨股与成交额，无主力资金）
-        sina = safe(ak.stock_sector_spot, indicator="新浪行业", label="新浪行业")
+        sina = (
+            safe(ak.stock_sector_spot, indicator="新浪行业", label="新浪行业")
+            if ak is not None else None
+        )
         if sina is not None and not sina.empty:
             missing[:] = [m for m in missing if m != "行业板块行情"]
             for _, row in sina.iterrows():
@@ -1136,6 +1171,9 @@ def market_sectors() -> dict:
                     }
                 )
             missing.append("行业涨跌家数")
+
+    if not _has_industry():
+        missing.append("行业板块行情")
 
     concept = safe(ak.stock_board_concept_name_em, label="概念板块") if _use_em else None
     if concept is not None and not concept.empty:
@@ -1161,7 +1199,10 @@ def market_sectors() -> dict:
                 }
             )
     else:
-        sina_c = safe(ak.stock_sector_spot, indicator="概念", label="新浪概念")
+        sina_c = (
+            safe(ak.stock_sector_spot, indicator="概念", label="新浪概念")
+            if ak is not None else None
+        )
         if sina_c is not None and not sina_c.empty:
             try:
                 import pandas as pd  # noqa: PLC0415

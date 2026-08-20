@@ -35,6 +35,7 @@ from .research_runs import ResearchRunManager
 from .simulation import SimulationStore
 from .data.limitup_tracker import LimitUpTracker
 from .data.health_monitor import DataHealthMonitor
+from .maintenance_queue import MaintenanceQueue
 
 log = logging.getLogger("hermes")
 
@@ -116,6 +117,7 @@ def mount_frontends(app: FastAPI, config, *, project_root: Path = PROJECT_ROOT) 
 
 def create_app(config_path: str) -> FastAPI:
     config = Config(config_path)
+    maintenance_queue = MaintenanceQueue(config.data_dir)
     store = Store(config.data_dir)
     interrupted_jobs = store.reconcile_interrupted_jobs()
     if interrupted_jobs:
@@ -184,13 +186,15 @@ def create_app(config_path: str) -> FastAPI:
     holding_risk = HoldingRiskService(config, store, notifier)
     research_runs = ResearchRunManager(config.data_dir)
     limitup_tracker = LimitUpTracker(config.data_dir)
-    data_health_monitor = DataHealthMonitor(config, hermes, store, market_gateway)
+    data_health_monitor = DataHealthMonitor(
+        config, hermes, store, market_gateway, maintenance_queue=maintenance_queue,
+    )
     # 分析层只消费统一网关契约；不在各页再各自直连行情源。
     engine.market_gateway = market_gateway
     # 技术选股只读客户隔离的本地缓存；网络采集由盘后任务或显式刷新触发。
     from .analysis import technical_screener  # noqa: PLC0415
     technical_screener.init(config.data_dir)
-    scheduler = build_scheduler(config, engine)
+    scheduler = build_scheduler(config, engine, maintenance_queue=maintenance_queue)
     register_holdings_risk(scheduler, holding_risk)
     simulation_matcher = SimulationMatcher(simulation_store)
     register_simulation_matcher(scheduler, simulation_matcher)
@@ -199,7 +203,9 @@ def create_app(config_path: str) -> FastAPI:
     except Exception:  # noqa: BLE001 -- 采样任务不得阻断服务启动
         log.exception("注册主线时间轴任务失败（不影响当前截面分析）")
     try:
-        register_news_event_observer(scheduler, config, store)
+        register_news_event_observer(
+            scheduler, config, store, maintenance_queue=maintenance_queue,
+        )
     except Exception:  # noqa: BLE001 -- 事件观察任务不得阻断服务启动
         log.exception("注册新闻事件观察任务失败（不影响新闻原文与实体映射）")
     try:
@@ -271,6 +277,7 @@ def create_app(config_path: str) -> FastAPI:
         if data_health_task is not None:
             data_health_task.cancel()
             await asyncio.gather(data_health_task, return_exceptions=True)
+        data_health_monitor.close()
         await research_runs.shutdown()
         scheduler.shutdown(wait=False)
 
@@ -294,6 +301,7 @@ def create_app(config_path: str) -> FastAPI:
     app.state.market_gateway = market_gateway
     app.state.evidence_store = market_gateway.store if market_gateway is not None else None
     app.state.data_health_monitor = data_health_monitor
+    app.state.maintenance_queue = maintenance_queue
     # 核心完整性闸（隔离铁律的技术校验）：客户机上 hermes_trader/+frontend/ 若偏离母版本(私改/删/增)
     # → 启动期告警 + /api/status 暴露，便于远程发现"客户私改了核心"，提示用 upgrade_core.sh 对齐回正。
     # 开发态(仓库无 core.sha256 清单)不校验、不误报。

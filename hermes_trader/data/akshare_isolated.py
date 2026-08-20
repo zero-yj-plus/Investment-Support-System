@@ -14,6 +14,7 @@ from .akshare_worker import RESULT_PREFIX
 _ERROR_TYPE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.]{0,80}")
 _BREAKER_LOCK = threading.Lock()
 _BREAKER = {"until": 0.0, "failures": 0}
+_INDUSTRY_SUMMARY_BREAKER = {"until": 0.0, "failures": 0}
 _MARKET_BREAKER = {"until": 0.0, "failures": 0}
 _BREAKER_COOLDOWN_SECONDS = 300.0
 
@@ -59,6 +60,12 @@ def _reset_market_breaker() -> None:
     """测试/运维重置入口；与行业资金源使用独立熔断器。"""
     with _BREAKER_LOCK:
         _MARKET_BREAKER.update({"until": 0.0, "failures": 0})
+
+
+def _reset_industry_summary_breaker() -> None:
+    """测试/运维重置入口；与行业资金流使用独立熔断器。"""
+    with _BREAKER_LOCK:
+        _INDUSTRY_SUMMARY_BREAKER.update({"until": 0.0, "failures": 0})
 
 
 def _failure(reason: str, *, latency_ms: float) -> dict:
@@ -171,6 +178,16 @@ def industry_fund_flow(*, timeout: float = 4.0, trip_breaker: bool = True) -> di
     return _run_worker(
         "industry-flow", "ths-industry-flow.v1",
         timeout=timeout, trip_breaker=trip_breaker, breaker=_BREAKER,
+    )
+
+
+def industry_summary(*, timeout: float = 4.0, trip_breaker: bool = True) -> dict:
+    """在一次性子进程读取同花顺当日行业一览表。"""
+    return _run_worker(
+        "industry-summary", "ths-industry-summary.v1",
+        timeout=timeout,
+        trip_breaker=trip_breaker,
+        breaker=_INDUSTRY_SUMMARY_BREAKER,
     )
 
 

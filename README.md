@@ -38,8 +38,9 @@ install.bat
 start.bat
 ```
 
-`start.bat` 默认在后台启动，不保留 CMD 窗口；输出写入
-`data\logs\hermes-start-*.log`。需要在当前窗口查看实时输出并用 Ctrl+C 停止时，运行
+`start.bat` 默认同时启动 API 进程和独立重型后台 Worker，不保留 CMD 窗口；输出分别写入
+`data\logs\hermes-start-*.log` 与 `data\logs\hermes-worker-start-*.log`。技术全市场刷新和
+新闻观察只在 Worker 中执行。需要在当前窗口查看实时输出并用 Ctrl+C 同时停止两者时，运行
 `start.bat --foreground`。
 
 如使用本机通达信 TQ HTTP 服务，先在 `.env` 中配置桥接密钥和地址，再在独立

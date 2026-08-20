@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import json
 import os
 
 from hermes_trader.data import news_observation
@@ -66,8 +67,8 @@ def test_after_close_event_waits_for_strict_next_trade_day_and_files_are_private
     assert contract["status"] == "waiting"
     assert contract["progress"] == {"complete": 1, "total": 3}
     assert contract["baseline"]["stocks"][0]["price"] == 10.0
-    assert os.stat(tmp_path / "news_events" / "events.v1.jsonl").st_mode & 0o777 == 0o600
-    assert os.stat(tmp_path / "news_events" / "observations.v1.jsonl").st_mode & 0o777 == 0o600
+    if os.name != "nt":
+        assert os.stat(tmp_path / "news_events" / "news_observation.sqlite3").st_mode & 0o777 == 0o600
 
 
 def test_waiting_to_observing_to_observed_uses_event_baseline(tmp_path, monkeypatch) -> None:
@@ -139,13 +140,80 @@ def test_unknown_calendar_never_uses_weekday_as_final_target(tmp_path, monkeypat
 
 def test_api_enrichment_is_read_only(tmp_path, monkeypatch) -> None:
     _capture(tmp_path, monkeypatch, "2026-07-13 22:05:00", _frame("2026-07-13", 10.0))
-    events = tmp_path / "news_events" / "events.v1.jsonl"
-    observations = tmp_path / "news_events" / "observations.v1.jsonl"
-    before = (events.read_bytes(), observations.read_bytes())
+    before = (
+        news_observation._store.events(),
+        news_observation._store.observations(),
+    )
 
     news_observation.enrich_items([_item()], now=_now("2026-07-13 22:06:00"))
 
-    assert (events.read_bytes(), observations.read_bytes()) == before
+    assert (
+        news_observation._store.events(),
+        news_observation._store.observations(),
+    ) == before
+
+
+def test_legacy_jsonl_is_streamed_once_into_indexed_sqlite(tmp_path) -> None:
+    root = tmp_path / "news_events"
+    root.mkdir()
+    event = {
+        "schema_version": news_observation.EVENT_SCHEMA,
+        "event_type": "a_share_news_event",
+        "event_id": "legacy-event-1",
+        "matches": [],
+    }
+    observation = {
+        "schema_version": news_observation.OBSERVATION_SCHEMA,
+        "event_type": "a_share_market_observation",
+        "observation_id": "legacy-observation-1",
+        "event_id": "legacy-event-1",
+        "checkpoint": "first_seen",
+        "status": "recorded",
+        "observed_at": "2026-07-13T22:05:00+08:00",
+    }
+    (root / "events.v1.jsonl").write_text(
+        json.dumps(event, ensure_ascii=False) + "\n", encoding="utf-8",
+    )
+    (root / "observations.v1.jsonl").write_text(
+        json.dumps(observation, ensure_ascii=False) + "\n", encoding="utf-8",
+    )
+
+    store = news_observation.init(tmp_path, migrate_legacy=True)
+
+    assert store.migration_status()["status"] == "complete"
+    assert store.events() == [event]
+    assert store.observations() == [observation]
+    assert store.current_observations(["legacy-event-1"]) == [observation]
+    assert (root / "events.v1.jsonl").is_file()
+    assert (root / "observations.v1.jsonl").is_file()
+
+
+def test_legacy_migration_never_exposes_a_partial_ledger(tmp_path) -> None:
+    root = tmp_path / "news_events"
+    root.mkdir()
+    event = {
+        "schema_version": news_observation.EVENT_SCHEMA,
+        "event_type": "a_share_news_event",
+        "event_id": "legacy-event-1",
+        "matches": [],
+    }
+    (root / "events.v1.jsonl").write_text(
+        json.dumps(event, ensure_ascii=False) + "\n", encoding="utf-8",
+    )
+
+    store = news_observation.init(tmp_path)
+
+    assert store.migration_status()["status"] == "pending"
+    assert store.events() == []
+    try:
+        store.append_event(event)
+    except RuntimeError as exc:
+        assert str(exc) == "news_observation_migration_incomplete"
+    else:
+        raise AssertionError("迁移完成前不应允许追加新闻事件")
+
+    store.migrate_legacy(batch_size=10)
+    assert store.events() == [event]
 
 
 def test_observer_schedule_covers_midnight_and_early_morning() -> None:

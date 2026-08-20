@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 
 from hermes_trader.analysis.mainline import build_mainline_response
 from hermes_trader.analysis.mainline_timeline import observe_response
+from hermes_trader.analysis.engine import _trim_sectors_symmetric
 from hermes_trader.jobs import mainline_sampler
 from hermes_trader.api.routes import (
     _merge_cockpit_narrative,
@@ -314,6 +315,25 @@ def test_calculation_does_not_mutate_source_payloads():
     _response(sectors, stocks, mapping)
 
     assert (sectors, stocks, mapping) == before
+
+
+def test_report_sector_trimming_does_not_mutate_cached_source_payload() -> None:
+    source = {
+        "sectors": [{"kind": "industry", "name": f"行业{i}"} for i in range(10)],
+        "missing": ["上游说明"],
+        "coverage": {"industries": 10},
+    }
+    before = deepcopy(source)
+
+    trimmed = _trim_sectors_symmetric(source, 2, 2)
+
+    assert source == before
+    assert [row["name"] for row in trimmed["sectors"]] == [
+        "行业0", "行业1", "行业8", "行业9",
+    ]
+    assert trimmed["coverage"] == {"industries": 10}
+    assert trimmed["missing"][0] == "上游说明"
+    assert "仅注入涨幅前2+跌幅后2" in trimmed["missing"][1]
 
 
 def test_only_one_gate_met_stays_observation():

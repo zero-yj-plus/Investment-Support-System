@@ -49,6 +49,7 @@ try {
     { name: 'phone-landscape-dark', width: 812, height: 375, theme: 'dark' },
     { name: 'wide-1440-dark', width: 1440, height: 1000, theme: 'dark' },
     { name: 'wide-1440-light', width: 1440, height: 1000, theme: 'light' },
+    { name: 'wide-1920-light', width: 1920, height: 1080, theme: 'light' },
   ]) {
     const page = await browser.newPage({ viewport: { width: scenario.width, height: scenario.height }, deviceScaleFactor: 1 })
     const pageErrors = []
@@ -64,14 +65,90 @@ try {
     await page.waitForSelector('.holding-risk-card')
     await page.addScriptTag({ content: axeSource })
     const violations = await page.evaluate(async () => (await window.axe.run(document, { rules: { 'color-contrast': { enabled: true } } })).violations)
+    const pageHeightBeforeDialog = await page.evaluate(() => document.documentElement.scrollHeight)
     const layout = await page.evaluate(() => ({
       noPageOverflow: document.documentElement.scrollWidth <= window.innerWidth,
       cardCount: document.querySelectorAll('.holding-risk-card').length,
       hasPercentAction: document.body.textContent.includes('建议将该持仓降低33%'),
-      hasExecutionLimit: document.body.textContent.includes('T+1限制'),
+      evidenceDetailsHidden: !document.body.textContent.includes('收益观察区内出现2项滞涨特征') && !document.body.textContent.includes('执行限制：'),
+      hasPnlPercent: document.body.textContent.includes('浮动盈亏比例') && document.body.textContent.includes('+3.96%'),
+      decisionsInEvidenceSummary: [...document.querySelectorAll('.holding-risk-card')].every((card) => Boolean(card.querySelector('.holding-risk-card__metrics > .holding-risk-card__evidence-summary'))),
+      periodCardCompressed: window.innerWidth <= 720 || [...document.querySelectorAll('.holding-risk-card__metrics')].every((metrics) => {
+        const period = metrics.querySelector('.holding-risk-card__metric--period')?.getBoundingClientRect()
+        return Boolean(period && period.width < metrics.getBoundingClientRect().width / 2)
+      }),
+      metricGridGapsCompact: window.innerWidth <= 1280 || [...document.querySelectorAll('.holding-risk-card__metrics')].every((metrics) => {
+        const cards = [...metrics.children].map((card) => card.getBoundingClientRect())
+        const gaps = cards.slice(1).map((card, index) => card.left - cards[index].right)
+        return gaps.every((gap) => gap >= 5 && gap <= 7)
+      }),
+      metricsSingleRowOnDesktop: window.innerWidth <= 1280 || [...document.querySelectorAll('.holding-risk-card__metrics')].every((metrics) => {
+        const tops = [...metrics.children].map((card) => Math.round(card.getBoundingClientRect().top))
+        return new Set(tops).size === 1
+      }),
     }))
     await page.screenshot({ path: resolve(outputDir, `holdings-risk-${scenario.name}.png`), fullPage: true })
-    results.push({ scenario: scenario.name, pageErrors, violations: violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help })), layout })
+
+    await page.locator('.holding-risk-card__evidence-summary button').first().click()
+    await page.waitForSelector('.holding-evidence-dialog[open]')
+    const evidenceDialogViolations = await page.evaluate(async () => (await window.axe.run(document, { rules: { 'color-contrast': { enabled: true } } })).violations)
+    const evidenceDialogLayout = await page.evaluate((heightBefore) => {
+      const dialog = document.querySelector('.holding-evidence-dialog')
+      const rect = dialog?.getBoundingClientRect()
+      return {
+        modalTopLayer: dialog instanceof HTMLDialogElement && dialog.matches(':modal'),
+        pageFlowStable: document.documentElement.scrollHeight === heightBefore,
+        noPageOverflow: document.documentElement.scrollWidth <= window.innerWidth,
+        focusInsideDialog: dialog instanceof HTMLDialogElement && dialog.contains(document.activeElement),
+        withinViewport: Boolean(rect && rect.top >= 0 && rect.left >= 0 && rect.right <= window.innerWidth && rect.bottom <= window.innerHeight),
+        detailsVisible: document.body.textContent.includes('收益观察区内出现2项滞涨特征'),
+      }
+    }, pageHeightBeforeDialog)
+    await page.screenshot({ path: resolve(outputDir, `holdings-evidence-dialog-${scenario.name}.png`) })
+    await page.keyboard.press('Escape')
+    await page.waitForSelector('.holding-evidence-dialog[open]', { state: 'detached' })
+    await page.waitForFunction(() => document.activeElement?.classList.contains('holding-risk-card__evidence-trigger'))
+    const evidenceFocusReturnedToTrigger = await page.evaluate(() => document.activeElement?.classList.contains('holding-risk-card__evidence-trigger'))
+
+    await page.getByRole('button', { name: '添加持仓', exact: true }).click()
+    await page.waitForSelector('.holdings-editor-dialog[open]')
+    const dialogViolations = await page.evaluate(async () => (await window.axe.run(document, { rules: { 'color-contrast': { enabled: true } } })).violations)
+    const dialogLayout = await page.evaluate((heightBefore) => {
+      const dialog = document.querySelector('.holdings-editor-dialog')
+      const rect = dialog?.getBoundingClientRect()
+      return {
+        modalTopLayer: dialog instanceof HTMLDialogElement && dialog.matches(':modal'),
+        pageFlowStable: document.documentElement.scrollHeight === heightBefore,
+        noPageOverflow: document.documentElement.scrollWidth <= window.innerWidth,
+        focusInsideDialog: dialog instanceof HTMLDialogElement && dialog.contains(document.activeElement),
+        withinViewport: Boolean(rect && rect.top >= 0 && rect.left >= 0 && rect.right <= window.innerWidth && rect.bottom <= window.innerHeight),
+      }
+    }, pageHeightBeforeDialog)
+    await page.screenshot({ path: resolve(outputDir, `holdings-add-dialog-${scenario.name}.png`) })
+    dialogLayout.submitReachable = await page.evaluate(() => {
+      const form = document.querySelector('.holdings-editor-dialog .holding-editor form')
+      const submit = document.querySelector('.holdings-editor-dialog button[type="submit"]')
+      if (!(form instanceof HTMLElement) || !(submit instanceof HTMLElement)) return false
+      form.scrollTop = form.scrollHeight
+      const rect = submit.getBoundingClientRect()
+      return rect.top >= 0 && rect.left >= 0 && rect.right <= window.innerWidth && rect.bottom <= window.innerHeight
+    })
+    await page.keyboard.press('Escape')
+    await page.waitForSelector('.holdings-editor-dialog[open]', { state: 'detached' })
+    await page.waitForFunction(() => document.activeElement?.textContent?.trim() === '添加持仓')
+    const focusReturnedToTrigger = await page.evaluate(() => document.activeElement?.textContent?.trim() === '添加持仓')
+    results.push({
+      scenario: scenario.name,
+      pageErrors,
+      violations: violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help })),
+      evidenceDialogViolations: evidenceDialogViolations.map((item) => ({ id: item.id, impact: item.impact, help: item.help })),
+      dialogViolations: dialogViolations.map((item) => ({ id: item.id, impact: item.impact, help: item.help })),
+      layout,
+      evidenceDialogLayout,
+      dialogLayout,
+      evidenceFocusReturnedToTrigger,
+      focusReturnedToTrigger,
+    })
     await page.close()
   }
 } finally {
@@ -79,7 +156,7 @@ try {
   await server.close()
 }
 
-const failed = results.some((item) => item.pageErrors.length || item.violations.length || !Object.values(item.layout).every(Boolean))
+const failed = results.some((item) => item.pageErrors.length || item.violations.length || item.evidenceDialogViolations.length || item.dialogViolations.length || !Object.values(item.layout).every(Boolean) || !Object.values(item.evidenceDialogLayout).every(Boolean) || !Object.values(item.dialogLayout).every(Boolean) || !item.evidenceFocusReturnedToTrigger || !item.focusReturnedToTrigger)
 await writeFile(resolve(outputDir, 'holdings-risk-audit.json'), JSON.stringify({ failed, results }, null, 2), 'utf8')
 console.log(JSON.stringify({ failed, results }, null, 2))
 if (failed) process.exitCode = 1

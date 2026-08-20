@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
 from hermes_trader.analysis import technical_screener
 
@@ -30,7 +31,7 @@ def test_init_repairs_stale_running_refresh_state(tmp_path) -> None:
         "state": "running", "started_at": "2026-08-05 16:10:00", "processed": 40,
     })
 
-    technical_screener.init(tmp_path)
+    technical_screener.init(tmp_path, reconcile_interrupted=True)
     current = technical_screener.status(include_counts=False)
 
     assert current["state"] == "missing"
@@ -107,6 +108,13 @@ def test_refresh_builds_cache_and_supports_default_and_custom_params(tmp_path, m
     assert refreshed["source_counts"] == {"tdx_day": 1, "tencent_fallback": 0}
     assert refreshed["max_pending"] == 2
 
+    unchanged = technical_screener.refresh_all(max_symbols=1, workers=1)
+    assert unchanged["state"] == "ready"
+    assert unchanged["skipped"] == 1
+    counted = technical_screener.status()
+    assert counted["bars"] == 100
+    assert isinstance(counted["signal_matches"], int)
+
     default_result = technical_screener.screen({
         "universe": {"markets": ["MAIN"], "min_listing_days": 60},
         "must_all": [{"signal_code": "LONG_MA_ARRAY", "timeframe": "D", "occurrence": "CURRENT"}],
@@ -178,6 +186,43 @@ def test_refresh_fallback_is_uncached_and_work_is_bounded(tmp_path, monkeypatch)
     assert refreshed["source_counts"] == {"tdx_day": 0, "tencent_fallback": 5}
     assert [len(group) for group in local_batches] == [1, 4, 1]
     assert sorted(fallback_codes) == sorted(universe)
+
+
+def test_refresh_resumes_after_last_committed_batch(tmp_path, monkeypatch) -> None:
+    technical_screener.init(tmp_path)
+    dates = pd.bdate_range("2026-01-01", periods=30)
+    bars = [{
+        "d": stamp.date().isoformat(), "o": 10.0, "h": 10.5, "l": 9.8,
+        "c": 10.2, "v_shares": 100_000, "amount": 1_020_000,
+        "adjustment": "qfq", "source": "续跑测试",
+    } for stamp in dates]
+    universe = {f"60000{index}": f"测试{index}" for index in range(5)}
+    monkeypatch.setattr(technical_screener.free_source, "stock_universe", lambda: universe)
+    monkeypatch.setattr(
+        technical_screener.tdx_local_daily,
+        "daily_bars_batch",
+        lambda codes, _days: {
+            str(code).split(".")[0]: bars for code in codes
+        },
+    )
+
+    checkpoint = {}
+
+    def interrupt_after_first_batch(progress):
+        checkpoint.update(progress)
+        raise SystemExit("simulate worker termination")
+
+    with pytest.raises(SystemExit):
+        technical_screener.refresh_all(
+            workers=1, progress_callback=interrupt_after_first_batch,
+        )
+
+    assert checkpoint["processed"] == 2
+    assert checkpoint["cursor"] == "600001"
+    resumed = technical_screener.refresh_all(workers=1, resume=checkpoint)
+    assert resumed["state"] == "ready"
+    assert resumed["processed"] == 5
+    assert resumed["cursor"] == "600004"
 
 
 def test_v2_structure_requires_non_empty_satisfy_groups(tmp_path) -> None:

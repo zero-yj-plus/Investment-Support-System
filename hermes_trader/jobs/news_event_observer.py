@@ -50,13 +50,28 @@ async def capture(config) -> dict:
     }
 
 
-def register(scheduler, config, store) -> None:
+def register(scheduler, config, store, maintenance_queue=None) -> None:
     settings = config.section("news_event_observation") if hasattr(config, "section") else {}
     if not settings.get("enabled", False):
         return
     interval = max(5, min(int(settings.get("interval_min") or 10), 30))
 
     async def _tick() -> None:
+        if maintenance_queue is not None:
+            stamp = now_cn()
+            job, created = await asyncio.to_thread(
+                maintenance_queue.enqueue,
+                "news_event_observation",
+                {},
+                origin="scheduled",
+                idempotency_key=f"scheduled:{stamp:%Y%m%d%H%M}",
+            )
+            log.info(
+                "新闻观察任务%s: %s",
+                "已入队" if created else "复用运行中任务",
+                job.get("job_id"),
+            )
+            return
         started = time.monotonic()
         started_at = now_cn().strftime("%Y-%m-%d %H:%M:%S")
         if store:

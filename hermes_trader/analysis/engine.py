@@ -897,17 +897,25 @@ def _report_stock_codes(content: str, limit: int = 12) -> list[str]:
     return list(dict.fromkeys(codes))[:limit]
 
 
-def _trim_sectors_symmetric(sectors: dict, head: int, tail: int) -> None:
+def _trim_sectors_symmetric(sectors: dict, head: int, tail: int) -> dict:
     """板块行情按涨幅降序，单纯 _trim(head) 会把当日真正下跌最多的板块整段砍掉，
     导致收盘/次日报告的『弱势板块』『高位退潮板块』只能从中游微涨板块里硬凑——伪造弱势榜。
     改为对称截取：保留涨幅前 head + 跌幅后 tail（去重），并在 missing 标明两段口径，
-    让模型知道注入列表只是头尾两段、中段未注入。原地修改 sectors。"""
+    让模型知道注入列表只是头尾两段、中段未注入。
+
+    数据层返回的是 TTL 缓存对象；这里必须返回浅拷贝，不能把缓存中的全量行业榜
+    永久裁成报告注入片段。
+    """
+    trimmed = dict(sectors)
     items = sectors.get("sectors")
     if not isinstance(items, list):
-        return
+        return trimmed
     total = len(items)
     if total <= head + tail:
-        return
+        trimmed["sectors"] = list(items)
+        if isinstance(sectors.get("missing"), list):
+            trimmed["missing"] = list(sectors["missing"])
+        return trimmed
     picked = items[:head] + items[-tail:]
     # 去重（极端情况下 head/tail 区间可能交叠，此处 total>head+tail 已排除交叠，仍按 id 兜底）
     seen: set = set()
@@ -917,11 +925,14 @@ def _trim_sectors_symmetric(sectors: dict, head: int, tail: int) -> None:
         if sid not in seen:
             seen.add(sid)
             uniq.append(s)
-    sectors["sectors"] = uniq
+    trimmed["sectors"] = uniq
     note = f"板块行情共 {total} 个，仅注入涨幅前{head}+跌幅后{tail}（中段未注入）"
-    miss = sectors.setdefault("missing", [])
-    if isinstance(miss, list) and note not in miss:
+    source_missing = sectors.get("missing")
+    miss = list(source_missing) if isinstance(source_missing, list) else []
+    if note not in miss:
         miss.append(note)
+    trimmed["missing"] = miss
+    return trimmed
 
 
 # ---- 持仓处理倾向（确定性规则）+ 次日兑现回检 ----
@@ -1108,9 +1119,9 @@ class Engine:
                 asyncio.to_thread(market.market_top),
                 asyncio.to_thread(market.market_flow),
             )
-            limitup["stocks"] = _trim(limitup.get("stocks", []), 60)
+            limitup = {**limitup, "stocks": _trim(limitup.get("stocks", []), 60)}
             # 涨幅前35+跌幅后15：保留真实弱势板块供『弱势板块前3/高位退潮』段，避免伪造
-            _trim_sectors_symmetric(sectors, 35, 15)
+            sectors = _trim_sectors_symmetric(sectors, 35, 15)
             ctx.update({
                 "涨停池": limitup,
                 "板块行情": sectors,
@@ -1177,7 +1188,7 @@ class Engine:
                 if prev:
                     prev_compact = prev.replace("-", "")
                     zt = market.market_limitup(prev_compact)
-                    zt["stocks"] = _trim(zt.get("stocks", []), 40)
+                    zt = {**zt, "stocks": _trim(zt.get("stocks", []), 40)}
                     ctx["昨日涨停池(仅情绪/方向参考·连板股已封板买不进)"] = zt
                 # 可买候选池(未封板可买)——核心股候选优先从这里挑（客户 #2：不要只从涨停池挑连板高位股，
                 # 那些买不进/追高即高位接盘）。确定性 BUYRULE 过滤，数字真实，失败不拖垮盘前研报。
@@ -1189,7 +1200,7 @@ class Engine:
                 ctx["昨日情绪历史"] = self.store.sentiment_history(5)
                 # 对称截取（涨幅前30+跌幅后10），保留真实弱势板块，避免早盘内参伪造弱势榜
                 msec = market.market_sectors()
-                _trim_sectors_symmetric(msec, 30, 10)
+                msec = _trim_sectors_symmetric(msec, 30, 10)
                 ctx["板块行情(最近快照)"] = {
                     "sectors": msec.get("sectors", []),
                     "missing": msec.get("missing", []),

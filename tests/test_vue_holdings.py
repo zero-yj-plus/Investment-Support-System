@@ -46,7 +46,7 @@ def test_vue_holdings_preserves_missing_empty_stale_and_overwrite_safety() -> No
         "陈旧报价",
         "持仓总市值",
         "投入成本",
-        "成本价 × 股数",
+        "浮动盈亏比例",
         "持仓构成",
         "缺失值不补 0",
     ):
@@ -58,6 +58,9 @@ def test_vue_holdings_preserves_missing_empty_stale_and_overwrite_safety() -> No
     assert "holdingSharePct" in composable
     assert "quoteCoverageComplete.value" in composable
     assert "missingQuoteCodes.value = codes" in composable
+    assert "formatPercent(aggregate.pnlPct, true)" in page
+    assert "投入成本仍按成本价 × 股数计算" not in page
+    assert "row.cost * row.shares" in formatter
     assert "value == null ? '—'" in formatter
     for source in (page, table, composable, formatter):
         assert "v-html" not in source
@@ -86,13 +89,21 @@ def test_vue_holdings_cleans_lifecycle_and_prevents_duplicate_actions() -> None:
     assert "if (saving.value) return" in composable
     assert "if (adding.value) return false" in composable
     assert "method: 'PUT'" in api
-    assert "onBeforeUnmount(() => emit('refreshState', false))" in page
+    assert "onBeforeUnmount(() =>" in page
+    assert "emit('refreshState', false)" in page
     for source in (page, editor):
         assert '<button' in source
         assert 'role="button"' not in source
     assert '>添加持仓</button>' in page
     assert '@click="openEditor"' in page
     assert ':disabled="loading || !!holdingsError || saving || adding || actionRunning"' in page
+    assert '<Teleport to="body">' in page
+    assert '<dialog' in page and 'aria-modal="true"' in page
+    assert 'aria-labelledby="holding-editor-title"' in page
+    assert '@cancel.prevent="requestEditorClose"' in page
+    assert 'holdingDialog.value.showModal()' in page
+    assert 'editorOpener?.focus()' in page
+    assert '.holdings-editor-dialog::backdrop' in page
     assert "保存持仓变更" not in page
     assert "await persistHoldings(" in composable
     assert "持仓已核验并加入" in composable
@@ -123,6 +134,23 @@ def test_vue_holdings_responsive_accessible_semantics_and_ui_audit() -> None:
         "超短（1–3个交易日）", "短线（3–5个交易日）", "波段（5–10个交易日）",
     ):
         assert label in page + editor + risk_cards
+    assert 'class="holding-risk-card__evidence-summary"' in risk_cards
+    assert 'class="holding-evidence-dialog"' in risk_cards
+    assert '<Teleport to="body">' in risk_cards
+    assert '@cancel.prevent="closeEvidence"' in risk_cards
+    assert 'evidenceOpener?.focus()' in risk_cards
+    assert '>查看详细</button>' in risk_cards
+    assert 'class="holding-risk-card__reason-detail"' not in risk_cards
+    assert 'class="holding-risk-card__reasons"' not in risk_cards
+    assert "holding-risk-card__action" not in risk_cards
+    assert 'class="holding-risk-card__metric--period"' in risk_cards
+    assert "grid-template-columns: repeat(8, minmax(90px, 1fr)) minmax(260px, 2fr)" in risk_cards
+    metrics_rule = next(line for line in risk_cards.splitlines() if line.startswith(".holding-risk-card__metrics {"))
+    assert "justify-content" not in metrics_rule
+    assert "@media (max-width: 1280px)" in risk_cards
+    assert "grid-template-columns: repeat(4, minmax(118px, 1fr))" in risk_cards
+    assert "@media (max-width: 760px)" in risk_cards
+    assert "grid-template-columns: repeat(2, minmax(118px, 1fr))" in risk_cards
     for forbidden in ("建议卖出", "清仓", "风险颜色"):
         assert forbidden not in page + editor + risk_cards
     for source in (page, table, editor):
@@ -136,6 +164,14 @@ def test_vue_holdings_responsive_accessible_semantics_and_ui_audit() -> None:
         "holdings-partial-failure-1440.png",
     ):
         assert screenshot in audit
+    holdings_audit = _read("scripts/audit-holdings-risk-ui.mjs")
+    assert "holdings-add-dialog-${scenario.name}.png" in holdings_audit
+    assert "dialog.matches(':modal')" in holdings_audit
+    assert "focusReturnedToTrigger" in holdings_audit
+    assert "wide-1920-light" in holdings_audit
+    assert "metricsSingleRowOnDesktop" in holdings_audit
+    assert "evidenceDetailsHidden" in holdings_audit
+    assert "evidenceFocusReturnedToTrigger" in holdings_audit
     assert "holdingsLoadingStateComplete" in audit
     assert "holdingsEmptyStateComplete" in audit
     assert "holdingsFailureStateComplete" in audit

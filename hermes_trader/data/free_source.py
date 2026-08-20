@@ -820,6 +820,108 @@ def _numeric_amount_to_yuan(value: object, *, numeric_unit: str) -> float | None
     return number * (1e8 if numeric_unit == "yi" else 1.0)
 
 
+@ttl_cache(45, offhours_seconds=6 * 3600)
+def industry_summary_ths(
+    date_compact: str | None = None,
+    *,
+    timeout: float = 4.0,
+    trip_breaker: bool = False,
+) -> dict:
+    """同花顺当日行业一览表（AkShare/V8 隔离子进程）。
+
+    返回主线所需的成交额、涨跌家数、涨跌幅和领涨股；金额统一为元。
+    即时源不能回答历史日，源失败或单位异常时显式返空，绝不跨日回填。
+    """
+    data_date = quote_data_date()
+    if date_compact:
+        requested = _iso_from_compact(date_compact)
+        if requested and requested != data_date:
+            return {
+                "ok": False,
+                "data_date": data_date,
+                "sectors": [],
+                "error": "即时行业一览不能回答历史交易日",
+            }
+    result = akshare_isolated.industry_summary(
+        timeout=max(0.1, float(timeout)),
+        trip_breaker=bool(trip_breaker),
+    )
+    latency_ms = to_float(result.get("latency_ms")) or 0.0
+    source_label = "行业一览(同花顺隔离)"
+    if result.get("ok") is not True:
+        reason = str(result.get("error") or "隔离子进程失败")[:140]
+        _record_source(source_label, latency_ms, False, "isolated-subprocess", reason)
+        log.warning("行业一览隔离子进程降级: %s", reason)
+        return {"ok": False, "data_date": data_date, "sectors": [], "error": reason}
+    raw_rows = result.get("rows")
+    if not isinstance(raw_rows, list) or not 50 <= len(raw_rows) <= 200:
+        reason = "行业一览行数/结构校验失败"
+        _record_source(source_label, latency_ms, False, "isolated-subprocess", reason)
+        return {"ok": False, "data_date": data_date, "sectors": [], "error": reason}
+
+    # 官方表的裸数值金额单位为亿元。若上游改成“元”但仍返回纯数字，
+    # 原值会跃升到 1e8 级；换算前整批拒绝，防止二次放大。
+    numeric_amounts = [
+        float(row.get(key))
+        for row in raw_rows if isinstance(row, dict)
+        for key in ("amount_raw", "net_raw")
+        if isinstance(row.get(key), (int, float))
+    ]
+    if any(not math.isfinite(value) or abs(value) > 100_000 for value in numeric_amounts):
+        reason = "成交额/净流入单位或量级校验失败"
+        _record_source(source_label, latency_ms, False, "isolated-subprocess", reason)
+        return {"ok": False, "data_date": data_date, "sectors": [], "error": reason}
+
+    fetched_at = now_cn().isoformat(timespec="seconds")
+    sectors: list[dict] = []
+    names: set[str] = set()
+    for row in raw_rows:
+        if not isinstance(row, dict):
+            continue
+        name = str(row.get("name") or "").strip()
+        amount = _numeric_amount_to_yuan(row.get("amount_raw"), numeric_unit="yi")
+        change_pct = to_float(row.get("change_pct"))
+        up_count = to_int(row.get("up_count"))
+        down_count = to_int(row.get("down_count"))
+        if (
+            not name or name in names or amount is None or amount < 0
+            or change_pct is None or up_count is None or up_count < 0
+            or down_count is None or down_count < 0
+        ):
+            continue
+        names.add(name)
+        sectors.append(
+            {
+                "kind": "industry",
+                "name": name,
+                "change_pct": change_pct,
+                "leader_name": str(row.get("leader_name") or "").strip(),
+                "leader_change_pct": to_float(row.get("leader_change_pct")),
+                "amount": amount,
+                "main_flow": _numeric_amount_to_yuan(row.get("net_raw"), numeric_unit="yi"),
+                "up_count": up_count,
+                "down_count": down_count,
+                "source": "同花顺行业一览表(AkShare隔离)",
+                "amount_unit": "CNY",
+                "main_flow_unit": "CNY",
+                "fetched_at": fetched_at,
+            }
+        )
+    if len(sectors) < 50:
+        reason = f"行业一览有效覆盖不足({len(sectors)}/{len(raw_rows)})"
+        _record_source(source_label, latency_ms, False, "isolated-subprocess", reason)
+        return {"ok": False, "data_date": data_date, "sectors": [], "error": reason}
+    _record_source(source_label, latency_ms, True, "isolated-subprocess", None)
+    return {
+        "ok": True,
+        "data_date": data_date,
+        "sectors": sectors,
+        "source": "同花顺行业一览表(AkShare隔离)",
+        "fetched_at": fetched_at,
+        "coverage": {"complete": len(sectors), "total": len(raw_rows)},
+    }
+
+
 @ttl_cache(120, offhours_seconds=6 * 3600)
 def moneyflow_ind_dc(
     date_compact: str | None = None,

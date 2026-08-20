@@ -79,5 +79,10 @@ technical_signal_refresh:
   enabled: true
   workers: 4
 
+background_worker:
+  enabled: true
+  poll_seconds: 2
+  lease_seconds: 180
+
 knowledge:
   auto_summarize: false

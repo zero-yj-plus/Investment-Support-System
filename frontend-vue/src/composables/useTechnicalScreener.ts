@@ -322,7 +322,7 @@ export function useTechnicalScreener() {
     if (statusPollTimer) return
     statusPollTimer = setInterval(() => {
       if (document.visibilityState === 'visible') void loadStatus()
-    }, 5_000)
+    }, 15_000)
   }
 
   async function loadStatus() {

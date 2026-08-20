@@ -31,6 +31,7 @@
 | 层 | 技术 / 约定 |
 | --- | --- |
 | Web 后端 | Python、FastAPI、Uvicorn、APScheduler |
+| 后台执行 | 独立 `hermes_trader.worker` 进程 + SQLite/WAL 持久维护队列；重型任务不在 Web 进程执行 |
 | 数据处理 | AkShare、pandas、腾讯行情、客户授权 TDX HTTP API、可选本地 TQ 只读兼容桥、交易所/公开网页适配器 |
 | 数据存储 | JSON/JSONL、SQLite/WAL、按客户 `data_dir` 隔离 |
 | AI 接入 | OpenAI 兼容 `/v1/chat/completions`；Hermes 网关为可选集成 |
@@ -64,18 +65,23 @@ flowchart LR
     DATA --> PUBLIC["交易所 / 新浪 / 同花顺 / AkShare / GDELT 等"]
     DATA --> EVIDENCE["EvidenceStore 点时证据"]
 
-    JOBS["APScheduler 定时任务"] --> ENG
-    JOBS --> DATA
-    JOBS --> STORE
+    JOBS["API 进程 APScheduler"] --> QUEUE["maintenance_queue.sqlite3"]
+    API --> QUEUE
+    QUEUE --> WORKER["独立 maintenance worker"]
+    WORKER --> DATA
+    WORKER --> STORE
 ```
 
 ### 3.1 启动调用链
 
-`python -m hermes_trader --config config.yaml`
+生产启动器 `start.bat` / `run.sh` 同时启动以下两个进程：
+
+- `python -m hermes_trader --config config.yaml`：交互 API、轻量调度与页面服务。
+- `python -m hermes_trader.worker --config config.yaml`：领取技术刷新、新闻观察等重型维护任务。
 
 1. `hermes_trader/__main__.py` 调用 `main.main()`。
 2. `main.create_app()` 加载 `Config`、客户 `Store`、模拟账本、行情证据网关和通知器。
-3. 组装 `Engine` 与 APScheduler，注册主线采样、新闻观察、龙虎榜采集和预热任务。
+3. 组装 `Engine`、持久维护队列与 APScheduler；新闻观察和技术刷新只入队，不在 API 进程中执行。
 4. 挂载 `/api` 路由，再发现可选 `clients/<id>/ext/` 扩展。
 5. 最后把 `frontend-vue/dist/` 挂载到 `/`；开启对照配置时先把 `frontend/`
    挂载到 `/legacy/`。API、扩展和兼容资源必须先于根静态 catch-all 注册。
@@ -90,6 +96,7 @@ flowchart LR
 - 推荐闭环：建议草案 → 风险闸/人工批准 → append-only 推荐事件 → 到期真实价格回验 → T0/T1/T2/T5 统计。
 - 模拟执行：前端提交即确认 → 服务端重新取风险和行情 → 订单进入 DAY 撮合池 → 后台每 5 秒批量检查真实行情并自动成交；成交价受限价约束，再同步更新费用、成本、现金、A 股 T+1 批次和盈亏。页面关闭不影响撮合，客户端传来的“市场价格”不会被信任。
 - ETF观察：`/api/etf-watch` → 一次批量 `data/stock.py` 行情 + `data/etf.py` 低频 last-good 快照 → 独立 ETF 列表；不进入 A 股观察池，也不计算双周期区间。
+- 重型维护：API/调度器 → `maintenance_queue.py` 持久入队 → 独立 `worker.py` 领取和续租 → 技术刷新按代码游标续跑、新闻旧 JSONL 流式迁移到索引 SQLite；Worker 异常退出不拖死交互请求。
 
 ## 4. 推荐阅读顺序
 
@@ -127,7 +134,7 @@ flowchart LR
 | `frontend-vue/` | Vue 正式工作台、类型定义、构建产物和 UI 自动审计 | 是；改源码后必须重新构建并验收 |
 | `frontend/` | 默认关闭的原生 JS 旧版对照页面 | 仅修兼容缺陷；`vendor/` 谨慎 |
 | `design-system/` | Vue 重构的设计令牌、组件规则和页面覆盖 | 视觉或交互规则变化时同步更新 |
-| `tests/` | 81 个契约/回归测试文件 | 改功能时同步补测 |
+| `tests/` | pytest 契约/回归测试 | 改功能时同步补测 |
 | `scripts/` | 验收、备份、TDX 探测、受限 Hermes 启动脚本 | 运维逻辑，可改但需独立验证 |
 | `docs/` | API、MCP、安全审计说明 | 契约变化时必须同步 |
 | `examples/` | 示例目录占位 | 当前只有 `data/.gitkeep` |
@@ -148,14 +155,14 @@ flowchart LR
 | `requirements.txt` | 生产依赖及数据源/平台依赖说明。 |
 | `requirements-dev.txt` | 复用生产依赖并加入 pytest、pytest-asyncio。 |
 | `pytest.ini` | 测试目录、严格 asyncio 模式和 `cloud` 标记。 |
-| `run.sh` | Bash 启动器：载入 `.env`，优先 `.venv/bin/python`，否则用 `uv`，再启动模块。 |
+| `run.sh` | Bash 双进程启动器：载入 `.env`，启动独立维护 Worker 后以前台 API 为主进程，并在退出时清理 Worker。 |
 | `install.bat` | Windows 部署入口：定位 64 位 Python 3.10+，调用标准库部署助手创建 `.venv`、安装生产依赖并保留已有配置。 |
-| `start.bat` | Windows 主服务入口：默认无窗口后台启动并写 `data/logs`；传 `--foreground` 时前台常驻。通过部署助手安全载入 `.env`，使用部署目录 `.venv` 启动应用。 |
+| `start.bat` | Windows 双进程入口：默认无窗口启动 API 与独立维护 Worker 并分别写日志/PID；传 `--foreground` 时共同前台托管。 |
 | `start-tdx-bridge.bat` | Windows 本地 TQ/TDX 只读桥入口：默认无窗口后台启动并写 `data/logs`；传 `--foreground` 时前台常驻。要求桥接密钥且不把密钥写入命令行。 |
 | `check.bat` | Windows 基础部署检查入口：验证必需文件、首页、核心 API 及已配置的本地桥。 |
 | `upgrade.bat` | Windows 原目录升级入口：校验新版 ZIP 后调用升级助手，保留客户配置、密钥、运行数据和虚拟环境。 |
-| `scripts/windows_deploy.py` | BAT 共用的标准库部署助手；负责环境创建、依赖安装、`.env` 载入、进程启动和 HTTP 验收。 |
-| `scripts/windows_upgrade.py` | Windows 无感升级助手；安全识别并停止本实例、备份状态、完整替换程序/前端、更新依赖、健康检查并在失败时恢复旧程序。 |
+| `scripts/windows_deploy.py` | BAT 共用的标准库部署助手；负责环境创建、依赖安装、`.env` 载入、API/Worker 双进程启动和 HTTP 验收。 |
+| `scripts/windows_upgrade.py` | Windows 无感升级助手；安全识别并停止本实例 API/Worker、备份状态、完整替换、更新依赖、健康检查并在失败时恢复双进程。 |
 | `RELEASE_FILES.sha256` | 交付文件完整性清单，用于发现缺失或篡改。 |
 
 ## 7. 后端 `hermes_trader/`
@@ -167,6 +174,8 @@ flowchart LR
 | `__init__.py` | 包说明和版本常量 `1.5.1`。 |
 | `__main__.py` | `python -m hermes_trader` 的最小入口。 |
 | `main.py` | FastAPI 装配、应用生命周期、中间件、状态对象、扩展发现、静态前端挂载和 CLI。 |
+| `maintenance_queue.py` | SQLite/WAL 持久维护队列；负责幂等入队、单任务领取、租约、心跳、进度、失败回收与 Worker 健康状态。 |
+| `worker.py` | 独立重型任务进程；以低优先级执行技术信号刷新和新闻观察，续租并保存可恢复进度。 |
 | `config.py` | YAML + `${ENV}` 展开 + `data/settings.json` 运行时覆盖；处理部署地域、模型连接、权限和敏感配置脱敏。 |
 | `delivery.py` | append-only 交付回执、内容 ID、渠道规范化、投递就绪度与每日交付闸。 |
 | `delivery_outbox.py` | SQLite 持久 outbox；用确定性 ID 保证投递意图幂等，区分已接受、超时不明和人工复核。 |
@@ -219,6 +228,7 @@ flowchart LR
 | `analysis/screener.py` | 全市场条件/多因子筛选；要求股票池覆盖率至少 80%。 |
 | `analysis/sentiment.py` | 涨跌停、宽度、连板、炸板和昨日溢价合成的透明情绪周期评分。 |
 | `analysis/sentinel.py` | 数据/推送运行哨兵；确定性自检、告警和对已定稿未送达报告的补推。 |
+| `analysis/technical_screener.py` | 全市场日/周/月技术信号缓存；按批提交、游标断点续跑、K 线指纹跳过未变化股票，并只读取物化状态计数。 |
 | `analysis/stock_analysis_contract.py` | 冻结“规则选股 → 受治理诊断 → AI 仅解释”的共享执行契约。 |
 | `analysis/stock_ask_profile.py` | 问股画像严格规范化；合并显式参数、本地持仓与行情参考价，并把非连续交易时段切换为盘后规则。 |
 | `analysis/stock_ask_data.py` | `stock-ask-six-bucket-v2` 五类证据上下文、六桶评分、置信度、A—E 状态机、风险预算、RiskGate 否决映射与确定性 Markdown。 |
@@ -235,7 +245,7 @@ flowchart LR
 
 主要端点族：
 
-- 系统：`/shell-status`、`/status`、`/jobs`、`/agent/*`。
+- 系统：`/shell-status`、`/status`、`/jobs`、`/maintenance/jobs/{job_id}`、`/agent/*`。
 - 数据：`/market/*`、`/market-data/*`、`/evidence/*`、`/stock/*`、`/quote(s)`、`/news/*`。
 - 决策：`/cockpit`、`/pulse`、`/sysrisk`、`/risk/evaluate`、`/diagnose`、`/features/*`、`/timing`、`/quant/*`、`/screen`。
 - 内容：`/chat`、`/reports/*`、`/knowledge/*`、`/archive/*`、`/diy/*`。
@@ -253,7 +263,7 @@ flowchart LR
 | `data/runtime_gateway.py` | 将 TDX 与腾讯快照适配为生产字段策略，统一代码、时点、单位和批次语义。 |
 | `data/evidence_contract.py` | `data-evidence-v1` 来源、时点、完整性和内容哈希契约。 |
 | `data/evidence_store.py` | SQLite 点时证据库；存来源、原始载荷、标准化点和谱系，支持严格 PIT 读取。 |
-| `data/health_monitor.py` | 后台并行、有界刷新 Hermes/TDX 与本地证据统计，维护进程内健康快照；`GET /api/datasources` 只复制快照，不触发探测。 |
+| `data/health_monitor.py` | 后台并行、有界刷新 Hermes/TDX 与本地证据统计；慢同步探测使用专用单线程和 single-flight，超时后不重复堆积；健康快照同时报告 Worker 状态。 |
 | `data/market.py` | 指数、市场宽度、涨跌停、板块、资金、涨幅榜等市场级聚合与回退。 |
 | `data/limitup_tracker.py` | 涨停基准日 T+1/T+2 服务端追踪；交易日推导、五项统计、JSONL 追加冻结与显式历史补数。 |
 | `data/stock.py` | 个股实时盘口、快速报价、分时、日 K、板块和资金的渐进式详情。 |
@@ -274,7 +284,7 @@ flowchart LR
 | `data/gdelt_source.py` | GDELT 官方 DOC API 的低频全球事件元数据，不复制正文。 |
 | `data/news.py` | 财联社、TDX、GDELT、腾讯等消息聚合、去重、时点和多市场新闻。 |
 | `data/news_mapping.py` | 新闻到 A 股公司/行业/概念的确定性映射；股票身份只消费经完整性门禁的 TDX 主名录，不判断利多利空。 |
-| `data/news_observation.py` | 新闻事件与后续盘面观察的客户隔离 append-only 账本。 |
+| `data/news_observation.py` | 新闻事件与后续盘面观察的 append-only SQLite/WAL 账本；索引查重/当前检查点，旧 JSONL 仅由 Worker 流式迁移并保留归档。 |
 | `data/official_disclosure.py` | 巨潮与交易所公司公告双路径、证据状态、PDF 可选哈希和 last-good。 |
 | `data/official_interaction.py` | 深交所互动易管理层回复适配；明确其不是法定公告。 |
 | `data/official_longhu_source.py` | 沪深交易所官方龙虎榜解析、状态、盘后缓存和完整快照。 |
@@ -303,9 +313,9 @@ flowchart LR
 | 文件 | 职责 |
 | --- | --- |
 | `jobs/__init__.py` | 子包标记。 |
-| `jobs/scheduler.py` | 六个核心交易日任务、任务状态、手工运行和客户扩展任务注册。 |
+| `jobs/scheduler.py` | 核心交易日任务、任务状态、手工运行和客户扩展注册；重型技术刷新只持久入队。 |
 | `jobs/mainline_sampler.py` | 交易时段主线时间轴采样。 |
-| `jobs/news_event_observer.py` | 新闻事件后续盘面观察采样。 |
+| `jobs/news_event_observer.py` | 新闻事件后续盘面观察调度；生产路径只持久入队，由独立 Worker 执行。 |
 | `jobs/official_longhu_collector.py` | 盘后有界采集官方龙虎榜并落精确交易日快照。 |
 | `jobs/prewarmer.py` | 交易时段预热热点函数、写/读市场 last-good，减少用户冷请求等待。 |
 
@@ -505,6 +515,7 @@ ETF观察页读取独立 `/api/etf-watch`，将批量 TDX/腾讯行情和显式�
 | `production_acceptance.py` | 只发 GET 的上线验收门禁；检查核心路由、free_only、Agent 权限、交付、时钟、新鲜度等。 |
 | `restricted_hermes_proxy.py` | 启动受限 Hermes 子进程、环境变量白名单、HMAC 进程证明和受认证反向代理。 |
 | `run_restricted_hermes.sh` | 校验客户 profile 未漂移后启动受限代理。 |
+| `send_holdings_risk_test.py` | 通过当前客户推送器发送固定持仓提示演示文案；不接受任意正文，不读取真实持仓或行情。 |
 | `tdx_dataset_probe.py` | 凭据安全的 TDX 数据集探针；只输出计数、日期、覆盖率和一致性，不打印 URL/key/完整行。 |
 | `tq_tdx_bridge.py` | 仅监听本机的 TQ HTTP → TDX API v2.8 只读兼容桥；固定方法白名单并拒绝交易/账户能力。 |
 | `tdx-login-guard/` | Windows 当前用户 TDX 登录守护组件：主程序、配置模板、DPAPI 凭据设置、计划任务安装/卸载脚本，以及供根目录 BAT 调用的统一管理入口。 |
@@ -521,7 +532,7 @@ ETF观察页读取独立 `/api/etf-watch`，将批量 TDX/腾讯行情和显式�
 
 ## 11. 测试目录 `tests/`
 
-测试文件名基本与契约一一对应。以下说明覆盖当前全部 81 个测试文件。
+测试文件名基本与契约一一对应。以下列出主要测试职责。
 
 ### 11.1 决策、报告、推荐与交付
 
@@ -571,6 +582,7 @@ ETF观察页读取独立 `/api/etf-watch`，将批量 TDX/腾讯行情和显式�
 | `test_news_a_share_mapping.py` | 股票/行业/概念映射和盘面观察时点。 |
 | `test_news_freshness_contract.py` | 新闻刷新、聚合和非空 last-good。 |
 | `test_news_observation.py` | 事件观察状态机、交易日和追加幂等。 |
+| `test_technical_screener.py` | 技术信号缓存、未变化跳过、物化计数和游标断点续跑。 |
 | `test_official_disclosure.py` | 巨潮/上交所/深交所公告解析、精度和 PDF。 |
 | `test_official_interaction.py` | 互动易请求形态、问答时点和未回复语义。 |
 | `test_official_longhu_cache_integration.py` | 主力页与官方龙虎榜缓存交叉核对。 |
@@ -595,6 +607,7 @@ ETF观察页读取独立 `/api/etf-watch`，将批量 TDX/腾讯行情和显式�
 | `test_config_security.py` | 设置脱敏、网关 key 复用和客户文件权限。 |
 | `test_data_backup_restore.py` | 备份/恢复完整性、排除项、路径安全和 SQLite。 |
 | `test_gateway_home_delivery.py` | home 平台白名单、媒体路径约束和任意文件拒绝。 |
+| `test_maintenance_worker.py` | 持久任务入队/租约/回收、Worker 单例、进度续跑与 API 只入队边界。 |
 | `test_mcp_server.py` | MCP 工具目录、读写边界、Web 口径复用和错误脱敏。 |
 | `test_model_connections_api.py` | 多模型连接 CRUD、切换和 key 不回传。 |
 | `test_phase2_evidence_api.py` | 应用装配、行情字段 API 和证据查询。 |
@@ -606,6 +619,7 @@ ETF观察页读取独立 `/api/etf-watch`，将批量 TDX/腾讯行情和显式�
 | `test_settings_security.py` | 模型端点 SSRF 防护和飞书官方域名校验。 |
 | `test_simulation.py` | 自动挂单撮合、限价内滑点、DAY 到期、整手、风险、账户资金、费用、T+1、FIFO 盈亏、幂等和紧急停止。 |
 | `test_vue_simulation.py` | Vue 模拟账户、自动撮合展示、持仓盈亏、资产曲线、服务端权威边界、请求清理和定向 UI 审计契约。 |
+| `test_windows_deployment_scripts.py` | Windows API/Worker 双进程启动、PID 所有权与升级恢复路径。 |
 
 ### 11.4 前端、研究功能与业务闭环
 
@@ -647,9 +661,12 @@ data/
 ├─ etf_watch_snapshots.json
 ├─ settings.json
 ├─ simulation.sqlite3
+├─ maintenance_jobs.sqlite3
+├─ technical_screener.sqlite3
 ├─ evidence/market_data.sqlite3
 ├─ delivery_receipts/
-├─ news_events/
+├─ news_events/news_observation.sqlite3
+├─ news_events/{events.v1,observations.v1}.jsonl  # 仅旧版迁移归档，可不存在
 ├─ limitup-tracker/YYYY-MM-DD.jsonl
 └─ 各类 last-good、主线、龙虎榜、任务与缓存文件
 ```
@@ -664,6 +681,8 @@ data/
 | --- | --- |
 | `server.data_dir` | 客户运行数据隔离根。 |
 | `server.public_base_url` | 客户可访问的 Web 根地址；飞书摘要据此附原文按钮，留空时不猜测公网 IP。生产环境应使用 HTTPS。 |
+| `background_worker.enabled` | 启用独立维护 Worker；生产启动器默认同时拉起，关闭后保留既有队列并拒绝新的手工技术刷新。 |
+| `background_worker.poll_seconds` / `lease_seconds` | Worker 拉取频率与任务租约；任务运行时持续续租，异常退出后可回收续跑。 |
 | `ui.frontend` | 正式入口；当前只允许 `vue`。 |
 | `ui.legacy_enabled` | 重启后是否提供 `/legacy/` 旧版对照入口；默认 `false`。 |
 | `data_source.policy` | 当前只允许 `free_only`。 |

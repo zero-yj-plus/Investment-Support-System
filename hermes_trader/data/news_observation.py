@@ -11,9 +11,11 @@ from __future__ import annotations
 from datetime import date, datetime, time
 import hashlib
 import json
+import logging
 import os
 from pathlib import Path
 import re
+import sqlite3
 import threading
 from typing import Any, Iterable
 
@@ -31,6 +33,7 @@ _store: "NewsObservationStore | None" = None
 _CLOSE_CAPTURE_AT = time(15, 5)
 _LIVE_CAPTURE_AT = time(10, 30)
 _MAX_OPEN_EVENTS = 500
+log = logging.getLogger("hermes.data.news_observation")
 
 
 def _json_copy(value: Any) -> Any:
@@ -185,98 +188,397 @@ def _snapshot(
 
 
 class NewsObservationStore:
-    """事件/观察分离的只追加 JSONL 账本。"""
+    """事件/观察分离的只追加 SQLite 账本。
+
+    ``observations`` 永不更新或删除；``observation_current`` 只是按
+    ``event_id + checkpoint`` 维护的派生索引，用于避免每次查询扫描完整历史。
+    旧 JSONL 只作为迁移来源保留，不再进入在线查询热路径。
+    """
 
     def __init__(self, data_dir: str | Path):
         self.root = Path(data_dir) / "news_events"
         self.events_path = self.root / "events.v1.jsonl"
         self.observations_path = self.root / "observations.v1.jsonl"
+        self.db_path = self.root / "news_observation.sqlite3"
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
         try:
             os.chmod(self.root, 0o700)
         except OSError:
             pass
-
-    @staticmethod
-    def _read(path: Path) -> list[dict]:
-        if not path.exists():
-            return []
-        rows: list[dict] = []
-        with path.open("r", encoding="utf-8") as handle:
-            for line in handle:
-                try:
-                    row = json.loads(line)
-                except (TypeError, ValueError):
-                    continue
-                if isinstance(row, dict):
-                    rows.append(row)
-        return rows
-
-    @staticmethod
-    def _append(path: Path, record: dict) -> dict:
-        encoded = (json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
-        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        fd = os.open(path, os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o600)
-        try:
-            view = memoryview(encoded)
-            while view:
-                written = os.write(fd, view)
-                if written <= 0:
-                    raise OSError("新闻事件账本追加失败")
-                view = view[written:]
-            os.fsync(fd)
-        finally:
+        if not self.db_path.exists():
+            fd = os.open(self.db_path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
             os.close(fd)
+        self._init_schema()
+
+    def _connect(self) -> sqlite3.Connection:
+        db = sqlite3.connect(self.db_path, timeout=10)
+        db.row_factory = sqlite3.Row
+        db.execute("PRAGMA busy_timeout=10000")
+        return db
+
+    def _init_schema(self) -> None:
+        with self._connect() as db:
+            db.executescript(
+                """
+                PRAGMA journal_mode=WAL;
+                CREATE TABLE IF NOT EXISTS events(
+                  seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                  event_id TEXT NOT NULL UNIQUE,
+                  record_json TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS observations(
+                  seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                  observation_id TEXT NOT NULL UNIQUE,
+                  event_id TEXT NOT NULL,
+                  checkpoint TEXT NOT NULL,
+                  status TEXT NOT NULL,
+                  reason_code TEXT,
+                  observed_at TEXT,
+                  record_json TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_observation_event_checkpoint
+                  ON observations(event_id,checkpoint,status,seq DESC);
+                CREATE TABLE IF NOT EXISTS observation_current(
+                  event_id TEXT NOT NULL,
+                  checkpoint TEXT NOT NULL,
+                  observation_id TEXT NOT NULL,
+                  status TEXT NOT NULL,
+                  observed_at TEXT,
+                  record_json TEXT NOT NULL,
+                  PRIMARY KEY(event_id,checkpoint)
+                );
+                CREATE TABLE IF NOT EXISTS observation_meta(
+                  key TEXT PRIMARY KEY,
+                  value_json TEXT NOT NULL
+                );
+                """
+            )
+            row = db.execute(
+                "SELECT value_json FROM observation_meta WHERE key='legacy_migration'"
+            ).fetchone()
+            if row is None:
+                has_legacy = self.events_path.is_file() or self.observations_path.is_file()
+                status = "pending" if has_legacy else "not_required"
+                db.execute(
+                    "INSERT INTO observation_meta(key,value_json) VALUES('legacy_migration',?)",
+                    (json.dumps({"status": status}, ensure_ascii=False),),
+                )
         try:
-            os.chmod(path, 0o600)
+            os.chmod(self.db_path, 0o600)
         except OSError:
             pass
-        return record
+
+    @staticmethod
+    def _decode_rows(rows: Iterable[sqlite3.Row]) -> list[dict]:
+        decoded: list[dict] = []
+        for row in rows:
+            try:
+                value = json.loads(str(row["record_json"]))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            if isinstance(value, dict):
+                decoded.append(value)
+        return decoded
+
+    def _migration_status(self) -> dict:
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT value_json FROM observation_meta WHERE key='legacy_migration'"
+            ).fetchone()
+        try:
+            value = json.loads(str(row[0])) if row else {"status": "not_required"}
+        except (TypeError, ValueError, json.JSONDecodeError):
+            value = {"status": "pending"}
+        return value if isinstance(value, dict) else {"status": "pending"}
+
+    def migration_status(self) -> dict:
+        return dict(self._migration_status())
+
+    def _ready(self) -> bool:
+        return self._migration_status().get("status") in {"complete", "not_required"}
+
+    def migrate_legacy(self, *, batch_size: int = 500) -> dict:
+        """在 worker 进程中流式导入旧 JSONL；原文件保留为只读归档。"""
+        current = self._migration_status()
+        if current.get("status") in {"complete", "not_required"}:
+            return current
+        started_at = now_cn().isoformat(timespec="seconds")
+        with self._connect() as db:
+            db.execute(
+                "INSERT INTO observation_meta(key,value_json) VALUES('legacy_migration',?) "
+                "ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json",
+                (json.dumps({"status": "running", "started_at": started_at}, ensure_ascii=False),),
+            )
+
+        event_count = 0
+        observation_count = 0
+        try:
+            for path, kind in (
+                (self.events_path, "event"),
+                (self.observations_path, "observation"),
+            ):
+                if not path.is_file():
+                    continue
+                pending: list[dict] = []
+                with path.open("r", encoding="utf-8") as handle:
+                    for line in handle:
+                        try:
+                            record = json.loads(line)
+                        except (TypeError, ValueError, json.JSONDecodeError):
+                            continue
+                        if not isinstance(record, dict):
+                            continue
+                        pending.append(record)
+                        if len(pending) >= max(10, int(batch_size)):
+                            inserted = self._migrate_batch(kind, pending)
+                            if kind == "event":
+                                event_count += inserted
+                            else:
+                                observation_count += inserted
+                            pending.clear()
+                    if pending:
+                        inserted = self._migrate_batch(kind, pending)
+                        if kind == "event":
+                            event_count += inserted
+                        else:
+                            observation_count += inserted
+
+            result = {
+                "status": "complete",
+                "started_at": started_at,
+                "finished_at": now_cn().isoformat(timespec="seconds"),
+                "events_imported": event_count,
+                "observations_imported": observation_count,
+                "legacy_files_retained": True,
+            }
+            with self._connect() as db:
+                db.execute(
+                    "INSERT INTO observation_meta(key,value_json) VALUES('legacy_migration',?) "
+                    "ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json",
+                    (json.dumps(result, ensure_ascii=False),),
+                )
+            return result
+        except Exception as exc:
+            failed = {
+                "status": "failed",
+                "started_at": started_at,
+                "finished_at": now_cn().isoformat(timespec="seconds"),
+                "error_code": "legacy_news_migration_failed",
+                "error": str(exc)[:300],
+            }
+            with self._connect() as db:
+                db.execute(
+                    "INSERT INTO observation_meta(key,value_json) VALUES('legacy_migration',?) "
+                    "ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json",
+                    (json.dumps(failed, ensure_ascii=False),),
+                )
+            raise
+
+    def _migrate_batch(self, kind: str, records: list[dict]) -> int:
+        inserted = 0
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            for record in records:
+                encoded = json.dumps(record, ensure_ascii=False, separators=(",", ":"))
+                if kind == "event":
+                    event_id = str(record.get("event_id") or "")
+                    if not event_id:
+                        continue
+                    inserted += db.execute(
+                        "INSERT OR IGNORE INTO events(event_id,record_json) VALUES(?,?)",
+                        (event_id, encoded),
+                    ).rowcount
+                    continue
+                observation_id = str(record.get("observation_id") or "")
+                event_id = str(record.get("event_id") or "")
+                checkpoint = str(record.get("checkpoint") or "")
+                if not observation_id or not event_id or not checkpoint:
+                    continue
+                was_inserted = db.execute(
+                    "INSERT OR IGNORE INTO observations("
+                    "observation_id,event_id,checkpoint,status,reason_code,observed_at,record_json"
+                    ") VALUES(?,?,?,?,?,?,?)",
+                    (
+                        observation_id,
+                        event_id,
+                        checkpoint,
+                        str(record.get("status") or ""),
+                        record.get("reason_code"),
+                        record.get("observed_at"),
+                        encoded,
+                    ),
+                ).rowcount
+                inserted += was_inserted
+                if was_inserted:
+                    db.execute(
+                        "INSERT INTO observation_current("
+                        "event_id,checkpoint,observation_id,status,observed_at,record_json"
+                        ") VALUES(?,?,?,?,?,?) ON CONFLICT(event_id,checkpoint) DO UPDATE SET "
+                        "observation_id=excluded.observation_id,status=excluded.status,"
+                        "observed_at=excluded.observed_at,record_json=excluded.record_json",
+                        (
+                            event_id,
+                            checkpoint,
+                            observation_id,
+                            str(record.get("status") or ""),
+                            record.get("observed_at"),
+                            encoded,
+                        ),
+                    )
+            db.commit()
+        return inserted
 
     def events(self) -> list[dict]:
-        with _LOCK:
-            return self._read(self.events_path)
+        if not self._ready():
+            return []
+        with self._connect() as db:
+            rows = db.execute("SELECT record_json FROM events ORDER BY seq").fetchall()
+        return self._decode_rows(rows)
 
     def observations(self) -> list[dict]:
-        with _LOCK:
-            return self._read(self.observations_path)
+        if not self._ready():
+            return []
+        with self._connect() as db:
+            rows = db.execute("SELECT record_json FROM observations ORDER BY seq").fetchall()
+        return self._decode_rows(rows)
+
+    def current_observations(self, event_ids: Iterable[str] | None = None) -> list[dict]:
+        if not self._ready():
+            return []
+        wanted = tuple(dict.fromkeys(str(item) for item in (event_ids or []) if str(item)))
+        with self._connect() as db:
+            if not wanted:
+                rows = db.execute(
+                    "SELECT record_json FROM observation_current ORDER BY event_id,checkpoint"
+                ).fetchall()
+            else:
+                rows = []
+                for offset in range(0, len(wanted), 500):
+                    group = wanted[offset: offset + 500]
+                    placeholders = ",".join("?" for _ in group)
+                    rows.extend(db.execute(
+                        f"SELECT record_json FROM observation_current "
+                        f"WHERE event_id IN ({placeholders}) ORDER BY event_id,checkpoint",
+                        group,
+                    ).fetchall())
+        return self._decode_rows(rows)
 
     def append_event(self, record: dict) -> dict:
+        if not self._ready():
+            raise RuntimeError("news_observation_migration_incomplete")
         if record.get("schema_version") != EVENT_SCHEMA or record.get("event_type") != _EVENT_TYPE:
             raise ValueError("新闻事件 schema 不受支持")
         event_id = str(record.get("event_id") or "")
         if not event_id:
             raise ValueError("新闻事件缺少 event_id")
-        with _LOCK:
-            for existing in self._read(self.events_path):
-                if existing.get("event_id") == event_id:
-                    return existing
-            return self._append(self.events_path, record)
+        encoded = json.dumps(record, ensure_ascii=False, separators=(",", ":"))
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT record_json FROM events WHERE event_id=?", (event_id,)
+            ).fetchone()
+            if row is not None:
+                existing = json.loads(str(row["record_json"]))
+                db.commit()
+                return existing
+            db.execute(
+                "INSERT INTO events(event_id,record_json) VALUES(?,?)", (event_id, encoded)
+            )
+            db.commit()
+        return record
 
     def append_observation(self, record: dict) -> dict:
+        if not self._ready():
+            raise RuntimeError("news_observation_migration_incomplete")
         if record.get("schema_version") != OBSERVATION_SCHEMA or record.get("event_type") != _OBSERVATION_TYPE:
             raise ValueError("新闻观察 schema 不受支持")
         observation_id = str(record.get("observation_id") or "")
         if not observation_id:
             raise ValueError("新闻观察缺少 observation_id")
-        with _LOCK:
-            for existing in self._read(self.observations_path):
-                if existing.get("observation_id") != observation_id:
-                    continue
+        event_id = str(record.get("event_id") or "")
+        checkpoint = str(record.get("checkpoint") or "")
+        if not event_id or not checkpoint:
+            raise ValueError("新闻观察缺少 event_id 或 checkpoint")
+        encoded = json.dumps(record, ensure_ascii=False, separators=(",", ":"))
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT record_json FROM observations WHERE observation_id=?", (observation_id,)
+            ).fetchone()
+            if row is not None:
+                existing = json.loads(str(row["record_json"]))
                 if existing != record:
                     raise ValueError("observation_id 已存在且内容不一致")
+                db.commit()
                 return existing
-            return self._append(self.observations_path, record)
+            db.execute(
+                "INSERT INTO observations("
+                "observation_id,event_id,checkpoint,status,reason_code,observed_at,record_json"
+                ") VALUES(?,?,?,?,?,?,?)",
+                (
+                    observation_id,
+                    event_id,
+                    checkpoint,
+                    str(record.get("status") or ""),
+                    record.get("reason_code"),
+                    record.get("observed_at"),
+                    encoded,
+                ),
+            )
+            db.execute(
+                "INSERT INTO observation_current("
+                "event_id,checkpoint,observation_id,status,observed_at,record_json"
+                ") VALUES(?,?,?,?,?,?) ON CONFLICT(event_id,checkpoint) DO UPDATE SET "
+                "observation_id=excluded.observation_id,status=excluded.status,"
+                "observed_at=excluded.observed_at,record_json=excluded.record_json",
+                (
+                    event_id,
+                    checkpoint,
+                    observation_id,
+                    str(record.get("status") or ""),
+                    record.get("observed_at"),
+                    encoded,
+                ),
+            )
+            db.commit()
+        return record
+
+    def save_summary(self, summary: dict) -> None:
+        with self._connect() as db:
+            db.execute(
+                "INSERT INTO observation_meta(key,value_json) VALUES('summary',?) "
+                "ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json",
+                (json.dumps(summary, ensure_ascii=False, separators=(",", ":")),),
+            )
+
+    def cached_summary(self) -> dict | None:
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT value_json FROM observation_meta WHERE key='summary'"
+            ).fetchone()
+        try:
+            value = json.loads(str(row[0])) if row else None
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
+        return value if isinstance(value, dict) else None
 
 
-def init(data_dir: str | Path) -> NewsObservationStore:
+def init(data_dir: str | Path, *, migrate_legacy: bool = False) -> NewsObservationStore:
     global _store
     _store = NewsObservationStore(data_dir)
+    if migrate_legacy:
+        _store.migrate_legacy()
     return _store
 
 
 def available() -> bool:
     return _store is not None
+
+
+def migrate_legacy() -> dict:
+    if _store is None:
+        return {"status": "failed", "error_code": "observation_store_not_initialized"}
+    return _store.migrate_legacy()
 
 
 def _checkpoint_success(observations: list[dict], event_id: str, checkpoint: str) -> dict | None:
@@ -397,7 +699,7 @@ def capture_mapped_items(
     frame = frame if frame is not None else tdx.pricevol_snapshot()
     names = names if names is not None else (tdx.stock_universe() or {})
     events = list(existing.values())[-_MAX_OPEN_EVENTS:]
-    observations = store.observations()
+    observations = store.current_observations(event.get("event_id") for event in events)
     open_events = [
         event for event in events
         if not _checkpoint_success(observations, str(event.get("event_id") or ""), "target_close")
@@ -445,7 +747,10 @@ def capture_mapped_items(
             observations.append(row)
             captured += row.get("status") == "recorded"
             missing += row.get("status") != "recorded"
-    summary = observation_summary(events=store.events(), observations=store.observations(), now=now, frame=frame)
+    summary = observation_summary(
+        events=store.events(), observations=store.current_observations(), now=now, frame=frame,
+    )
+    store.save_summary(summary)
     return {"ok": True, "created": created, "captured": captured, "missing": missing, "summary": summary}
 
 
@@ -538,12 +843,17 @@ def observation_summary(
     if _store is None:
         return {"enabled": False, "state": "disabled", "tracked": 0}
     events = events if events is not None else _store.events()
-    observations = observations if observations is not None else _store.observations()
+    observations = observations if observations is not None else _store.current_observations()
     current = now or now_cn()
     counts = {"waiting": 0, "observing": 0, "observed": 0, "incomparable": 0}
     contracts = []
+    by_event: dict[str, list[dict]] = {}
+    for row in observations:
+        by_event.setdefault(str(row.get("event_id") or ""), []).append(row)
     for event in events:
-        contract = _contract(event, observations, current, frame)
+        contract = _contract(
+            event, by_event.get(str(event.get("event_id") or ""), []), current, frame,
+        )
         counts[contract["status"]] += 1
         contracts.append(contract)
     last_capture = max((str(row.get("observed_at") or "") for row in observations), default="") or None
@@ -573,13 +883,32 @@ def observation_summary(
     }
 
 
+def cached_observation_summary() -> dict:
+    """健康检查专用：只读已物化摘要，不扫描事件或观察历史。"""
+    if _store is None:
+        return {"enabled": False, "state": "disabled", "tracked": 0}
+    cached = _store.cached_summary()
+    if cached is not None:
+        return cached
+    migration = _store.migration_status()
+    return {
+        "enabled": True,
+        "state": "migration_pending" if migration.get("status") not in {"complete", "not_required"} else "pending",
+        "tracked": 0,
+        "migration": migration,
+    }
+
+
 def enrich_items(items: list[dict], *, now: datetime | None = None, frame: dict | None = None) -> dict:
     """只读：把账本状态附回当前新闻，绝不在 API 访问路径写盘。"""
     if _store is None:
         return {"items": items, "summary": observation_summary()}
     events = _store.events()
-    observations = _store.observations()
     by_id = {str(event.get("event_id") or ""): event for event in events}
+    observations = _store.current_observations(by_id)
+    observations_by_event: dict[str, list[dict]] = {}
+    for row in observations:
+        observations_by_event.setdefault(str(row.get("event_id") or ""), []).append(row)
     current = now or now_cn()
     enriched: list[dict] = []
     for item in items:
@@ -587,7 +916,12 @@ def enrich_items(items: list[dict], *, now: datetime | None = None, frame: dict 
         event = by_id.get(str(item.get("event_id") or ""))
         mapping = copied.get("a_share") if isinstance(copied.get("a_share"), dict) else {}
         if event and mapping.get("state") == "mapped":
-            mapping["observation"] = _contract(event, observations, current, frame)
+            mapping["observation"] = _contract(
+                event,
+                observations_by_event.get(str(event.get("event_id") or ""), []),
+                current,
+                frame,
+            )
         elif mapping.get("state") == "mapped":
             event_time = _parse_event_time(item.get("time"))
             target, reason = _strict_target_trade_day(event_time) if event_time else (None, "event_time_incomplete")
@@ -613,11 +947,25 @@ def history(limit: int = 100) -> dict:
     if _store is None:
         return {"ok": False, "error_code": "observation_store_not_initialized", "items": []}
     events = _store.events()
-    observations = _store.observations()
     current = now_cn()
+    selected_events = list(reversed(events[-max(1, min(int(limit), 500)):]))
+    observations = _store.current_observations(
+        str(event.get("event_id") or "") for event in selected_events
+    )
+    observations_by_event: dict[str, list[dict]] = {}
+    for row in observations:
+        observations_by_event.setdefault(str(row.get("event_id") or ""), []).append(row)
     rows = [
-        {**event, "observation": _contract(event, observations, current, None)}
-        for event in reversed(events[-max(1, min(int(limit), 500)):])
+        {
+            **event,
+            "observation": _contract(
+                event,
+                observations_by_event.get(str(event.get("event_id") or ""), []),
+                current,
+                None,
+            ),
+        }
+        for event in selected_events
     ]
     return {"ok": True, "items": rows, "summary": observation_summary(events=events, observations=observations, now=current)}
 
@@ -722,12 +1070,24 @@ def daily_reconciliation(trade_day: str, limit: int = 100) -> dict:
         row for row in _store.events()
         if str(row.get("target_trade_date") or "") == str(trade_day)
     ]
-    observations = _store.observations()
+    observations = _store.current_observations(
+        str(row.get("event_id") or "") for row in events
+    )
+    observations_by_event: dict[str, list[dict]] = {}
+    for observation in observations:
+        observations_by_event.setdefault(
+            str(observation.get("event_id") or ""), []
+        ).append(observation)
     current = now_cn()
     rows = []
     counts = {"waiting": 0, "observing": 0, "observed": 0, "incomparable": 0}
     for event in sorted(events, key=lambda row: (str(row.get("event_time") or ""), str(row.get("event_id") or ""))):
-        contract = _contract(event, observations, current, None)
+        contract = _contract(
+            event,
+            observations_by_event.get(str(event.get("event_id") or ""), []),
+            current,
+            None,
+        )
         lifecycle = str(contract.get("status") or "incomparable")
         counts[lifecycle if lifecycle in counts else "incomparable"] += 1
         snapshot = contract.get("result") or contract.get("latest")

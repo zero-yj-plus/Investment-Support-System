@@ -184,6 +184,7 @@ def _run_service(
     description: str,
     log_stem: str,
     foreground: bool,
+    pid_file: Path | None = None,
 ) -> int:
     if foreground:
         print(f"正在前台启动 {description}；按 Ctrl+C 停止。")
@@ -208,7 +209,37 @@ def _run_service(
         raise DeploymentError(f"无法后台启动 {description}：{exc}") from exc
     print(f"已在后台启动 {description}，PID {process.pid}。")
     print(f"日志：{log_path}")
+    if pid_file is not None:
+        pid_file.parent.mkdir(parents=True, exist_ok=True)
+        pid_file.write_text(str(process.pid), encoding="ascii")
     return 0
+
+
+def _terminate_started(process: subprocess.Popen | None) -> None:
+    if process is None or process.poll() is not None:
+        return
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/PID", str(process.pid), "/T", "/F"], check=False,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+    else:
+        process.terminate()
+    try:
+        process.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        process.kill()
+
+
+def _run_api_with_worker_foreground(
+    api_command: list[str], worker_command: list[str], environment: dict[str, str],
+) -> int:
+    print("正在前台启动 Hermes Trader；独立重型 Worker 同步启动。按 Ctrl+C 停止。")
+    worker = subprocess.Popen(worker_command, cwd=PROJECT_ROOT, env=environment)
+    try:
+        return subprocess.call(api_command, cwd=PROJECT_ROOT, env=environment)
+    finally:
+        _terminate_started(worker)
 
 
 def start(
@@ -236,12 +267,44 @@ def start(
             raise DeploymentError("端口必须在 1 到 65535 之间。")
         command.extend(["--port", str(port)])
 
+    worker_command = [
+        sys.executable, "-m", "hermes_trader.worker", "--config", str(config_path),
+    ]
+    if foreground:
+        return _run_api_with_worker_foreground(command, worker_command, environment)
+    _run_service(
+        worker_command,
+        environment.copy(),
+        description="Hermes Trader 重型后台 Worker",
+        log_stem="hermes-worker-start",
+        foreground=False,
+        pid_file=RUNTIME_LOG_DIR / "maintenance-worker.pid",
+    )
     return _run_service(
         command,
         environment,
-        description="Hermes Trader",
+        description="Hermes Trader API",
         log_stem="hermes-start",
+        foreground=False,
+    )
+
+
+def start_worker(config: str, foreground: bool = False) -> int:
+    require_runtime()
+    config_path = Path(config)
+    if not config_path.is_absolute():
+        config_path = PROJECT_ROOT / config_path
+    if not config_path.is_file():
+        raise DeploymentError(f"找不到配置文件：{config_path}")
+    environment = os.environ.copy()
+    load_dotenv(PROJECT_ROOT / ".env", environment)
+    return _run_service(
+        [sys.executable, "-m", "hermes_trader.worker", "--config", str(config_path)],
+        environment,
+        description="Hermes Trader 重型后台 Worker",
+        log_stem="hermes-worker-start",
         foreground=foreground,
+        pid_file=None if foreground else RUNTIME_LOG_DIR / "maintenance-worker.pid",
     )
 
 
@@ -392,6 +455,10 @@ def build_parser() -> argparse.ArgumentParser:
     bridge_parser = subparsers.add_parser("start-tdx-bridge")
     bridge_parser.add_argument("--foreground", action="store_true")
 
+    worker_parser = subparsers.add_parser("start-worker")
+    worker_parser.add_argument("--config", default="config.yaml")
+    worker_parser.add_argument("--foreground", action="store_true")
+
     check_parser = subparsers.add_parser("check")
     check_parser.add_argument("--base-url", default="http://127.0.0.1:18869")
     check_parser.add_argument("--skip-bridge", action="store_true")
@@ -410,6 +477,8 @@ def main(argv: list[str] | None = None) -> int:
             return start(args.config, args.host, args.port, args.foreground)
         if args.command == "start-tdx-bridge":
             return start_tdx_bridge(args.foreground)
+        if args.command == "start-worker":
+            return start_worker(args.config, args.foreground)
         if args.command == "check":
             return check(args.base_url, args.skip_bridge, args.timeout)
         raise DeploymentError(f"未知命令：{args.command}")

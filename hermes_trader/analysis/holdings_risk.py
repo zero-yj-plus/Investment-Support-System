@@ -520,6 +520,19 @@ def _notification(state: dict, previous: dict | None) -> tuple[str, str] | None:
     return None
 
 
+def push_test_message() -> str:
+    """固定的持仓提示链路测试文案；不读取真实持仓或行情。"""
+    return (
+        "【持仓仓位管理·链路测试】\n"
+        "测试标的（TEST）\n"
+        "建议将该持仓降低25%，保留75%。\n"
+        "依据：飞书接口与消息格式测试，未读取真实触发条件。\n"
+        "当前价：未读取；算法风险线：未读取。\n"
+        "计划：短线（演示）。\n"
+        "⚠️ 本消息仅用于推送链路测试，不代表任何真实持仓结论，请勿据此调整仓位。"
+    )
+
+
 class HoldingRiskService:
     def __init__(self, config, store, notifier) -> None:
         self.config = config

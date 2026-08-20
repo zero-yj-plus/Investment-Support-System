@@ -63,14 +63,26 @@ def test_runtime_launchers_load_dotenv_without_bridge_key_on_command_line():
 def test_runtime_launchers_default_to_hidden_background_and_offer_foreground():
     start_args = windows_deploy.build_parser().parse_args(["start"])
     bridge_args = windows_deploy.build_parser().parse_args(["start-tdx-bridge"])
+    worker_args = windows_deploy.build_parser().parse_args(["start-worker"])
     assert start_args.foreground is False
     assert bridge_args.foreground is False
+    assert worker_args.foreground is False
     assert windows_deploy.build_parser().parse_args(
         ["start", "--foreground"]
     ).foreground is True
     assert windows_deploy.build_parser().parse_args(
         ["start-tdx-bridge", "--foreground"]
     ).foreground is True
+    assert windows_deploy.build_parser().parse_args(
+        ["start-worker", "--foreground"]
+    ).foreground is True
+
+
+def test_main_launcher_starts_api_and_dedicated_worker():
+    helper = _text("scripts/windows_deploy.py")
+    assert '"-m", "hermes_trader.worker"' in helper
+    assert '"maintenance-worker.pid"' in helper
+    assert "_run_api_with_worker_foreground" in helper
 
 
 def test_background_launcher_detaches_and_writes_log(tmp_path, monkeypatch):
@@ -167,6 +179,8 @@ def test_upgrade_helper_preserves_customer_state_and_fails_closed():
     assert "verify_release" in helper
     assert "create_state_backup" in helper
     assert "stop_owned_listener" in helper
+    assert "stop_owned_pid_file" in helper
+    assert "hermes_trader.worker" in helper
     assert "rollback_release" in helper
     assert "跳过联网安装" in helper
     assert "--verify-only" in helper

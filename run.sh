@@ -20,4 +20,15 @@ else
   exit 1
 fi
 
-exec "${PYTHON[@]}" -m hermes_trader --config "$ROOT/config.yaml"
+"${PYTHON[@]}" -m hermes_trader.worker --config "$ROOT/config.yaml" &
+WUDI_WORKER_PID=$!
+
+cleanup_worker() {
+  if kill -0 "$WUDI_WORKER_PID" 2>/dev/null; then
+    kill "$WUDI_WORKER_PID" 2>/dev/null || true
+    wait "$WUDI_WORKER_PID" 2>/dev/null || true
+  fi
+}
+trap cleanup_worker EXIT INT TERM
+
+"${PYTHON[@]}" -m hermes_trader --config "$ROOT/config.yaml"

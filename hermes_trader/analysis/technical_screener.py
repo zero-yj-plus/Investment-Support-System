@@ -14,6 +14,7 @@ import sqlite3
 import threading
 import time
 import uuid
+from typing import Any, Callable
 
 from ..data import free_source
 from ..data import tdx_local_daily
@@ -30,7 +31,7 @@ _query_cache: dict[str, tuple[float, dict]] = {}
 _query_cache_lock = threading.Lock()
 
 
-def init(data_dir: str | Path) -> None:
+def init(data_dir: str | Path, *, reconcile_interrupted: bool = False) -> None:
     global _db_path
     _db_path = Path(data_dir) / "technical_screener.sqlite3"
     _db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -43,7 +44,7 @@ def init(data_dir: str | Path) -> None:
         CREATE TABLE IF NOT EXISTS stocks(
           code TEXT PRIMARY KEY,name TEXT,board TEXT,industry TEXT,last_date TEXT,last_price REAL,
           change_pct REAL,last_amount REAL,avg_amount20 REAL,bar_count INTEGER,paused INTEGER NOT NULL DEFAULT 0,
-          adjustment TEXT,source TEXT,updated_at TEXT);
+          adjustment TEXT,source TEXT,updated_at TEXT,bars_hash TEXT,algorithm_ver TEXT);
         CREATE TABLE IF NOT EXISTS benchmark_bars(
           benchmark TEXT NOT NULL,date TEXT NOT NULL,close REAL NOT NULL,source TEXT,
           PRIMARY KEY(benchmark,date));
@@ -59,12 +60,23 @@ def init(data_dir: str | Path) -> None:
           created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value_json TEXT NOT NULL);
         """)
+        stock_columns = {
+            str(row[1]) for row in db.execute("PRAGMA table_info(stocks)").fetchall()
+        }
+        if "bars_hash" not in stock_columns:
+            db.execute("ALTER TABLE stocks ADD COLUMN bars_hash TEXT")
+        if "algorithm_ver" not in stock_columns:
+            db.execute("ALTER TABLE stocks ADD COLUMN algorithm_ver TEXT")
         row = db.execute("SELECT value_json FROM meta WHERE key='refresh_state'").fetchone()
         try:
             refresh_state = json.loads(row[0]) if row else {}
         except (TypeError, ValueError, json.JSONDecodeError):
             refresh_state = {}
-        if refresh_state.get("state") == "running" and not _refresh_lock.locked():
+        if (
+            reconcile_interrupted
+            and refresh_state.get("state") == "running"
+            and not _refresh_lock.locked()
+        ):
             refresh_state.update({
                 "state": "interrupted",
                 "finished_at": ts_str(),
@@ -108,14 +120,13 @@ def _meta_set(key: str, value) -> None:
 
 def status(*, include_counts: bool = True) -> dict:
     state = _meta_get("refresh_state", {}) or {}
+    cached_counts = _meta_get("cache_counts", {}) or {}
     with _connect() as db:
         stocks = int(db.execute("SELECT COUNT(*) FROM stocks").fetchone()[0])
-        # bars / signal_matches can contain millions of rows. Their exact COUNT(*)
-        # is governance detail, not a prerequisite for deciding whether the cache
-        # can be queried. Keep the default full contract for existing callers, but
-        # let first-paint and screening paths skip both cold full-table scans.
-        bars = int(db.execute("SELECT COUNT(*) FROM bars").fetchone()[0]) if include_counts else None
-        matches = int(db.execute("SELECT COUNT(*) FROM signal_matches").fetchone()[0]) if include_counts else None
+        # 大表精确数量只允许由独立 worker 在刷新完成时统计并物化；交互请求绝不
+        # 扫描数百万行。旧库尚无物化值时返回 null，不能用猜测或 0 冒充。
+        bars = cached_counts.get("bars") if include_counts else None
+        matches = cached_counts.get("signal_matches") if include_counts else None
         last_date = db.execute("SELECT MAX(last_date) FROM stocks").fetchone()[0]
         benchmark_bars = int(db.execute("SELECT COUNT(*) FROM benchmark_bars WHERE benchmark='000300.SH'").fetchone()[0])
     refresh_state = state.get("state")
@@ -170,7 +181,46 @@ def _board(code: str) -> str:
     return "主板"
 
 
-def _store_stock(code: str, name: str, bars: list[dict], matches: list[dict]) -> None:
+def _bars_fingerprint(bars: list[dict]) -> str:
+    digest = hashlib.sha256()
+    for row in bars:
+        digest.update(_json({
+            "d": row.get("d") or row.get("date"),
+            "o": row.get("o", row.get("open")),
+            "h": row.get("h", row.get("high")),
+            "l": row.get("l", row.get("low")),
+            "c": row.get("c", row.get("close")),
+            "v": row.get("v_shares", row.get("volume")),
+            "a": row.get("amount"),
+            "adjustment": row.get("adjustment"),
+        }).encode("utf-8"))
+    return digest.hexdigest()
+
+
+def _cached_stock_state(code: str, bars_hash: str) -> tuple[bool, bool]:
+    """返回（K线相同，K线及算法均为当前版本）。"""
+    try:
+        with _connect() as db:
+            row = db.execute(
+                "SELECT bars_hash,algorithm_ver FROM stocks WHERE code=?", (code,)
+            ).fetchone()
+    except (RuntimeError, sqlite3.Error):
+        return False, False
+    if row is None:
+        return False, False
+    bars_same = bool(bars_hash and str(row["bars_hash"] or "") == bars_hash)
+    return bars_same, bars_same and str(row["algorithm_ver"] or "") == technical_signals.ALGORITHM_VERSION
+
+
+def _store_stock(
+    code: str,
+    name: str,
+    bars: list[dict],
+    matches: list[dict],
+    *,
+    bars_hash: str,
+    replace_bars: bool = True,
+) -> None:
     frame = technical_signals.normalized_frame(bars)
     if frame.empty:
         return
@@ -180,30 +230,32 @@ def _store_stock(code: str, name: str, bars: list[dict], matches: list[dict]) ->
     adjustment = str((bars[-1] or {}).get("adjustment") or "qfq")
     with _connect() as db:
         db.execute("BEGIN IMMEDIATE")
-        db.execute("DELETE FROM bars WHERE code=?", (code,))
-        db.executemany(
-            "INSERT INTO bars(code,date,open,high,low,close,volume,amount) VALUES(?,?,?,?,?,?,?,?)",
-            [(code, row.date.date().isoformat(), row.open, row.high, row.low, row.close,
-              None if row.volume != row.volume else row.volume, None if row.amount != row.amount else row.amount)
-             for row in frame.itertuples(index=False)],
-        )
+        if replace_bars:
+            db.execute("DELETE FROM bars WHERE code=?", (code,))
+            db.executemany(
+                "INSERT INTO bars(code,date,open,high,low,close,volume,amount) VALUES(?,?,?,?,?,?,?,?)",
+                [(code, row.date.date().isoformat(), row.open, row.high, row.low, row.close,
+                  None if row.volume != row.volume else row.volume, None if row.amount != row.amount else row.amount)
+                 for row in frame.itertuples(index=False)],
+            )
         db.execute("DELETE FROM signal_matches WHERE code=? AND signal_kind='state' AND algorithm_ver=?", (code, technical_signals.ALGORITHM_VERSION))
         db.executemany(
             "INSERT OR IGNORE INTO signal_matches(code,timeframe,signal_code,signal_name,signal_kind,direction,event_date,params_json,metrics_json,algorithm_ver,is_confirmed) VALUES(?,?,?,?,?,?,?,?,?,?,1)",
             [(code, row["timeframe"], row["signal_code"], row["signal_name"], row["signal_kind"], row["direction"], row["date"], _json(row["params"]), _json(row["metrics"]), row["algorithm_ver"]) for row in matches],
         )
-        db.execute("""INSERT INTO stocks(code,name,board,industry,last_date,last_price,change_pct,last_amount,avg_amount20,bar_count,paused,adjustment,source,updated_at)
-          VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(code) DO UPDATE SET name=excluded.name,board=excluded.board,last_date=excluded.last_date,last_price=excluded.last_price,change_pct=excluded.change_pct,last_amount=excluded.last_amount,avg_amount20=excluded.avg_amount20,bar_count=excluded.bar_count,paused=excluded.paused,adjustment=excluded.adjustment,source=excluded.source,updated_at=excluded.updated_at""",
+        db.execute("""INSERT INTO stocks(code,name,board,industry,last_date,last_price,change_pct,last_amount,avg_amount20,bar_count,paused,adjustment,source,updated_at,bars_hash,algorithm_ver)
+          VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(code) DO UPDATE SET name=excluded.name,board=excluded.board,last_date=excluded.last_date,last_price=excluded.last_price,change_pct=excluded.change_pct,last_amount=excluded.last_amount,avg_amount20=excluded.avg_amount20,bar_count=excluded.bar_count,paused=excluded.paused,adjustment=excluded.adjustment,source=excluded.source,updated_at=excluded.updated_at,bars_hash=excluded.bars_hash,algorithm_ver=excluded.algorithm_ver""",
           (code, name or None, _board(code), None, last.date.date().isoformat(), float(last.close), change,
            None if last.amount != last.amount else float(last.amount),
            float(frame.amount.tail(20).mean()) if frame.amount.tail(20).notna().any() else None,
-           len(frame), int((last.volume or 0) <= 0), adjustment, str((bars[-1] or {}).get("source") or "腾讯财经·前复权日K"), ts_str()))
+           len(frame), int((last.volume or 0) <= 0), adjustment, str((bars[-1] or {}).get("source") or "腾讯财经·前复权日K"), ts_str(),
+           bars_hash, technical_signals.ALGORITHM_VERSION))
         db.commit()
 
 
 def _fetch_compute(
     item: tuple[str, str], bars: list[dict] | None = None,
-) -> tuple[str, str, list[dict], list[dict], str | None, str]:
+) -> tuple[str, str, list[dict], list[dict], str | None, str, str, bool, bool]:
     code, name = item
     try:
         source = "tdx_day"
@@ -214,15 +266,19 @@ def _fetch_compute(
                 source = "tencent_fallback"
         bars = bars or []
         if len(bars) < 20:
-            return code, name, bars, [], f"有效日K不足20根（{len(bars)}）", source
+            return code, name, bars, [], f"有效日K不足20根（{len(bars)}）", source, "", False, False
+        bars_hash = _bars_fingerprint(bars)
+        bars_same, fully_current = _cached_stock_state(code, bars_hash)
+        if fully_current:
+            return code, name, bars, [], None, source, bars_hash, bars_same, True
         daily = technical_signals.normalized_frame(bars)
         matches = []
         for tf in ("D", "W", "M"):
             frame = technical_signals.resample_frame(daily, tf, include_partial=False)
             matches.extend(technical_signals.default_signal_matches(frame, tf, history_days=HISTORY_DAYS))
-        return code, name, bars, matches, None, source
+        return code, name, bars, matches, None, source, bars_hash, bars_same, False
     except Exception as exc:  # noqa: BLE001 - 单股失败必须降级且继续
-        return code, name, [], [], str(exc)[:160], source
+        return code, name, [], [], str(exc)[:160], source, "", False, False
 
 
 def _refresh_benchmark() -> int:
@@ -240,48 +296,124 @@ def _refresh_benchmark() -> int:
     return len(clean)
 
 
-def refresh_all(*, max_symbols: int | None = None, workers: int = 4) -> dict:
+def refresh_all(
+    *,
+    max_symbols: int | None = None,
+    workers: int = 4,
+    resume: dict[str, Any] | None = None,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
+) -> dict:
     if not _refresh_lock.acquire(blocking=False):
         return {"ok": False, "state": "running", "error_code": "refresh_already_running"}
-    started = time.monotonic(); started_at = ts_str()
+    started = time.monotonic()
+    resume = dict(resume or {})
+    started_at = str(resume.get("started_at") or ts_str())
     try:
-        _meta_set("refresh_state", {"state": "running", "started_at": started_at, "processed": 0, "succeeded": 0, "failed": 0})
-        benchmark_bars=_refresh_benchmark()
+        processed = max(0, int(resume.get("processed") or 0))
+        succeeded = max(0, int(resume.get("succeeded") or 0))
+        failed = max(0, int(resume.get("failed") or 0))
+        skipped = max(0, int(resume.get("skipped") or 0))
+        cursor = str(resume.get("cursor") or "")
+        source_counts = dict(resume.get("source_counts") or {"tdx_day": 0, "tencent_fallback": 0})
+        previous_stages = resume.get("stage_seconds") if isinstance(resume.get("stage_seconds"), dict) else {}
+        stage_seconds = {
+            key: float(previous_stages.get(key) or 0.0)
+            for key in ("benchmark", "universe", "local_bars", "compute_write", "final_counts")
+        }
+        _meta_set("refresh_state", {
+            "state": "running", "started_at": started_at, "processed": processed,
+            "succeeded": succeeded, "failed": failed, "skipped": skipped,
+            "cursor": cursor or None, "resumed": bool(cursor), "source_counts": source_counts,
+            "stage_seconds": stage_seconds,
+        })
+        stage_started = time.monotonic()
+        benchmark_bars = _refresh_benchmark()
+        stage_seconds["benchmark"] += time.monotonic() - stage_started
+        stage_started = time.monotonic()
         universe = free_source.stock_universe() or {}
         items = sorted((str(code).zfill(6), str(name or "")) for code, name in universe.items())
+        stage_seconds["universe"] += time.monotonic() - stage_started
         if max_symbols is not None:
             items = items[:max(1, int(max_symbols))]
-        succeeded = 0; failed = 0; processed = 0; samples = []
-        source_counts = {"tdx_day": 0, "tencent_fallback": 0}
+        expected = len(items)
+        if cursor:
+            items = [item for item in items if item[0] > cursor]
+        samples = []
         worker_count = max(1, min(int(workers), 12))
         max_pending = worker_count * 2
         with ThreadPoolExecutor(max_workers=worker_count) as executor:
             for offset in range(0, len(items), max_pending):
                 batch = items[offset : offset + max_pending]
+                stage_started = time.monotonic()
                 try:
                     local_bars = tdx_local_daily.daily_bars_batch(
                         [code for code, _name in batch], 520,
                     )
                 except Exception:  # noqa: BLE001 - 本地日线失败时逐股走无缓存降级
                     local_bars = {}
+                stage_seconds["local_bars"] += time.monotonic() - stage_started
+                stage_started = time.monotonic()
                 futures = {
                     executor.submit(_fetch_compute, item, local_bars.get(item[0])): item[0]
                     for item in batch
                 }
                 for future in as_completed(futures):
-                    code, name, bars, matches, error, source = future.result()
+                    code, name, bars, matches, error, source, bars_hash, bars_same, unchanged = future.result()
                     source_counts[source] = source_counts.get(source, 0) + 1
                     if bars:
-                        _store_stock(code, name, bars, matches); succeeded += 1
+                        if unchanged:
+                            skipped += 1
+                        else:
+                            _store_stock(
+                                code, name, bars, matches, bars_hash=bars_hash,
+                                replace_bars=not bars_same,
+                            )
+                        succeeded += 1
                     else:
                         failed += 1
                     processed += 1
                     if error and len(samples) < 20: samples.append({"code": code, "reason": error})
-                    if processed == 1 or processed % 20 == 0 or processed == len(items):
-                        _meta_set("refresh_state", {"state": "running", "started_at": started_at, "processed": processed, "total": len(items), "succeeded": succeeded, "failed": failed, "source_counts": source_counts})
-        expected = len(items); ratio = succeeded / expected if expected else 0
+                stage_seconds["compute_write"] += time.monotonic() - stage_started
+                cursor = batch[-1][0]
+                progress = {
+                    "state": "running", "started_at": started_at, "processed": processed,
+                    "total": expected, "succeeded": succeeded, "failed": failed,
+                    "skipped": skipped, "cursor": cursor, "source_counts": source_counts,
+                    "stage_seconds": {
+                        key: round(value, 2) for key, value in stage_seconds.items()
+                    },
+                }
+                _meta_set("refresh_state", progress)
+                if progress_callback is not None:
+                    try:
+                        progress_callback(dict(progress))
+                    except Exception:
+                        # 队列心跳暂时失败不应破坏已提交的技术缓存；租约协程会继续续期。
+                        pass
+        ratio = succeeded / expected if expected else 0
         state = "ready" if ratio >= .8 else ("partial" if succeeded else "missing")
-        result = {"ok": state == "ready", "state": state, "started_at": started_at, "finished_at": ts_str(), "processed": expected, "succeeded": succeeded, "failed": failed, "coverage_ratio": round(ratio, 4), "benchmark":"000300.SH","benchmark_bars":benchmark_bars,"source_counts":source_counts,"max_pending":max_pending,"failure_samples": samples, "duration_seconds": round(time.monotonic()-started, 2)}
+        stage_started = time.monotonic()
+        with _connect() as db:
+            cache_counts = {
+                "bars": int(db.execute("SELECT COUNT(*) FROM bars").fetchone()[0]),
+                "signal_matches": int(db.execute("SELECT COUNT(*) FROM signal_matches").fetchone()[0]),
+                "counted_at": ts_str(),
+            }
+        stage_seconds["final_counts"] += time.monotonic() - stage_started
+        _meta_set("cache_counts", cache_counts)
+        result = {
+            "ok": state == "ready", "state": state, "started_at": started_at,
+            "finished_at": ts_str(), "processed": processed, "total": expected,
+            "succeeded": succeeded, "failed": failed, "skipped": skipped,
+            "cursor": cursor or None, "coverage_ratio": round(ratio, 4),
+            "benchmark": "000300.SH", "benchmark_bars": benchmark_bars,
+            "source_counts": source_counts, "cache_counts": cache_counts,
+            "stage_seconds": {
+                key: round(value, 2) for key, value in stage_seconds.items()
+            },
+            "max_pending": max_pending, "failure_samples": samples,
+            "duration_seconds": round(time.monotonic()-started, 2),
+        }
         _meta_set("refresh_state", result)
         with _query_cache_lock: _query_cache.clear()
         return result

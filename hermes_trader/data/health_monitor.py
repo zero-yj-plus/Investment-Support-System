@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 from copy import deepcopy
 import logging
 import os
@@ -33,14 +34,25 @@ def _checked_at() -> str:
 class DataHealthMonitor:
     """维护只读健康快照；``snapshot`` 本身不执行网络或磁盘探测。"""
 
-    def __init__(self, config, hermes, store=None, market_gateway=None):
+    def __init__(
+        self, config, hermes, store=None, market_gateway=None, maintenance_queue=None,
+    ):
         self.config = config
         self.hermes = hermes
         self.store = store
         self.market_gateway = market_gateway
         self.evidence_store = getattr(market_gateway, "store", None)
+        self.maintenance_queue = maintenance_queue
         self._snapshot_lock = threading.Lock()
         self._refresh_lock = asyncio.Lock()
+        self._tdx_executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="health-tdx",
+        )
+        self._local_executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="health-local",
+        )
+        self._tdx_future: asyncio.Future | None = None
+        self._local_future: asyncio.Future | None = None
         self._snapshot = self._build_report(
             self._initial_hermes_health(),
             self._initial_tdx_health(),
@@ -59,6 +71,39 @@ class DataHealthMonitor:
         """返回隔离副本；调用方不能改写后台持有的快照。"""
         with self._snapshot_lock:
             return deepcopy(self._snapshot)
+
+    async def _singleflight_sync(
+        self,
+        future_attr: str,
+        executor: concurrent.futures.ThreadPoolExecutor,
+        func,
+        *,
+        timeout: float,
+    ):
+        """同步探测超时后保留真实 future；下一轮不得重复提交。"""
+        future = getattr(self, future_attr)
+        if future is not None:
+            if not future.done():
+                raise asyncio.TimeoutError
+            setattr(self, future_attr, None)
+            return future.result()
+        loop = asyncio.get_running_loop()
+        future = loop.run_in_executor(executor, func)
+        setattr(self, future_attr, future)
+        try:
+            result = await asyncio.wait_for(asyncio.shield(future), timeout=timeout)
+            setattr(self, future_attr, None)
+            return result
+        except asyncio.TimeoutError:
+            # shield 保证底层 future 不被伪取消；完成前保持引用并拒绝下一轮重入。
+            raise
+        except Exception:
+            setattr(self, future_attr, None)
+            raise
+
+    def close(self) -> None:
+        self._tdx_executor.shutdown(wait=False, cancel_futures=True)
+        self._local_executor.shutdown(wait=False, cancel_futures=True)
 
     def _initial_hermes_health(self) -> dict[str, Any]:
         configured = bool(getattr(self.config, "model_connection_custom", False))
@@ -138,6 +183,8 @@ class DataHealthMonitor:
         )
         report["universe"] = canonical_universe
         report["health_refresh"] = refresh
+        if self.maintenance_queue is not None:
+            report["background_worker"] = self.maintenance_queue.worker_status()
 
         if enrichment.get("field_contract") is not None:
             report["field_contract"] = enrichment["field_contract"]
@@ -199,8 +246,10 @@ class DataHealthMonitor:
         if not health["configured"]:
             return health
         try:
-            result = await asyncio.wait_for(
-                asyncio.to_thread(tdx_api.service_health),
+            result = await self._singleflight_sync(
+                "_tdx_future",
+                self._tdx_executor,
+                tdx_api.service_health,
                 timeout=_TDX_PROBE_TIMEOUT_SECONDS,
             )
             if isinstance(result, dict):
@@ -235,7 +284,9 @@ class DataHealthMonitor:
             enrichment["evidence_registry"] = self.evidence_store.list_sources()
             enrichment["evidence_stats"] = self.evidence_store.stats()
 
-        summary = news_observation.observation_summary()
+        # 只读新闻 worker 在任务完成时物化的小型摘要。严禁在 60 秒健康循环里
+        # 扫描完整事件/观察历史；外层 wait_for 无法终止已进入线程的同步扫描。
+        summary = news_observation.cached_observation_summary()
         job_states = self.store.get_job_states() if self.store is not None else {}
         news_job = (job_states or {}).get("news_event_observation", {})
         enrichment["news_observation"] = {
@@ -256,8 +307,10 @@ class DataHealthMonitor:
             hermes_task = asyncio.create_task(self._probe_hermes())
             tdx_task = asyncio.create_task(self._probe_tdx())
             try:
-                enrichment = await asyncio.wait_for(
-                    asyncio.to_thread(self._read_local_enrichment),
+                enrichment = await self._singleflight_sync(
+                    "_local_future",
+                    self._local_executor,
+                    self._read_local_enrichment,
                     timeout=_LOCAL_ENRICHMENT_TIMEOUT_SECONDS,
                 )
                 local_error = None

@@ -5,11 +5,13 @@ import HoldingsRiskCards from './HoldingsRiskCards.vue'
 import HoldingsTable from './HoldingsTable.vue'
 import { useHoldings } from '../composables/useHoldings'
 import type { NewHoldingInput } from '../types/holdings'
-import { formatMoney, pnlTone } from '../utils/holdingsFormat'
+import { formatMoney, formatPercent, pnlTone } from '../utils/holdingsFormat'
 
 const emit = defineEmits<{ refreshState: [refreshing: boolean] }>()
 const showEditor = ref(false)
+const holdingDialog = ref<HTMLDialogElement | null>(null)
 const replanClientKey = ref('')
+let editorOpener: HTMLElement | null = null
 const {
   holdings,
   views,
@@ -59,10 +61,33 @@ const quoteStamp = computed(() => quoteAsOf.value || '—')
 const sourceLabel = computed(() => quoteSources.value.length ? quoteSources.value.join(' / ') : '—')
 
 watch(pageRefreshing, (value) => emit('refreshState', value), { immediate: true })
+watch(showEditor, async (open) => {
+  if (open) {
+    await nextTick()
+    if (holdingDialog.value && !holdingDialog.value.open) holdingDialog.value.showModal()
+    await nextTick()
+    holdingDialog.value?.querySelector<HTMLElement>('input:not([disabled]):not([readonly]), select:not([disabled]), button:not([disabled])')?.focus()
+    return
+  }
+  if (holdingDialog.value?.open) holdingDialog.value.close()
+  await nextTick()
+  editorOpener?.focus()
+  editorOpener = null
+})
 
 function openEditor() {
+  editorOpener = document.activeElement instanceof HTMLElement ? document.activeElement : null
+  replanClientKey.value = ''
   showEditor.value = true
-  void nextTick(() => document.querySelector<HTMLElement>('#holding-editor-title')?.scrollIntoView({ block: 'start' }))
+}
+
+function requestEditorClose() {
+  if (adding.value || saving.value || actionRunning.value) return
+  showEditor.value = false
+}
+
+function handleEditorClosed() {
+  if (showEditor.value) showEditor.value = false
 }
 
 async function handleAdd(input: NewHoldingInput) {
@@ -90,6 +115,7 @@ async function handleAdd(input: NewHoldingInput) {
 }
 
 function openReplan(clientKey: string) {
+  showEditor.value = false
   replanClientKey.value = clientKey
   void nextTick(() => document.querySelector<HTMLElement>('#holding-editor-title')?.scrollIntoView({ block: 'start' }))
 }
@@ -110,7 +136,10 @@ async function handleRemove(clientKey: string) {
   await removeHolding(clientKey)
 }
 
-onBeforeUnmount(() => emit('refreshState', false))
+onBeforeUnmount(() => {
+  if (holdingDialog.value?.open) holdingDialog.value.close()
+  emit('refreshState', false)
+})
 defineExpose({ refresh })
 </script>
 
@@ -168,19 +197,18 @@ defineExpose({ refresh })
           <button type="button" class="secondary-button" :disabled="riskRefreshing" @click="refreshRiskStates()">重试状态</button>
         </div>
 
-        <HoldingEditor v-if="showEditor" :adding="adding || saving || actionRunning" :server-error="addError || saveError" @submit="handleAdd" @cancel="showEditor = false" />
         <HoldingEditor v-if="replanHolding" mode="replan" :initial="replanHolding" :adding="actionRunning" :server-error="saveError" @submit="handleReplan" @cancel="replanClientKey = ''" />
 
         <section class="panel holdings-boundary" aria-labelledby="holdings-boundary-title">
           <div>
             <p class="eyebrow">自动汇总口径</p>
             <h2 id="holdings-boundary-title">持仓成本与市值</h2>
-            <p>投入成本仍按成本价 × 股数计算，市值按真实现价 × 股数计算；仓位管理只输出累计降低比例，不换算具体股数，也不连接券商下单。</p>
           </div>
           <dl>
             <div><dt>投入成本</dt><dd class="mono">{{ formatMoney(aggregate.costAmount) }}</dd></div>
             <div><dt>持仓总市值</dt><dd class="mono">{{ formatMoney(aggregate.marketValue) }}</dd></div>
             <div><dt>浮动盈亏</dt><dd class="mono" :class="`is-${pnlTone(aggregate.pnl)}`">{{ formatMoney(aggregate.pnl) }}</dd></div>
+            <div><dt>浮动盈亏比例</dt><dd class="mono" :class="`is-${pnlTone(aggregate.pnlPct)}`">{{ formatPercent(aggregate.pnlPct, true) }}</dd></div>
           </dl>
         </section>
 
@@ -222,11 +250,35 @@ defineExpose({ refresh })
       <div><dt>报价来源</dt><dd>{{ sourceLabel }}<span v-if="!quoteSources.length" class="sr-only">来源缺失</span></dd></div>
       <div><dt>数据状态</dt><dd>{{ dataStatus }}</dd></div>
     </dl>
+
+    <Teleport to="body">
+      <dialog
+        ref="holdingDialog"
+        class="holdings-editor-dialog"
+        aria-modal="true"
+        aria-labelledby="holding-editor-title"
+        :aria-busy="adding || saving || actionRunning"
+        @cancel.prevent="requestEditorClose"
+        @close="handleEditorClosed"
+      >
+        <HoldingEditor
+          v-if="showEditor"
+          :adding="adding || saving || actionRunning"
+          :server-error="addError || saveError"
+          @submit="handleAdd"
+          @cancel="requestEditorClose"
+        />
+      </dialog>
+    </Teleport>
   </section>
 </template>
 
 <style scoped>
 .holdings-page { display: grid; min-width: 0; gap: 12px; }
+.holdings-editor-dialog { width: min(1180px, calc(100vw - 32px)); max-height: min(820px, calc(100dvh - 32px)); padding: 0; overflow: hidden; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface); color: var(--text); }
+.holdings-editor-dialog::backdrop { background: rgb(5 11 20 / 60%); }
+.holdings-editor-dialog :deep(.holding-editor) { display: grid; max-height: min(820px, calc(100dvh - 32px)); grid-template-rows: auto minmax(0, 1fr); border: 0; border-radius: 0; }
+.holdings-editor-dialog :deep(.holding-editor form) { min-height: 0; overflow-y: auto; }
 .holdings-intro { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; padding: 4px 2px 2px; }
 .holdings-intro h1 { margin: 0; font-size: clamp(24px, 2.2vw, 30px); line-height: 1.25; }
 .holdings-intro > div > p:last-child { max-width: 800px; margin: 7px 0 0; color: var(--text-2); }
@@ -255,7 +307,7 @@ defineExpose({ refresh })
 .holdings-boundary { display: grid; grid-template-columns: minmax(260px, 1fr) minmax(0, 1.6fr); align-items: center; gap: 16px; padding: 14px; }
 .holdings-boundary h2 { margin: 0; font-size: 18px; }
 .holdings-boundary > div > p:last-child { margin: 5px 0 0; color: var(--text-2); font-size: 13px; }
-.holdings-boundary dl { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; margin: 0; }
+.holdings-boundary dl { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px; margin: 0; }
 .holdings-boundary dl div { min-width: 0; padding: 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); }
 .holdings-boundary dt { color: var(--text-3); font-size: 12px; }
 .holdings-boundary dd { margin: 3px 0 0; font-size: 15px; font-weight: 720; overflow-wrap: anywhere; }
@@ -282,7 +334,12 @@ defineExpose({ refresh })
   .holdings-fatal, .holdings-empty { min-height: 280px; padding: 18px 14px; }
   .holdings-empty .secondary-button { width: 100%; }
 }
+@media (max-width: 520px) {
+  .holdings-editor-dialog { width: calc(100vw - 16px); max-height: calc(100dvh - 16px); }
+  .holdings-editor-dialog :deep(.holding-editor) { max-height: calc(100dvh - 16px); }
+}
 @media (prefers-reduced-motion: reduce) {
   .holdings-skeleton::after { animation: none; }
+  .holdings-editor-dialog, .holdings-editor-dialog * { scroll-behavior: auto !important; }
 }
 </style>
