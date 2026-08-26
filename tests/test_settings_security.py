@@ -1,13 +1,33 @@
 from __future__ import annotations
 
+import json
+from types import SimpleNamespace
+
 import pytest
+from starlette.requests import Request
 
 from hermes_trader.api.routes import (
     _model_endpoint_resolved_address_safe,
     _model_endpoint_network_safe,
     _safe_feishu_webhook,
     _safe_hermes_base_url,
+    put_settings,
 )
+
+
+def _settings_request(body: dict, state: object) -> Request:
+    encoded = json.dumps(body).encode("utf-8")
+
+    async def receive() -> dict:
+        return {"type": "http.request", "body": encoded, "more_body": False}
+
+    return Request({
+        "type": "http",
+        "method": "PUT",
+        "path": "/api/settings",
+        "headers": [(b"content-type", b"application/json")],
+        "app": SimpleNamespace(state=state),
+    }, receive)
 
 
 def test_supported_hermes_endpoints_are_allowed() -> None:
@@ -49,6 +69,30 @@ def test_only_official_feishu_webhooks_are_allowed() -> None:
         "https://open.feishu.cn/open-apis/bot/v2/hook/token/extra",
     ]
     assert all(not _safe_feishu_webhook(url) for url in rejected)
+
+
+@pytest.mark.asyncio
+async def test_scheduled_push_settings_accept_only_five_boolean_switches() -> None:
+    class _Config:
+        saved: list[dict] = []
+
+        def save_overrides(self, patch: dict) -> None:
+            self.saved.append(patch)
+
+    config = _Config()
+    state = SimpleNamespace(config=config, scheduler=None)
+    accepted = await put_settings(_settings_request({
+        "scheduled_push": {"tail": False},
+    }, state))
+
+    assert accepted == {"ok": True}
+    assert config.saved == [{"scheduled_push": {"tail": False}}]
+
+    for invalid in ({"midday": False}, {"tail": "false"}, {}):
+        response = await put_settings(_settings_request({
+            "scheduled_push": invalid,
+        }, state))
+        assert response.status_code == 400
 
 
 @pytest.mark.asyncio

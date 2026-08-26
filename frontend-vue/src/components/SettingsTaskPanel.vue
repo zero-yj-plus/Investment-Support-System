@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, reactive, watch } from 'vue'
-import type { JobsResponse, ScheduleSettings, SettingsView, StatusResponse, SystemJob } from '../types/settings'
+import { computed, reactive, ref, watch } from 'vue'
+import type { JobsResponse, ScheduledPushKey, ScheduleSettings, SettingsView, StatusResponse, SystemJob } from '../types/settings'
 import { formatDuration, jobId, jobLabel, jobStatus, textValue } from '../utils/settingsFormat'
 
 const props = defineProps<{
@@ -14,17 +14,35 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{
   save: [payload: Record<string, unknown>]
+  saveScheduledPush: [key: ScheduledPushKey, enabled: boolean, complete: (saved: boolean) => void]
   runJob: [jobId: string]
   retry: []
 }>()
 
-const scheduleLabels: Array<[keyof ScheduleSettings, string]> = [
-  ['morning', '早盘内参'], ['midday', '尾盘草案'], ['tail', '尾盘定稿'],
-  ['close', '收盘复盘'], ['evening', '次日策略'], ['archive', '每日存档'],
+type ScheduleRow = { key: keyof ScheduleSettings, label: string, pushKey?: ScheduledPushKey }
+
+const scheduleRows: ScheduleRow[] = [
+  { key: 'morning', label: '早盘内参', pushKey: 'morning' },
+  { key: 'midday', label: '尾盘草案' },
+  { key: 'tail', label: '尾盘定稿', pushKey: 'tail' },
+  { key: 'close', label: '收盘复盘', pushKey: 'close' },
+  { key: 'evening', label: '次日策略', pushKey: 'evening' },
+  { key: 'archive', label: '每日存档', pushKey: 'archive' },
 ]
 const schedule = reactive<Record<string, string>>({})
 watch(() => props.settings?.schedule, (value) => {
-  scheduleLabels.forEach(([key]) => { schedule[key] = typeof value?.[key] === 'string' ? value[key] || '' : '' })
+  scheduleRows.forEach(({ key }) => { schedule[key] = typeof value?.[key] === 'string' ? value[key] || '' : '' })
+}, { immediate: true, deep: true })
+
+const scheduledPushKeys: ScheduledPushKey[] = ['morning', 'tail', 'close', 'evening', 'archive']
+const scheduledPush = reactive<Record<ScheduledPushKey, boolean>>({
+  morning: true, tail: true, close: true, evening: true, archive: true,
+})
+const savingPushKey = ref<ScheduledPushKey | null>(null)
+watch(() => props.settings?.scheduled_push, (value) => {
+  scheduledPushKeys.forEach((key) => {
+    scheduledPush[key] = typeof value?.[key] === 'boolean' ? value[key] : true
+  })
 }, { immediate: true, deep: true })
 
 const rows = computed(() => Array.isArray(props.jobs?.jobs) ? props.jobs.jobs : null)
@@ -39,8 +57,21 @@ function outputs(job: SystemJob) {
 
 function saveSchedule() {
   const payload: Record<string, string> = {}
-  scheduleLabels.forEach(([key]) => { if (schedule[key]) payload[key] = schedule[key] })
+  scheduleRows.forEach(({ key }) => { if (schedule[key]) payload[key] = schedule[key] })
   emit('save', { schedule: payload })
+}
+
+function saveScheduledPush(key: ScheduledPushKey, event: Event) {
+  const control = event.currentTarget
+  if (!(control instanceof HTMLInputElement)) return
+  const previous = scheduledPush[key]
+  const next = control.checked
+  scheduledPush[key] = next
+  savingPushKey.value = key
+  emit('saveScheduledPush', key, next, (saved) => {
+    if (!saved) scheduledPush[key] = previous
+    if (savingPushKey.value === key) savingPushKey.value = null
+  })
 }
 </script>
 
@@ -57,13 +88,31 @@ function saveSchedule() {
         <div v-if="!settings && loading" class="settings-local-state" role="status">正在读取任务时点…</div>
         <div v-else-if="!settings" class="settings-local-state is-error" role="alert">设置未加载，保存已锁定。</div>
         <div v-else class="settings-schedule-grid">
-          <label v-for="([key, label]) in scheduleLabels" :key="key" :for="`settings-${key}`">
-            <span>{{ label }}</span>
-            <input :id="`settings-${key}`" v-model="schedule[key]" type="time" :disabled="!writable || busy" />
-            <small v-if="!schedule[key]">未配置</small>
-          </label>
+          <div v-for="row in scheduleRows" :key="row.key" class="settings-schedule-row">
+            <label class="settings-time-field" :for="`settings-${row.key}`">
+              <span>{{ row.label }}</span>
+              <input :id="`settings-${row.key}`" v-model="schedule[row.key]" type="time" :disabled="!writable || busy" />
+              <small v-if="!schedule[row.key]">未配置</small>
+            </label>
+            <label v-if="row.pushKey" class="settings-push-toggle" :for="`settings-push-${row.pushKey}`">
+              <span>飞书推送</span>
+              <input
+                :id="`settings-push-${row.pushKey}`"
+                type="checkbox"
+                role="switch"
+                :checked="scheduledPush[row.pushKey]"
+                :aria-label="`${row.label}自动飞书推送`"
+                :disabled="!writable || busy"
+                @change="saveScheduledPush(row.pushKey, $event)"
+              />
+              <small aria-live="polite">{{ savingPushKey === row.pushKey && busy ? '保存中…' : (scheduledPush[row.pushKey] ? '已开启' : '已关闭') }}</small>
+            </label>
+            <div v-else class="settings-push-static" aria-label="尾盘草案不自动推送">
+              <span>内部草案</span><small>不自动推送</small>
+            </div>
+          </div>
         </div>
-        <p class="settings-help">保存后由服务端重新应用计划；空值不会被猜成默认时间。</p>
+        <p class="settings-help">任务时间需点击保存，空值不会被猜成默认时间；飞书开关切换后立即生效并单独持久化。关闭只跳过自动推送，不停止任务生成；交付推送页的总开关仍是全局门控。</p>
         <button class="primary-button" type="submit" :disabled="!writable || busy">{{ busy ? '保存中…' : '保存任务时间' }}</button>
       </form>
 
@@ -132,9 +181,19 @@ function saveSchedule() {
 .settings-task-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(280px, .65fr); gap: 10px; padding: 12px; }
 .settings-subpanel { min-width: 0; padding: 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); }
 .settings-subpanel__title span { color: var(--text-3); font-size: 12px; }
-.settings-schedule-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
-.settings-schedule-grid label { display: grid; gap: 5px; min-width: 0; color: var(--text-2); font-size: 13px; }
-.settings-schedule-grid input { width: 100%; min-height: 44px; padding: 7px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); }
+.settings-schedule-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
+.settings-schedule-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(116px, auto); gap: 10px; align-items: end; min-width: 0; padding: 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); }
+.settings-time-field { display: grid; gap: 5px; min-width: 0; color: var(--text-2); font-size: 13px; }
+.settings-time-field input { width: 100%; min-height: 44px; padding: 7px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); color: var(--text); }
+.settings-push-toggle, .settings-push-static { display: grid; grid-template-columns: minmax(0, 1fr) 44px; gap: 2px 8px; align-items: center; min-height: 44px; color: var(--text-2); font-size: 13px; }
+.settings-push-toggle { cursor: pointer; }
+.settings-push-toggle input { position: relative; width: 44px; height: 24px; margin: 0; appearance: none; border: 1px solid var(--border-strong); border-radius: 99px; background: var(--surface-2); cursor: pointer; transition: background-color 180ms ease, border-color 180ms ease; }
+.settings-push-toggle input::after { position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: var(--text-3); content: ""; transition: transform 180ms ease, background-color 180ms ease; }
+.settings-push-toggle input:checked { border-color: var(--info); background: color-mix(in srgb, var(--info) 72%, var(--surface)); }
+.settings-push-toggle input:checked::after { background: var(--surface); transform: translateX(20px); }
+.settings-push-toggle input:disabled { cursor: wait; opacity: .58; }
+.settings-push-toggle small, .settings-push-static small { grid-column: 1 / -1; }
+.settings-push-static { grid-template-columns: 1fr; }
 .settings-schedule-grid small, .settings-help { color: var(--text-3); font-size: 12px; }
 .settings-help { margin: 10px 0; }
 .settings-subpanel .primary-button, .settings-local-state button, .settings-table-wrap button, .settings-mobile-list button { min-height: 44px; padding: 7px 12px; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; }
@@ -163,5 +222,7 @@ td small { color: var(--text-3); }
 .mono { font-family: "SFMono-Regular", Consolas, monospace; font-variant-numeric: tabular-nums; }
 @media (max-width: 960px) { .settings-task-grid { grid-template-columns: 1fr; } }
 @media (max-width: 760px) { .settings-table-wrap { display: none; } .settings-mobile-list { display: grid; gap: 8px; padding: 0 12px 12px; } .settings-mobile-list article { padding: 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); } .settings-mobile-list article > div { display: flex; align-items: center; justify-content: space-between; gap: 8px; } .settings-mobile-list h3 { margin: 0; font-size: 16px; } .settings-mobile-list dl { display: grid; gap: 6px; margin: 10px 0; } .settings-mobile-list dl div { display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: 8px; } .settings-mobile-list dt { color: var(--text-3); font-size: 12px; } .settings-mobile-list dd { margin: 0; overflow-wrap: anywhere; } .settings-mobile-list button { width: 100%; background: var(--surface); } }
-@media (max-width: 620px) { .settings-section__heading { align-items: flex-start; flex-direction: column; } .settings-schedule-grid { grid-template-columns: 1fr; } .settings-subpanel .primary-button { width: 100%; } }
+@media (max-width: 720px) { .settings-schedule-grid { grid-template-columns: 1fr; } }
+@media (max-width: 620px) { .settings-section__heading { align-items: flex-start; flex-direction: column; } .settings-schedule-row { grid-template-columns: 1fr; align-items: stretch; } .settings-push-toggle, .settings-push-static { grid-template-columns: minmax(0, 1fr) 44px; } .settings-subpanel .primary-button { width: 100%; } }
+@media (prefers-reduced-motion: reduce) { .settings-push-toggle input, .settings-push-toggle input::after { transition: none; } }
 </style>

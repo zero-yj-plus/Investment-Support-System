@@ -32,6 +32,22 @@ JOB_NAMES = {
     "archive": "晚间自动存档",
 }
 
+SCHEDULED_PUSH_JOB_IDS = frozenset({"morning", "tail", "close", "evening", "archive"})
+
+
+def _scheduled_push_enabled(config, job_id: str) -> bool:
+    """Per-job switch only gates automatic delivery; task generation still runs."""
+    if job_id not in SCHEDULED_PUSH_JOB_IDS:
+        return False
+    resolver = getattr(config, "scheduled_push_enabled", None)
+    if callable(resolver):
+        return bool(resolver(job_id))
+    configured = getattr(config, "scheduled_push", None)
+    if isinstance(configured, dict) and isinstance(configured.get(job_id), bool):
+        return configured[job_id]
+    # Backward compatibility: deployments without the new setting keep sending.
+    return True
+
 
 def _elapsed_ms(started: float) -> int:
     return max(0, round((time.monotonic() - started) * 1000))
@@ -99,7 +115,12 @@ def build_scheduler(config, engine, maintenance_queue=None) -> AsyncIOScheduler:
                         calendar_status=calendar,
                     )
                 return {"ok": status == "skipped", "status": status, "error_code": error_code, "calendar": calendar}
-        required_delivery = bool(config.push_enabled and job_id in {"morning", "tail", "close", "evening"})
+        automatic_push = bool(
+            config.push_enabled and _scheduled_push_enabled(config, job_id)
+        )
+        required_delivery = bool(
+            automatic_push and job_id in {"morning", "tail", "close", "evening"}
+        )
         delivery_ready = True
         readiness = None
         if required_delivery:
@@ -121,11 +142,11 @@ def build_scheduler(config, engine, maintenance_queue=None) -> AsyncIOScheduler:
         if store:
             store.record_job(job_id, last_run=now, last_status="running", last_error=None)
         try:
-            push_now = bool(config.push_enabled and (not required_delivery or delivery_ready))
+            push_now = bool(automatic_push and (not required_delivery or delivery_ready))
             generated = False
             output_artifacts: list[dict] = []
             if job_id == "archive":
-                bundle = await engine.archive_today(push=config.push_enabled)
+                bundle = await engine.archive_today(push=automatic_push)
                 pushed = None
                 generated = True
                 artifact = _archive_output_artifact(bundle)

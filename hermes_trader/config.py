@@ -27,6 +27,14 @@ DEFAULT_SCHEDULE = {
     "archive": "22:00",
 }
 
+DEFAULT_SCHEDULED_PUSH = {
+    "morning": True,
+    "tail": True,
+    "close": True,
+    "evening": True,
+    "archive": True,
+}
+
 _DEPLOYMENT_PROFILES = frozenset({
     "auto", "cn_home", "cn_server", "overseas_server",
 })
@@ -250,6 +258,13 @@ class Config:
 
         push = self._raw.get("push", {})
         self._push_enabled: bool = bool(push.get("enabled", True))
+        self._scheduled_push: dict[str, bool] = {**DEFAULT_SCHEDULED_PUSH}
+        configured_scheduled_push = push.get("scheduled", {})
+        if isinstance(configured_scheduled_push, dict):
+            for key in DEFAULT_SCHEDULED_PUSH:
+                value = configured_scheduled_push.get(key)
+                if isinstance(value, bool):
+                    self._scheduled_push[key] = value
         # 推送传输层：'feishu'=直发飞书 webhook（跨云端也能用）；
         # 'gateway'=交给本机 Hermes 网关投递（hermes send，自动识别网关已连的微信/企业微信/飞书/
         # Telegram… 连什么推什么，仅本机部署可用）。默认 feishu 保持既有行为不变。
@@ -396,9 +411,9 @@ class Config:
         with _SETTINGS_LOCK:
             self._load_overrides()
             for key, value in patch.items():
-                if key == "schedule" and isinstance(value, dict):
-                    merged = {**self._overrides.get("schedule", {}), **value}
-                    self._overrides["schedule"] = merged
+                if key in {"schedule", "scheduled_push"} and isinstance(value, dict):
+                    merged = {**self._overrides.get(key, {}), **value}
+                    self._overrides[key] = merged
                 else:
                     self._overrides[key] = value
             self._write_overrides_locked()
@@ -662,6 +677,21 @@ class Config:
     def schedule(self) -> dict[str, str]:
         return {**self._schedule, **self._overrides.get("schedule", {})}
 
+    @property
+    def scheduled_push(self) -> dict[str, bool]:
+        result = {**self._scheduled_push}
+        overrides = self._overrides.get("scheduled_push", {})
+        if isinstance(overrides, dict):
+            for key in DEFAULT_SCHEDULED_PUSH:
+                value = overrides.get(key)
+                if isinstance(value, bool):
+                    result[key] = value
+        return result
+
+    def scheduled_push_enabled(self, job_id: str) -> bool:
+        """Return the persisted automatic-delivery policy for one core job."""
+        return bool(self.scheduled_push.get(job_id, False))
+
     def section(self, name: str) -> dict:
         """返回 config.yaml 的某个顶层子配置（供 clients/<id>/ext 读取自有配置，
         无需触碰 _raw 私有属性，也不为某客户在共享 config 上加字段——隔离铁律）。"""
@@ -706,4 +736,5 @@ class Config:
             "push_via": self.push_via,                     # gateway / feishu → 前端据此决定推送卡形态
             "public_base_url": self.public_base_url,
             "schedule": self.schedule,
+            "scheduled_push": self.scheduled_push,
         }

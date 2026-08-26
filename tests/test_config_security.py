@@ -145,6 +145,26 @@ def test_settings_are_atomic_and_private(tmp_path: Path) -> None:
     assert not cfg.settings_path.with_name(f".{cfg.settings_path.name}.tmp").exists()
 
 
+def test_scheduled_push_defaults_on_and_partial_override_persists(tmp_path: Path) -> None:
+    cfg = _config(tmp_path)
+
+    assert cfg.scheduled_push == {
+        "morning": True,
+        "tail": True,
+        "close": True,
+        "evening": True,
+        "archive": True,
+    }
+
+    cfg.save_overrides({"scheduled_push": {"tail": False}})
+    reloaded = Config(cfg.config_path)
+
+    assert reloaded.scheduled_push_enabled("morning") is True
+    assert reloaded.scheduled_push_enabled("tail") is False
+    assert reloaded.scheduled_push_enabled("midday") is False
+    assert reloaded.settings_view()["scheduled_push"]["tail"] is False
+
+
 def test_custom_model_connection_can_be_removed_without_touching_defaults(tmp_path: Path) -> None:
     cfg = _config(tmp_path)
     cfg.save_overrides({

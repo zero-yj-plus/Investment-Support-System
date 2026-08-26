@@ -1,145 +1,169 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import HoldingEditor from './HoldingEditor.vue'
-import HoldingsRiskCards from './HoldingsRiskCards.vue'
 import HoldingsTable from './HoldingsTable.vue'
 import { useHoldings } from '../composables/useHoldings'
 import type { NewHoldingInput } from '../types/holdings'
 import { formatMoney, formatPercent, pnlTone } from '../utils/holdingsFormat'
 
 const emit = defineEmits<{ refreshState: [refreshing: boolean] }>()
-const showEditor = ref(false)
-const holdingDialog = ref<HTMLDialogElement | null>(null)
-const replanClientKey = ref('')
-let editorOpener: HTMLElement | null = null
+const editorOpen = ref(false)
+const editorMode = ref<'add' | 'edit'>('add')
+const selectedCode = ref('')
 const {
   holdings,
   views,
   loading,
   refreshing,
   quotesLoading,
+  riskLoading,
   saving,
   adding,
-  riskRefreshing,
-  actionRunning,
   loaded,
   dirty,
   holdingsError,
   quotesError,
+  riskError,
   saveError,
   addError,
-  riskError,
   feedback,
   quotedCount,
   quoteAsOf,
   quoteSources,
   hasStaleQuotes,
   aggregate,
-  updateHolding,
-  removeHolding,
   refreshQuotes,
-  refreshRiskStates,
+  refreshRisk,
   refresh,
-  save,
   addHolding,
-  resetPlan,
-  confirmAdjustment,
+  editHolding,
+  deleteHolding,
 } = useHoldings()
 
-const pageRefreshing = computed(() => refreshing.value || quotesLoading.value || saving.value || adding.value || riskRefreshing.value || actionRunning.value)
-const replanHolding = computed(() => holdings.value.find((row) => row.clientKey === replanClientKey.value) || null)
+const pageRefreshing = computed(() => refreshing.value || quotesLoading.value || riskLoading.value || saving.value || adding.value)
 const dataStatus = computed(() => {
   if (holdingsError.value) return '账本暂不可用'
   if (loading.value) return '加载中'
-  if (!holdings.value.length) return '真实空数组'
-  if (quotesError.value || quotedCount.value < holdings.value.length) return '报价局部降级'
+  if (!holdings.value.length) return '暂无持仓'
+  if (quotesError.value || quotedCount.value < holdings.value.length) return '部分报价暂不可用'
   if (hasStaleQuotes.value) return '陈旧报价'
-  if (dirty.value) return '等待自动保存'
+  if (holdings.value.length && riskCoverageCount.value < holdings.value.length) return '风险评估待生成'
+  if (dirty.value) return '有未保存变更'
   return '账本与报价可用'
 })
 const quoteStamp = computed(() => quoteAsOf.value || '—')
 const sourceLabel = computed(() => quoteSources.value.length ? quoteSources.value.join(' / ') : '—')
+const hasStaleRisk = computed(() => views.value.some((row) => row.algorithmRisk?.stale === true))
+const riskCoverageCount = computed(() => views.value.filter((row) => row.algorithmRisk != null).length)
+const riskCoverageComplete = computed(() => (
+  holdings.value.length > 0 && riskCoverageCount.value === holdings.value.length
+))
+const triggeredRows = computed(() => views.value.filter((row) => (
+  row.riskState === 'red' || row.riskState === 'orange' || row.riskState === 'stop_triggered' || row.riskState === 'target_triggered'
+)))
+const approachingRows = computed(() => views.value.filter((row) => (
+  row.riskState === 'yellow' || row.riskState === 'near_stop' || row.riskState === 'near_target'
+)))
+const riskCounts = computed(() => ({
+  red: views.value.filter((row) => row.riskState === 'red' || row.riskState === 'stop_triggered').length,
+  orange: views.value.filter((row) => row.riskState === 'orange' || row.riskState === 'target_triggered').length,
+  yellow: views.value.filter((row) => row.riskState === 'yellow' || row.riskState === 'near_stop' || row.riskState === 'near_target').length,
+  blue: views.value.filter((row) => row.riskState === 'blue' || row.riskState === 'normal').length,
+  gray: views.value.filter((row) => ['gray', 'quote_missing', 'quote_stale', 'unconfigured'].includes(row.riskState)).length,
+}))
+const portfolioSummary = computed(() => {
+  const validRows = views.value.filter((row) => row.marketValue != null && row.marketValue >= 0)
+  const largest = [...validRows].sort((left, right) => (
+    (right.marketValue as number) - (left.marketValue as number)
+  ))[0]
+  const sectors = new Map<string, number>()
+  for (const row of validRows) {
+    const sector = String(row.algorithmRisk?.sector?.name || row.industry || '').trim()
+    if (!sector) continue
+    const current = sectors.get(sector)
+    sectors.set(sector, (current == null ? 0 : current) + (row.marketValue as number))
+  }
+  const largestSector = [...sectors.entries()].sort((left, right) => right[1] - left[1])[0]
+  const total = aggregate.value.marketValue
+  return {
+    largestName: largest?.name || largest?.code || '—',
+    largestPct: largest?.holdingSharePct ?? null,
+    sectorName: largestSector?.[0] || '数据暂缺',
+    sectorPct: total != null && total > 0 && largestSector ? largestSector[1] / total * 100 : null,
+    urgentCount: riskCounts.value.red + riskCounts.value.orange,
+  }
+})
+const portfolioTodayPnl = computed(() => {
+  if (!views.value.length) return { amount: null, pct: null, covered: 0 }
+  let currentTotal = 0
+  let previousTotal = 0
+  let covered = 0
+  for (const row of views.value) {
+    if (row.marketValue == null || row.changePct == null) continue
+    const rate = row.changePct / 100
+    if (1 + rate <= 0) continue
+    currentTotal += row.marketValue
+    previousTotal += row.marketValue / (1 + rate)
+    covered += 1
+  }
+  if (!covered || previousTotal <= 0) return { amount: null, pct: null, covered }
+  const amount = currentTotal - previousTotal
+  return {
+    amount,
+    pct: amount / previousTotal * 100,
+    covered,
+  }
+})
+const monitorStatus = computed(() => {
+  if (pageRefreshing.value) return '正在更新'
+  if (hasStaleRisk.value) return '含陈旧风险结论'
+  if (holdingsError.value || quotesError.value || riskError.value || saveError.value) return '数据需检查'
+  if (holdings.value.length && !riskCoverageComplete.value) return '风险评估待生成'
+  if (dirty.value) return '等待保存'
+  return '监控已生效'
+})
+const selectedHolding = computed(() => holdings.value.find((row) => row.code === selectedCode.value) || null)
+const editorBusy = computed(() => saving.value || adding.value)
+const editorError = computed(() => editorMode.value === 'add' ? addError.value || saveError.value : saveError.value)
 
 watch(pageRefreshing, (value) => emit('refreshState', value), { immediate: true })
-watch(showEditor, async (open) => {
-  if (open) {
-    await nextTick()
-    if (holdingDialog.value && !holdingDialog.value.open) holdingDialog.value.showModal()
-    await nextTick()
-    holdingDialog.value?.querySelector<HTMLElement>('input:not([disabled]):not([readonly]), select:not([disabled]), button:not([disabled])')?.focus()
-    return
-  }
-  if (holdingDialog.value?.open) holdingDialog.value.close()
-  await nextTick()
-  editorOpener?.focus()
-  editorOpener = null
-})
 
-function openEditor() {
-  editorOpener = document.activeElement instanceof HTMLElement ? document.activeElement : null
-  replanClientKey.value = ''
-  showEditor.value = true
+function openAddEditor() {
+  editorMode.value = 'add'
+  selectedCode.value = ''
+  addError.value = ''
+  saveError.value = ''
+  editorOpen.value = true
 }
 
-function requestEditorClose() {
-  if (adding.value || saving.value || actionRunning.value) return
-  showEditor.value = false
+function openEditEditor(code: string) {
+  if (!holdings.value.some((row) => row.code === code)) return
+  editorMode.value = 'edit'
+  selectedCode.value = code
+  addError.value = ''
+  saveError.value = ''
+  editorOpen.value = true
 }
 
-function handleEditorClosed() {
-  if (showEditor.value) showEditor.value = false
+function closeEditor() {
+  if (editorBusy.value) return
+  editorOpen.value = false
 }
 
-async function handleAdd(input: NewHoldingInput) {
-  const existing = holdings.value.find((row) => row.code === input.code)
-  if (existing) {
-    const oldCost = existing.cost
-    const oldShares = existing.shares
-    let supplement = input
-    if (oldCost != null && oldShares != null) {
-      const totalShares = oldShares + input.shares
-      const supplementFees = input.fees == null ? 0 : input.fees
-      const aggregateCost = (oldCost * oldShares + input.cost * input.shares + supplementFees) / totalShares
-      supplement = {
-        ...input,
-        cost: aggregateCost,
-        shares: totalShares,
-        note: input.note || existing.note,
-      }
-    }
-    if (await resetPlan(existing.code, supplement, 'supplement')) showEditor.value = false
-    return
-  }
-  const added = await addHolding(input)
-  if (added) showEditor.value = false
+async function handleEditorSubmit(input: NewHoldingInput) {
+  const saved = editorMode.value === 'add'
+    ? await addHolding(input)
+    : await editHolding(selectedCode.value, input)
+  if (saved) editorOpen.value = false
 }
 
-function openReplan(clientKey: string) {
-  showEditor.value = false
-  replanClientKey.value = clientKey
-  void nextTick(() => document.querySelector<HTMLElement>('#holding-editor-title')?.scrollIntoView({ block: 'start' }))
+async function handleEditorRemove() {
+  if (editorMode.value !== 'edit' || !selectedCode.value) return
+  const removed = await deleteHolding(selectedCode.value)
+  if (removed) editorOpen.value = false
 }
 
-async function handleReplan(input: NewHoldingInput) {
-  const holding = replanHolding.value
-  if (!holding) return
-  if (await resetPlan(holding.code, input, 'manual_replan')) {
-    replanClientKey.value = ''
-  }
-}
-
-async function handleRemove(clientKey: string) {
-  const holding = holdings.value.find((row) => row.clientKey === clientKey)
-  if (!holding) return
-  const label = holding.name ? `${holding.name}（${holding.code}）` : holding.code
-  if (!window.confirm(`确认取消关注 ${label}？确认后将立即更新持仓账本。`)) return
-  await removeHolding(clientKey)
-}
-
-onBeforeUnmount(() => {
-  if (holdingDialog.value?.open) holdingDialog.value.close()
-  emit('refreshState', false)
-})
+onBeforeUnmount(() => emit('refreshState', false))
 defineExpose({ refresh })
 </script>
 
@@ -147,12 +171,14 @@ defineExpose({ refresh })
   <section class="holdings-page" aria-labelledby="holdings-page-title" :aria-busy="pageRefreshing">
     <header class="holdings-intro">
       <div class="page-heading">
-        <h1 id="holdings-page-title">我的持仓</h1>
-        <p class="page-subtitle">管理超短、短线和波段计划；服务端按K线、Wilder ATR14、结构位与时间规则给出累计仓位降低比例。</p>
+        <div class="page-heading__line">
+          <h1 id="holdings-page-title">我的持仓</h1>
+          <span class="monitor-status" :class="{ 'is-warning': dirty || holdingsError || quotesError || riskError || saveError || hasStaleRisk || (holdings.length && !riskCoverageComplete) }">● {{ monitorStatus }}</span>
+        </div>
+        <p class="page-subtitle">每只持仓先告诉你现在该做什么，再说明为什么。</p>
       </div>
       <div class="holdings-intro__actions">
-        <button type="button" class="primary-button" :disabled="loading || !!holdingsError || saving || adding || actionRunning" @click="openEditor">添加持仓</button>
-        <button type="button" class="secondary-button" :disabled="riskRefreshing || actionRunning || saving || adding || !holdings.length" @click="refreshRiskStates(true)">{{ riskRefreshing ? '评估中' : '刷新仓位评估' }}</button>
+        <button type="button" class="primary-button" :disabled="loading || !!holdingsError || saving || adding" @click="openAddEditor">添加持仓</button>
       </div>
     </header>
 
@@ -188,106 +214,95 @@ defineExpose({ refresh })
           <div><strong>当前含陈旧报价</strong><span>非交易时段或数据龄超限的报价已标记，不会声称为实时价格。</span></div>
         </div>
 
-        <div v-if="feedback || saveError" class="holdings-feedback" :class="{ 'is-error': saveError }" :role="saveError ? 'alert' : 'status'">
-          <strong>{{ saveError ? '操作未完成' : '账本状态' }}</strong><span>{{ saveError || feedback }}</span>
+        <div v-if="saveError" class="holdings-feedback is-error" role="alert">
+          <strong>操作未完成</strong><span>{{ saveError }}</span>
         </div>
 
-        <div v-if="riskError" class="holdings-alert" role="alert">
-          <div><strong>仓位管理状态读取失败</strong><span>{{ riskError }}；账本和报价仍可使用，页面不会用旧数据冒充新评估。</span></div>
-          <button type="button" class="secondary-button" :disabled="riskRefreshing" @click="refreshRiskStates()">重试状态</button>
+        <div v-if="riskError" class="holdings-alert is-warning" role="status">
+          <div><strong>算法风险卡暂不可用</strong><span>{{ riskError }}；客户手填风险线仍按页面基础规则显示。</span></div>
+          <button type="button" class="secondary-button" :disabled="riskLoading" @click="refreshRisk(true)">重试风险评估</button>
         </div>
 
-        <HoldingEditor v-if="replanHolding" mode="replan" :initial="replanHolding" :adding="actionRunning" :server-error="saveError" @submit="handleReplan" @cancel="replanClientKey = ''" />
+        <div v-else-if="hasStaleRisk" class="holdings-alert is-warning" role="status">
+          <div><strong>部分风险结论刷新失败</strong><span>页面保留最近有效结论及原评估时点，并明确标为陈旧；本轮没有用旧价生成新动作。</span></div>
+          <button type="button" class="secondary-button" :disabled="riskLoading" @click="refreshRisk(true)">重新评估</button>
+        </div>
 
-        <section class="panel holdings-boundary" aria-labelledby="holdings-boundary-title">
-          <div>
-            <p class="eyebrow">自动汇总口径</p>
-            <h2 id="holdings-boundary-title">持仓成本与市值</h2>
+        <div v-else-if="holdings.length && !riskCoverageComplete" class="holdings-alert is-warning" role="status">
+          <div><strong>风险评估尚未覆盖全部持仓</strong><span>当前已生成 {{ riskCoverageCount }}/{{ holdings.length }} 只；缺失持仓不会补造风险线或动作。</span></div>
+          <button type="button" class="secondary-button" :disabled="riskLoading" @click="refreshRisk(true)">生成风险卡</button>
+        </div>
+
+        <section v-if="holdings.length" class="panel portfolio-overview" aria-labelledby="portfolio-overview-title" aria-live="polite">
+          <div class="portfolio-attention" :class="{ 'is-clear': !triggeredRows.length }">
+            <div class="portfolio-attention__title">
+              <span aria-hidden="true">{{ triggeredRows.length ? '急' : '稳' }}</span>
+              <div class="portfolio-attention__heading"><small>组合行动</small><h2 id="portfolio-overview-title">{{ triggeredRows.length ? `今日需处理 ${triggeredRows.length}只` : '当前无需处理' }}</h2></div>
+            </div>
+            <div v-if="triggeredRows.length" class="portfolio-attention__rows">
+              <button v-for="row in triggeredRows.slice(0, 3)" :key="row.code" type="button" :aria-label="`编辑${row.name || row.code}持仓`" @click="openEditEditor(row.code)">
+                <strong>{{ row.name || row.code }}</strong><span>{{ row.algorithmRisk?.action || row.riskLabel }}</span><i aria-hidden="true">编辑</i>
+              </button>
+            </div>
+            <p v-else>{{ approachingRows.length ? `${approachingRows.length}只持仓进入观察区，暂不需要调整仓位。` : '全部持仓均处于正常监控状态。' }}</p>
           </div>
-          <dl>
-            <div><dt>投入成本</dt><dd class="mono">{{ formatMoney(aggregate.costAmount) }}</dd></div>
-            <div><dt>持仓总市值</dt><dd class="mono">{{ formatMoney(aggregate.marketValue) }}</dd></div>
-            <div><dt>浮动盈亏</dt><dd class="mono" :class="`is-${pnlTone(aggregate.pnl)}`">{{ formatMoney(aggregate.pnl) }}</dd></div>
-            <div><dt>浮动盈亏比例</dt><dd class="mono" :class="`is-${pnlTone(aggregate.pnlPct)}`">{{ formatPercent(aggregate.pnlPct, true) }}</dd></div>
+          <dl class="portfolio-metrics">
+            <div><dt>持仓总市值</dt><dd class="mono">{{ formatMoney(aggregate.marketValue) }}</dd><dd class="portfolio-metric__sub" :class="`is-${pnlTone(aggregate.pnl)}`">{{ aggregate.pnl == null ? '累计盈亏 —' : aggregate.pnl < 0 ? `累计亏损 ${formatMoney(aggregate.pnl)}` : `累计盈利 ${formatMoney(aggregate.pnl)}` }}</dd></div>
+            <div><dt>今日总盈亏率</dt><dd class="mono" :class="`is-${pnlTone(portfolioTodayPnl.pct)}`">{{ formatPercent(portfolioTodayPnl.pct, true) }}</dd><dd class="portfolio-metric__sub" :class="`is-${pnlTone(portfolioTodayPnl.amount)}`">今日盈亏 {{ formatMoney(portfolioTodayPnl.amount) }}<small v-if="portfolioTodayPnl.covered < views.length">覆盖 {{ portfolioTodayPnl.covered }}/{{ views.length }} 只</small></dd></div>
+            <div><dt>总浮动盈亏率</dt><dd class="mono" :class="`is-${pnlTone(aggregate.pnlPct)}`">{{ formatPercent(aggregate.pnlPct, true) }}</dd></div>
+            <div><dt>最大单只持仓</dt><dd>{{ formatPercent(portfolioSummary.largestPct) }} <small>{{ portfolioSummary.largestName }}</small></dd></div>
+            <div><dt>最大行业集中度</dt><dd>{{ formatPercent(portfolioSummary.sectorPct) }} <small>{{ portfolioSummary.sectorName }}</small></dd></div>
           </dl>
         </section>
 
+        <HoldingEditor
+          :open="editorOpen"
+          :mode="editorMode"
+          :holding="selectedHolding"
+          :busy="editorBusy"
+          :server-error="editorError"
+          @submit="handleEditorSubmit"
+          @close="closeEditor"
+          @remove="handleEditorRemove"
+        />
+
         <section v-if="!holdings.length" class="panel holdings-empty" aria-labelledby="holdings-empty-title">
-          <p class="eyebrow">真实空数组</p>
+          <p class="eyebrow">开始监控</p>
           <h2 id="holdings-empty-title">当前未记录持仓</h2>
-          <p>接口成功返回空持仓。页面不会插入示例股票、零成本或零股数；“核验并加入”成功后会立即写入账本。</p>
-          <button type="button" class="secondary-button" @click="openEditor">添加第一笔持仓</button>
+          <p>添加股票、成本和数量后，系统会开始跟踪风险线和持仓行动。</p>
+          <button type="button" class="secondary-button" @click="openAddEditor">添加第一笔持仓</button>
         </section>
 
-        <HoldingsRiskCards
-          v-if="holdings.length"
-          :rows="views"
-          :action-running="actionRunning || saving || adding"
-          @replan="openReplan"
-          @confirm="confirmAdjustment"
-          @remove="handleRemove"
-        />
-
         <HoldingsTable
-          v-if="holdings.length"
+          v-else
           :rows="views"
-          :busy="saving || adding || actionRunning"
-          @update="updateHolding"
-          @commit="save"
-          @remove="handleRemove"
+          @edit="openEditEditor"
         />
 
-        <footer class="page-footer holdings-footer">
-          <span>GET 持仓成功空数组、报价缺失、陈旧报价、接口失败分别展示；缺失值不补 0。</span>
-          <span>仓位目标按计划版本只升不降；重置计划会重置1R、最高价、风险线和累计目标。数据失败保留原始时点并明确标记。</span>
-        </footer>
       </template>
     </template>
 
-    <dl class="holdings-stamp data-footnote-stamp" :class="{ 'is-degraded': quotesError || hasStaleQuotes || holdingsError }" aria-label="持仓数据日期、关键时点与状态">
-      <div><dt>账本状态</dt><dd>{{ loaded ? '已加载' : loading ? '加载中' : '未加载' }}</dd></div>
-      <div><dt>报价时点</dt><dd class="mono">{{ quoteStamp }}<span v-if="!quoteAsOf" class="sr-only">时点缺失</span></dd></div>
-      <div><dt>报价来源</dt><dd>{{ sourceLabel }}<span v-if="!quoteSources.length" class="sr-only">来源缺失</span></dd></div>
-      <div><dt>数据状态</dt><dd>{{ dataStatus }}</dd></div>
-    </dl>
-
-    <Teleport to="body">
-      <dialog
-        ref="holdingDialog"
-        class="holdings-editor-dialog"
-        aria-modal="true"
-        aria-labelledby="holding-editor-title"
-        :aria-busy="adding || saving || actionRunning"
-        @cancel.prevent="requestEditorClose"
-        @close="handleEditorClosed"
-      >
-        <HoldingEditor
-          v-if="showEditor"
-          :adding="adding || saving || actionRunning"
-          :server-error="addError || saveError"
-          @submit="handleAdd"
-          @cancel="requestEditorClose"
-        />
-      </dialog>
-    </Teleport>
+    <div class="holdings-data-line" :class="{ 'is-degraded': quotesError || hasStaleQuotes || hasStaleRisk || (holdings.length && !riskCoverageComplete) || holdingsError }" aria-label="持仓数据状态">
+      <span><b>数据更新</b> {{ quoteStamp }}</span>
+      <span>{{ dataStatus }}</span>
+      <span v-if="quoteSources.length">{{ sourceLabel }}</span>
+    </div>
   </section>
 </template>
 
 <style scoped>
-.holdings-page { display: grid; min-width: 0; gap: 12px; }
-.holdings-editor-dialog { width: min(1180px, calc(100vw - 32px)); max-height: min(820px, calc(100dvh - 32px)); padding: 0; overflow: hidden; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface); color: var(--text); }
-.holdings-editor-dialog::backdrop { background: rgb(5 11 20 / 60%); }
-.holdings-editor-dialog :deep(.holding-editor) { display: grid; max-height: min(820px, calc(100dvh - 32px)); grid-template-rows: auto minmax(0, 1fr); border: 0; border-radius: 0; }
-.holdings-editor-dialog :deep(.holding-editor form) { min-height: 0; overflow-y: auto; }
+.holdings-page { display: grid; min-width: 0; gap: 9px; }
 .holdings-intro { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; padding: 4px 2px 2px; }
 .holdings-intro h1 { margin: 0; font-size: clamp(24px, 2.2vw, 30px); line-height: 1.25; }
-.holdings-intro > div > p:last-child { max-width: 800px; margin: 7px 0 0; color: var(--text-2); }
+.page-heading__line { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.monitor-status { display: inline-flex; align-items: center; padding: 4px 8px; border: 1px solid color-mix(in srgb, var(--up) 28%, var(--border)); border-radius: 8px; background: color-mix(in srgb, var(--up) 8%, var(--surface)); color: var(--up); font-size: 12px; font-weight: 750; }
+.monitor-status.is-warning { border-color: color-mix(in srgb, var(--warning) 38%, var(--border)); background: color-mix(in srgb, var(--warning) 10%, var(--surface)); color: color-mix(in srgb, var(--warning) 80%, var(--text)); }
+.holdings-intro > div > p:last-child { max-width: 800px; margin: 3px 0 0; color: var(--text-2); font-size: 12px; }
 .holdings-intro__actions { display: flex; flex: 0 0 auto; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
-.holdings-stamp { display: grid; min-width: 520px; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px 14px; margin: 0; padding: 9px 11px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
-.holdings-stamp.is-degraded { border-color: var(--warning); }
-.holdings-stamp div { min-width: 0; }
-.holdings-stamp dt { color: var(--text-3); font-size: 12px; }
-.holdings-stamp dd { margin: 1px 0 0; font-size: 13px; font-weight: 720; overflow-wrap: anywhere; }
+.holdings-intro__actions button { min-height: 44px; }
+.holdings-data-line { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 5px 14px; padding: 1px 3px; color: var(--text-3); font-size: 12px; }
+.holdings-data-line b { color: var(--text-2); font-weight: 700; }
+.holdings-data-line.is-degraded { color: color-mix(in srgb, var(--warning) 78%, var(--text)); }
 .holdings-loading { display: grid; gap: 12px; }
 .holdings-skeleton { position: relative; overflow: hidden; background: var(--surface); }
 .holdings-skeleton::after { position: absolute; inset: 0; background: var(--surface-2); content: ""; animation: holdings-pulse 1.1s ease-in-out infinite alternate; }
@@ -300,14 +315,56 @@ defineExpose({ refresh })
 .holdings-alert span, .holdings-feedback span { color: var(--text-2); }
 .holdings-feedback { border-color: var(--info); }
 .holdings-feedback.is-error { border-color: var(--danger); }
+.portfolio-overview { display: grid; grid-template-columns: minmax(320px, .76fr) minmax(0, 1.54fr); min-height: 112px; overflow: hidden; padding: 0; }
+.portfolio-attention { display: grid; align-content: center; gap: 7px; padding: 12px 16px; border-right: 1px solid var(--border); background: color-mix(in srgb, var(--warning) 6%, var(--surface)); }
+.portfolio-attention.is-clear { background: color-mix(in srgb, var(--up) 5%, var(--surface)); }
+.portfolio-attention__title { display: flex; align-items: center; gap: 10px; }
+.portfolio-attention__title > span { display: grid; width: 32px; height: 32px; flex: 0 0 auto; place-items: center; border: 1px solid color-mix(in srgb, var(--warning) 50%, var(--border)); border-radius: 8px; background: var(--surface); color: var(--warning); font-size: 17px; font-weight: 900; }
+.portfolio-attention.is-clear .portfolio-attention__title > span { border-color: color-mix(in srgb, var(--up) 45%, var(--border)); color: var(--up); }
+.portfolio-attention__heading { display: flex; min-width: 0; align-items: baseline; flex-wrap: wrap; gap: 5px 9px; }
+.portfolio-attention__title small { color: var(--text-3); font-size: 10px; }
+.portfolio-attention__title h2 { margin: 0; color: var(--warning); font-size: 18px; line-height: 1.2; }
+.portfolio-attention.is-clear .portfolio-attention__title h2 { color: var(--up); }
+.portfolio-attention__rows { display: grid; gap: 5px; }
+.portfolio-attention__rows button { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 8px; min-height: 44px; padding: 6px 10px; border: 1px solid color-mix(in srgb, var(--warning) 25%, var(--border)); border-radius: 8px; background: var(--surface); color: var(--text); text-align: left; cursor: pointer; }
+.portfolio-attention__rows button:hover { border-color: var(--warning); }
+.portfolio-attention__rows strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.portfolio-attention__rows span { color: var(--warning); font-size: 12px; font-weight: 750; white-space: nowrap; }
+.portfolio-attention__rows i { color: var(--text-3); font-size: 18px; font-style: normal; }
+.portfolio-attention__rows button:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.portfolio-attention > p { margin: 0; color: var(--text-2); font-size: 12px; }
+.portfolio-metrics { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); align-items: center; margin: 0; padding: 14px 10px; }
+.portfolio-metrics > div { min-width: 0; padding: 6px 12px; text-align: center; }
+.portfolio-metrics > div + div { border-left: 1px solid var(--border); }
+.portfolio-metrics dt { color: var(--text-3); font-size: 11px; }
+.portfolio-metrics dd { margin: 5px 0 0; color: var(--text); font-size: 17px; font-weight: 800; overflow-wrap: anywhere; }
+.portfolio-metrics dd small { display: block; margin-top: 2px; color: var(--text-2); font-size: 10px; font-weight: 650; }
+.portfolio-metric__sub { display: block; margin-top: 3px; color: var(--text-2); font-size: 10px; font-weight: 700; }
+.portfolio-metric__sub small { display: block; margin-top: 2px; color: var(--text-3); font-size: 10px; font-weight: 600; }
+.holdings-overview-grid { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(360px, .85fr); align-items: stretch; gap: 10px; }
+.holdings-risk-summary { display: grid; grid-template-columns: minmax(180px, .7fr) minmax(0, 1.4fr); align-items: center; gap: 12px 18px; padding: 12px 14px; border-left: 3px solid var(--warning); }
+.holdings-risk-summary.has-triggered { border-left-color: var(--danger); }
+.holdings-risk-summary h2 { margin: 0; font-size: 18px; }
+.holdings-risk-summary ul { display: flex; min-width: 0; flex-wrap: wrap; gap: 7px; margin: 0; padding: 0; list-style: none; }
+.holdings-risk-summary li { display: inline-flex; gap: 6px; padding: 6px 9px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface-2); font-size: 13px; }
+.holdings-risk-summary li span, .holdings-risk-summary > p { color: var(--text-2); }
+.risk-counts li { border-left-width: 3px; }
+.risk-counts li.is-red { border-left-color: var(--danger); }
+.risk-counts li.is-orange { border-left-color: #d97706; }
+.risk-counts li.is-yellow { border-left-color: var(--warning); }
+.risk-counts li.is-blue { border-left-color: var(--info); }
+.risk-actions { grid-column: 1 / -1; padding-top: 8px !important; border-top: 1px solid var(--border); }
+.holdings-risk-summary > p { grid-column: 1 / -1; margin: 0; font-size: 12px; }
 .holdings-fatal, .holdings-empty { display: flex; min-height: 320px; flex-direction: column; align-items: center; justify-content: center; padding: 24px; text-align: center; }
 .holdings-fatal h2, .holdings-empty h2 { margin: 0; font-size: 22px; }
 .holdings-fatal > p:not(.eyebrow), .holdings-empty > p:not(.eyebrow) { max-width: 680px; margin: 8px 0 0; color: var(--text-2); }
 .holdings-fatal .primary-button, .holdings-empty .primary-button { margin-top: 18px; }
 .holdings-boundary { display: grid; grid-template-columns: minmax(260px, 1fr) minmax(0, 1.6fr); align-items: center; gap: 16px; padding: 14px; }
+.holdings-overview-grid .holdings-boundary { grid-template-columns: minmax(0, 1fr); align-content: center; gap: 8px; padding: 11px 12px; }
+.holdings-overview-grid .holdings-boundary > div > p:last-child { display: none; }
 .holdings-boundary h2 { margin: 0; font-size: 18px; }
 .holdings-boundary > div > p:last-child { margin: 5px 0 0; color: var(--text-2); font-size: 13px; }
-.holdings-boundary dl { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px; margin: 0; }
+.holdings-boundary dl { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; margin: 0; }
 .holdings-boundary dl div { min-width: 0; padding: 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); }
 .holdings-boundary dt { color: var(--text-3); font-size: 12px; }
 .holdings-boundary dd { margin: 3px 0 0; font-size: 15px; font-weight: 720; overflow-wrap: anywhere; }
@@ -320,26 +377,30 @@ defineExpose({ refresh })
 @media (max-width: 1100px) {
   .holdings-intro { align-items: stretch; flex-direction: column; gap: 12px; }
   .holdings-intro__actions { justify-content: flex-start; }
-  .holdings-stamp { min-width: 0; }
   .holdings-boundary { grid-template-columns: minmax(0, 1fr); }
+  .holdings-overview-grid { grid-template-columns: minmax(0, 1fr); }
+  .holdings-risk-summary { grid-template-columns: minmax(0, 1fr); }
   .holdings-boundary dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .portfolio-overview { grid-template-columns: minmax(0, 1fr); }
+  .portfolio-attention { border-right: 0; border-bottom: 1px solid var(--border); }
+  .portfolio-attention__rows { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .portfolio-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px 0; }
+  .portfolio-metrics > div:nth-child(4) { border-left: 0; }
 }
 @media (max-width: 720px) {
   .holdings-page { gap: 8px; font-size: 18px; }
   .holdings-intro__actions, .holdings-intro__actions button { width: 100%; }
-  .holdings-stamp, .holdings-boundary { grid-template-columns: minmax(0, 1fr); }
+  .holdings-data-line { justify-content: flex-start; }
+  .portfolio-metrics { grid-template-columns: minmax(0, 1fr); }
+  .portfolio-metrics > div + div { border-top: 1px solid var(--border); border-left: 0; }
+  .portfolio-attention__rows, .portfolio-metrics { grid-template-columns: minmax(0, 1fr); }
   .holdings-boundary dl { grid-template-columns: minmax(0, 1fr); }
   .holdings-alert { align-items: stretch; flex-direction: column; }
   .holdings-alert .secondary-button { width: 100%; }
   .holdings-fatal, .holdings-empty { min-height: 280px; padding: 18px 14px; }
   .holdings-empty .secondary-button { width: 100%; }
 }
-@media (max-width: 520px) {
-  .holdings-editor-dialog { width: calc(100vw - 16px); max-height: calc(100dvh - 16px); }
-  .holdings-editor-dialog :deep(.holding-editor) { max-height: calc(100dvh - 16px); }
-}
 @media (prefers-reduced-motion: reduce) {
   .holdings-skeleton::after { animation: none; }
-  .holdings-editor-dialog, .holdings-editor-dialog * { scroll-behavior: auto !important; }
 }
 </style>

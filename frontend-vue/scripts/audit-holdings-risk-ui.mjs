@@ -12,33 +12,100 @@ const outputDir = process.env.HOLDINGS_RISK_AUDIT_DIR || resolve(root, 'audit-ou
 const axeSource = await readFile(require.resolve('axe-core/axe.min.js'), 'utf8')
 const chromePath = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
 
-const plans = {
-  '601899': { version: 1, period: 'short', buy_date: '2026-08-11', customer_risk_price: 17.60, customer_target_price: 19.20, target_mode: 'reminder', confirmed_reduction_pct: 0 },
-  '300750': { version: 1, period: 'swing', buy_date: '2026-08-07', customer_risk_price: null, customer_target_price: 295.00, target_mode: 'ordinary_trigger', confirmed_reduction_pct: 25 },
-  '002594': { version: 1, period: 'ultra', buy_date: '2026-08-17', customer_risk_price: 109.80, customer_target_price: null, target_mode: 'reminder', confirmed_reduction_pct: 0 },
+const rows = {
+  '300750': {
+    code: '300750', name: '宁德时代', rule_version: 'holding-risk-v1-shadow-r2',
+    shadow_mode: true, push_eligible: false, state: 'red', action: '退出当前可卖持仓',
+    signal_type: 'risk_exit', signal_type_label: '风险退出', confidence: 'high',
+    summary: '价格结构已经确认失效', reasons: ['有效跌破算法风险线 386.66'],
+    horizon: 'short', horizon_label: '短线', entry_type: 'general', entry_type_label: '未指定',
+    as_of: '2026-08-26', price_basis: '实时价', coverage: 1,
+    levels: { initial_stop: 376.20, initial_stop_basis: 'MA20支撑下方', algorithm_stop: 386.66, trailing_stop: 386.66, support: 388.10, risk_unit: 14.95 },
+    metrics: { ma5: 391.20, ma20: 389.70, ma60: 372.80, atr14: 5.62 },
+    sector: { name: '电池', change_pct: -0.12, stock_change_pct: 0.84, relative_today_pct: 0.96, data_date: '2026-08-26', source: '公开行业行情' },
+    missing: [], fresh: true, stale: false, evaluated_at: '2026-08-26T09:27:53+08:00',
+  },
+  '510300': {
+    code: '510300', name: '沪深300ETF华泰柏瑞', rule_version: 'holding-risk-v1-shadow-r2',
+    shadow_mode: true, push_eligible: false, state: 'red', action: '退出当前可卖持仓',
+    signal_type: 'risk_exit', signal_type_label: '风险退出', confidence: 'high',
+    summary: '价格结构已经确认失效', reasons: ['有效跌破算法风险线 4.62'],
+    horizon: 'overnight', horizon_label: '隔日', entry_type: 'general', entry_type_label: '未指定',
+    as_of: '2026-08-26', price_basis: '实时价', coverage: 1,
+    levels: { initial_stop: 4.50, initial_stop_basis: 'ATR备用风险线', algorithm_stop: 4.617, trailing_stop: 4.617, support: 4.60, risk_unit: 0.18 },
+    metrics: { ma5: 4.64, ma20: 4.58, ma60: 4.42, atr14: 0.06 },
+    sector: { name: '沪深300', change_pct: -0.06, stock_change_pct: -0.02, relative_today_pct: 0.04, data_date: '2026-08-26', source: '指数行情' },
+    missing: [], fresh: true, stale: false, evaluated_at: '2026-08-26T09:27:53+08:00',
+  },
+  '600519': {
+    code: '600519', name: '贵州茅台', rule_version: 'holding-risk-v1-shadow-r2',
+    shadow_mode: true, push_eligible: false, state: 'yellow', action: '继续持有，观察突破',
+    signal_type: 'warning', signal_type_label: '风险观察', confidence: 'medium',
+    summary: '进入收益观察区', reasons: ['已进入第一收益观察区，尚未形成滞涨确认'],
+    horizon: 'swing', horizon_label: '波段', entry_type: 'pullback', entry_type_label: '回踩',
+    as_of: '2026-08-26', price_basis: '实时价', coverage: 1,
+    levels: { initial_stop: 1253.715, initial_stop_basis: '回踩低点下方', algorithm_stop: 1253.715, trailing_stop: null, support: 1270.50, risk_unit: 19.115 },
+    metrics: { ma5: 1288.30, ma20: 1267.20, ma60: 1238.60, atr14: 18.40 },
+    sector: { name: '白酒', change_pct: -0.78, stock_change_pct: -0.31, relative_today_pct: 0.47, data_date: '2026-08-26', source: '公开行业行情' },
+    missing: [], fresh: true, stale: false, evaluated_at: '2026-08-26T09:27:53+08:00',
+  },
 }
-const riskStates = {
-  '601899': { code: '601899', name: '紫金矿业', plan_version: 1, period: 'short', period_label: '短线', period_window: '3–5个交易日', state: 'pending_adjustment', action: '建议将该持仓降低33%', target_reduction_pct: 33, retain_pct: 67, confirmed_reduction_pct: 0, ordinary_trigger_count: 2, ordinary_triggers: [{ code: 'time_expired', label: '已超出短线区间（3–5个交易日）' }, { code: 'stagnation_group', label: '收益观察区内出现2项滞涨特征' }], decisive_triggers: [], near_risk_line: false, time: { trading_days_held: 5, max_days: 5, expired: true }, initial_risk_line: 16.88, current_risk_line: 17.75, customer_risk_price: 17.60, customer_target_price: 19.20, risk_distance_pct: 4.98, initial_r: 0.54, r_multiple: 2.33, fresh: true, stale: false, evaluated_at: '2026-08-17T10:30:00+08:00', data_as_of: '2026-08-17 10:00:00' },
-  '300750': { code: '300750', name: '宁德时代', plan_version: 1, period: 'swing', period_label: '波段', period_window: '5–10个交易日', state: 'completed_adjustment', action: '已完成当前调整，继续监控', target_reduction_pct: 25, retain_pct: 75, confirmed_reduction_pct: 25, ordinary_trigger_count: 0, ordinary_triggers: [], decisive_triggers: [], near_risk_line: false, target_touched: true, target_note: '达到客户目标价，仅提醒', time: { trading_days_held: 7, max_days: 10, expired: false }, initial_risk_line: 260.10, current_risk_line: 278.40, customer_risk_price: null, customer_target_price: 295.00, risk_distance_pct: 3.07, initial_r: 14.70, r_multiple: 0.84, fresh: true, stale: false, evaluated_at: '2026-08-17T10:30:00+08:00', data_as_of: '2026-08-14' },
-  '002594': { code: '002594', name: '比亚迪', plan_version: 1, period: 'ultra', period_label: '超短', period_window: '1–3个交易日', state: 'monitoring', action: '当前无需调整仓位', target_reduction_pct: 0, retain_pct: 100, confirmed_reduction_pct: 0, ordinary_trigger_count: 0, ordinary_triggers: [], decisive_triggers: [], near_risk_line: true, time: { trading_days_held: 1, max_days: 3, expired: false }, initial_risk_line: 112.20, current_risk_line: 112.40, customer_risk_price: 109.80, customer_target_price: null, risk_distance_pct: 0.57, initial_r: 4.00, r_multiple: -0.79, execution_constraints: ['买入当日受T+1限制，可调整数量可能为0'], fresh: true, stale: false, evaluated_at: '2026-08-17T10:30:00+08:00', data_as_of: '2026-08-17 10:25:00' },
-}
+
 const fixtures = {
-  '/api/holdings': { ok: true, holdings: [
-    { code: '601899', name: '紫金矿业', cost: 17.42, shares: 6000, industry: '工业金属', market_value: 112080, note: '核心观察仓', risk_plan: plans['601899'] },
-    { code: '300750', name: '宁德时代', cost: 274.80, shares: 300, industry: '电池', market_value: 86166, note: '只按计划处理', risk_plan: plans['300750'] },
-    { code: '002594', name: '比亚迪', cost: 116.20, shares: 500, industry: '汽车整车', market_value: 56525, note: '', risk_plan: plans['002594'] },
-  ], risk_states: riskStates },
-  '/api/holdings/risk': { ok: true, schema_version: 'holding-risk-evaluation-v1', algorithm_version: '1.0', states: riskStates },
-  '/api/quotes': { ok: true, quotes: {
-    '601899': { code: '601899', name: '紫金矿业', price: 18.68, change_pct: 2.30, source: 'TDX API', stale: false, as_of: '2026-08-17 10:31:18' },
-    '300750': { code: '300750', name: '宁德时代', price: 287.22, change_pct: 1.45, source: '腾讯财经', stale: false, as_of: '2026-08-17 10:31:19' },
-    '002594': { code: '002594', name: '比亚迪', price: 113.05, change_pct: -1.17, source: 'TDX API', stale: false, as_of: '2026-08-17 10:31:18' },
-  }, missing: [] },
-  '/api/shell-status': { ok: true, now_cn: '2026-08-17 10:31:20', market_phase: '交易中', client: { brand: '审计目标' } },
+  '/api/holdings': {
+    ok: true,
+    holdings: [
+      { code: '300750', name: '宁德时代', cost: 391.15, shares: 100, industry: '电池', market_value: 39115, weight_pct: null, stop_loss_price: 386.66, take_profit_price: null, horizon: 'short', entry_type: 'general', entry_date: '2026-08-01', note: '' },
+      { code: '510300', name: '沪深300ETF华泰柏瑞', cost: 4.68, shares: 1000, industry: '', market_value: 4680, weight_pct: null, stop_loss_price: null, take_profit_price: null, horizon: 'overnight', entry_type: 'general', entry_date: '2026-08-25', note: '' },
+      { code: '600519', name: '贵州茅台', cost: 1272.83, shares: 100, industry: '白酒', market_value: 127283, weight_pct: null, stop_loss_price: null, take_profit_price: 1360, horizon: 'swing', entry_type: 'pullback', entry_date: '2026-07-28', note: '' },
+    ],
+    portfolio_total_asset: null,
+  },
+  '/api/holdings/risk': {
+    ok: true, shadow_mode: true, push_enabled: false,
+    rule_version: 'holding-risk-v1-shadow-r2',
+    market_context: { benchmark: '沪深300', data_date: '2026-08-26' },
+    rows,
+  },
+  '/api/holdings/risk/refresh': {
+    ok: true, shadow_mode: true, push_enabled: false,
+    rule_version: 'holding-risk-v1-shadow-r2',
+    market_context: { benchmark: '沪深300', data_date: '2026-08-26' },
+    rows,
+  },
+  '/api/quotes': {
+    ok: true,
+    quotes: {
+      '300750': { code: '300750', name: '宁德时代', price: 379.90, change_pct: 0.84, source: '腾讯财经', stale: false, as_of: '2026-08-26 09:27:53' },
+      '510300': { code: '510300', name: '沪深300ETF华泰柏瑞', price: 4.615, change_pct: -0.02, source: '腾讯财经', stale: false, as_of: '2026-08-26 09:27:53' },
+      '600519': { code: '600519', name: '贵州茅台', price: 1300, change_pct: -0.31, source: '腾讯财经', stale: false, as_of: '2026-08-26 09:27:53' },
+    },
+    missing: [],
+  },
+  '/api/shell-status': { ok: true, now_cn: '2026-08-26 09:27:53', market_phase: '交易中', client: { brand: '审计目标' } },
+}
+
+function summarizeViolations(violations) {
+  return violations.map((item) => ({
+    id: item.id,
+    impact: item.impact,
+    help: item.help,
+    nodes: item.nodes.map((node) => ({
+      target: node.target,
+      html: node.html,
+      failureSummary: node.failureSummary,
+    })),
+  }))
 }
 
 await mkdir(outputDir, { recursive: true })
-const server = await createServer({ root, configFile: false, plugins: [vue()], server: { host: '127.0.0.1', port: 4176, strictPort: true }, logLevel: 'error' })
+const server = await createServer({
+  root,
+  configFile: false,
+  plugins: [vue()],
+  server: { host: '127.0.0.1', port: 4176, strictPort: true },
+  logLevel: 'error',
+})
 await server.listen()
 const browser = await chromium.launch({ executablePath: chromePath, headless: true })
 const results = []
@@ -47,11 +114,14 @@ try {
   for (const scenario of [
     { name: 'phone-375-dark', width: 375, height: 812, theme: 'dark' },
     { name: 'phone-landscape-dark', width: 812, height: 375, theme: 'dark' },
-    { name: 'wide-1440-dark', width: 1440, height: 1000, theme: 'dark' },
+    { name: 'wide-1280-dark', width: 1280, height: 900, theme: 'dark' },
     { name: 'wide-1440-light', width: 1440, height: 1000, theme: 'light' },
     { name: 'wide-1920-light', width: 1920, height: 1080, theme: 'light' },
   ]) {
-    const page = await browser.newPage({ viewport: { width: scenario.width, height: scenario.height }, deviceScaleFactor: 1 })
+    const page = await browser.newPage({
+      viewport: { width: scenario.width, height: scenario.height },
+      deviceScaleFactor: 1,
+    })
     const pageErrors = []
     page.on('pageerror', (error) => pageErrors.push(error.message))
     await page.emulateMedia({ reducedMotion: 'reduce' })
@@ -59,94 +129,102 @@ try {
     await page.route('**/api/**', async (route) => {
       const path = new URL(route.request().url()).pathname
       const body = fixtures[path] || { ok: true }
-      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(body),
+      })
     })
     await page.goto('http://127.0.0.1:4176/#/risk?tab=holdings', { waitUntil: 'networkidle' })
-    await page.waitForSelector('.holding-risk-card')
+    await page.waitForSelector('.position-card')
     await page.addScriptTag({ content: axeSource })
-    const violations = await page.evaluate(async () => (await window.axe.run(document, { rules: { 'color-contrast': { enabled: true } } })).violations)
+    const violations = await page.evaluate(async () => (
+      await window.axe.run(document, { rules: { 'color-contrast': { enabled: true } } })
+    ).violations)
     const pageHeightBeforeDialog = await page.evaluate(() => document.documentElement.scrollHeight)
-    const layout = await page.evaluate(() => ({
-      noPageOverflow: document.documentElement.scrollWidth <= window.innerWidth,
-      cardCount: document.querySelectorAll('.holding-risk-card').length,
-      hasPercentAction: document.body.textContent.includes('建议将该持仓降低33%'),
-      evidenceDetailsHidden: !document.body.textContent.includes('收益观察区内出现2项滞涨特征') && !document.body.textContent.includes('执行限制：'),
-      hasPnlPercent: document.body.textContent.includes('浮动盈亏比例') && document.body.textContent.includes('+3.96%'),
-      decisionsInEvidenceSummary: [...document.querySelectorAll('.holding-risk-card')].every((card) => Boolean(card.querySelector('.holding-risk-card__metrics > .holding-risk-card__evidence-summary'))),
-      periodCardCompressed: window.innerWidth <= 720 || [...document.querySelectorAll('.holding-risk-card__metrics')].every((metrics) => {
-        const period = metrics.querySelector('.holding-risk-card__metric--period')?.getBoundingClientRect()
-        return Boolean(period && period.width < metrics.getBoundingClientRect().width / 2)
-      }),
-      metricGridGapsCompact: window.innerWidth <= 1280 || [...document.querySelectorAll('.holding-risk-card__metrics')].every((metrics) => {
-        const cards = [...metrics.children].map((card) => card.getBoundingClientRect())
-        const gaps = cards.slice(1).map((card, index) => card.left - cards[index].right)
-        return gaps.every((gap) => gap >= 5 && gap <= 7)
-      }),
-      metricsSingleRowOnDesktop: window.innerWidth <= 1280 || [...document.querySelectorAll('.holding-risk-card__metrics')].every((metrics) => {
-        const tops = [...metrics.children].map((card) => Math.round(card.getBoundingClientRect().top))
-        return new Set(tops).size === 1
-      }),
-    }))
-    await page.screenshot({ path: resolve(outputDir, `holdings-risk-${scenario.name}.png`), fullPage: true })
-
-    await page.locator('.holding-risk-card__evidence-summary button').first().click()
-    await page.waitForSelector('.holding-evidence-dialog[open]')
-    const evidenceDialogViolations = await page.evaluate(async () => (await window.axe.run(document, { rules: { 'color-contrast': { enabled: true } } })).violations)
-    const evidenceDialogLayout = await page.evaluate((heightBefore) => {
-      const dialog = document.querySelector('.holding-evidence-dialog')
-      const rect = dialog?.getBoundingClientRect()
+    const layout = await page.evaluate(() => {
+      const cards = [...document.querySelectorAll('.position-card')]
+      const list = document.querySelector('.position-list')?.getBoundingClientRect()
+      const firstSnapshot = document.querySelector('.position-snapshot')?.getBoundingClientRect()
+      const firstDecision = document.querySelector('.decision-panel')?.getBoundingClientRect()
+      const targets = [...document.querySelectorAll('.holdings-page button, .holdings-page summary')]
+        .filter((node) => node.getClientRects().length)
+        .map((node) => node.getBoundingClientRect())
       return {
-        modalTopLayer: dialog instanceof HTMLDialogElement && dialog.matches(':modal'),
-        pageFlowStable: document.documentElement.scrollHeight === heightBefore,
         noPageOverflow: document.documentElement.scrollWidth <= window.innerWidth,
-        focusInsideDialog: dialog instanceof HTMLDialogElement && dialog.contains(document.activeElement),
-        withinViewport: Boolean(rect && rect.top >= 0 && rect.left >= 0 && rect.right <= window.innerWidth && rect.bottom <= window.innerHeight),
-        detailsVisible: document.body.textContent.includes('收益观察区内出现2项滞涨特征'),
+        cardCount: cards.length === 3,
+        cardsUseFullWidth: Boolean(list && cards.every((card) => Math.abs(card.getBoundingClientRect().width - list.width) <= 2)),
+        portfolioMetricCount: document.querySelectorAll('.portfolio-metrics > div').length === 5,
+        portfolioActionVisible: document.body.textContent.includes('今日需处理 2只'),
+        actionsVisible: document.body.textContent.includes('退出当前可卖持仓') && document.body.textContent.includes('继续持有，观察突破'),
+        touchTargets: targets.every((rect) => rect.height >= 43.5),
+        desktopTwoColumns: window.innerWidth <= 820 || Boolean(firstSnapshot && firstDecision && Math.abs(firstSnapshot.top - firstDecision.top) <= 2),
+        mobileStacked: window.innerWidth > 820 || Boolean(firstSnapshot && firstDecision && firstDecision.top >= firstSnapshot.bottom - 2),
       }
-    }, pageHeightBeforeDialog)
-    await page.screenshot({ path: resolve(outputDir, `holdings-evidence-dialog-${scenario.name}.png`) })
-    await page.keyboard.press('Escape')
-    await page.waitForSelector('.holding-evidence-dialog[open]', { state: 'detached' })
-    await page.waitForFunction(() => document.activeElement?.classList.contains('holding-risk-card__evidence-trigger'))
-    const evidenceFocusReturnedToTrigger = await page.evaluate(() => document.activeElement?.classList.contains('holding-risk-card__evidence-trigger'))
+    })
+    await page.screenshot({
+      path: resolve(outputDir, 'holdings-risk-' + scenario.name + '.png'),
+      fullPage: true,
+    })
+
+    await page.locator('.evidence-popover summary').first().click()
+    await page.waitForSelector('.evidence-popover[open]')
+    const evidenceViolations = await page.evaluate(async () => (
+      await window.axe.run(document, { rules: { 'color-contrast': { enabled: true } } })
+    ).violations)
+    const evidenceLayout = await page.evaluate(() => {
+      const popover = document.querySelector('.evidence-popover[open] .evidence-popover__content')
+      const rect = popover?.getBoundingClientRect()
+      return {
+        detailsVisible: document.body.textContent.includes('有效跌破算法风险线 386.66'),
+        noPageOverflow: document.documentElement.scrollWidth <= window.innerWidth,
+        withinViewport: Boolean(rect && rect.left >= 0 && rect.top >= 0 && rect.right <= window.innerWidth && rect.bottom <= window.innerHeight),
+      }
+    })
+    await page.screenshot({ path: resolve(outputDir, 'holdings-evidence-' + scenario.name + '.png') })
+    await page.locator('.holdings-board__header h2').click()
+    await page.waitForFunction(() => !document.querySelector('.evidence-popover[open]'))
+    const evidenceClosedOnOutsideClick = await page.evaluate(() => !document.querySelector('.evidence-popover[open]'))
 
     await page.getByRole('button', { name: '添加持仓', exact: true }).click()
-    await page.waitForSelector('.holdings-editor-dialog[open]')
-    const dialogViolations = await page.evaluate(async () => (await window.axe.run(document, { rules: { 'color-contrast': { enabled: true } } })).violations)
+    await page.waitForSelector('.holding-dialog[open]')
+    const dialogViolations = await page.evaluate(async () => (
+      await window.axe.run(document, { rules: { 'color-contrast': { enabled: true } } })
+    ).violations)
     const dialogLayout = await page.evaluate((heightBefore) => {
-      const dialog = document.querySelector('.holdings-editor-dialog')
+      const dialog = document.querySelector('.holding-dialog')
       const rect = dialog?.getBoundingClientRect()
+      const targets = [...document.querySelectorAll('.holding-dialog button, .holding-dialog input, .holding-dialog select, .holding-dialog textarea')]
+        .filter((node) => node.getClientRects().length)
+        .map((node) => node.getBoundingClientRect())
       return {
         modalTopLayer: dialog instanceof HTMLDialogElement && dialog.matches(':modal'),
         pageFlowStable: document.documentElement.scrollHeight === heightBefore,
         noPageOverflow: document.documentElement.scrollWidth <= window.innerWidth,
         focusInsideDialog: dialog instanceof HTMLDialogElement && dialog.contains(document.activeElement),
         withinViewport: Boolean(rect && rect.top >= 0 && rect.left >= 0 && rect.right <= window.innerWidth && rect.bottom <= window.innerHeight),
+        touchTargets: targets.every((rect) => rect.height >= 43.5),
       }
     }, pageHeightBeforeDialog)
-    await page.screenshot({ path: resolve(outputDir, `holdings-add-dialog-${scenario.name}.png`) })
-    dialogLayout.submitReachable = await page.evaluate(() => {
-      const form = document.querySelector('.holdings-editor-dialog .holding-editor form')
-      const submit = document.querySelector('.holdings-editor-dialog button[type="submit"]')
-      if (!(form instanceof HTMLElement) || !(submit instanceof HTMLElement)) return false
-      form.scrollTop = form.scrollHeight
-      const rect = submit.getBoundingClientRect()
-      return rect.top >= 0 && rect.left >= 0 && rect.right <= window.innerWidth && rect.bottom <= window.innerHeight
-    })
+    await page.mouse.click(2, 2)
+    const editorStayedOpenAfterBackdropClick = await page.locator('.holding-dialog[open]').count() === 1
+    await page.screenshot({ path: resolve(outputDir, 'holdings-add-dialog-' + scenario.name + '.png') })
     await page.keyboard.press('Escape')
-    await page.waitForSelector('.holdings-editor-dialog[open]', { state: 'detached' })
+    await page.waitForSelector('.holding-dialog[open]', { state: 'detached' })
     await page.waitForFunction(() => document.activeElement?.textContent?.trim() === '添加持仓')
     const focusReturnedToTrigger = await page.evaluate(() => document.activeElement?.textContent?.trim() === '添加持仓')
+
     results.push({
       scenario: scenario.name,
       pageErrors,
-      violations: violations.map((item) => ({ id: item.id, impact: item.impact, help: item.help })),
-      evidenceDialogViolations: evidenceDialogViolations.map((item) => ({ id: item.id, impact: item.impact, help: item.help })),
-      dialogViolations: dialogViolations.map((item) => ({ id: item.id, impact: item.impact, help: item.help })),
+      violations: summarizeViolations(violations),
+      evidenceViolations: summarizeViolations(evidenceViolations),
+      dialogViolations: summarizeViolations(dialogViolations),
       layout,
-      evidenceDialogLayout,
+      evidenceLayout,
       dialogLayout,
-      evidenceFocusReturnedToTrigger,
+      evidenceClosedOnOutsideClick,
+      editorStayedOpenAfterBackdropClick,
       focusReturnedToTrigger,
     })
     await page.close()
@@ -156,7 +234,22 @@ try {
   await server.close()
 }
 
-const failed = results.some((item) => item.pageErrors.length || item.violations.length || item.evidenceDialogViolations.length || item.dialogViolations.length || !Object.values(item.layout).every(Boolean) || !Object.values(item.evidenceDialogLayout).every(Boolean) || !Object.values(item.dialogLayout).every(Boolean) || !item.evidenceFocusReturnedToTrigger || !item.focusReturnedToTrigger)
-await writeFile(resolve(outputDir, 'holdings-risk-audit.json'), JSON.stringify({ failed, results }, null, 2), 'utf8')
+const failed = results.some((item) => (
+  item.pageErrors.length
+  || item.violations.length
+  || item.evidenceViolations.length
+  || item.dialogViolations.length
+  || !Object.values(item.layout).every(Boolean)
+  || !Object.values(item.evidenceLayout).every(Boolean)
+  || !Object.values(item.dialogLayout).every(Boolean)
+  || !item.evidenceClosedOnOutsideClick
+  || !item.editorStayedOpenAfterBackdropClick
+  || !item.focusReturnedToTrigger
+))
+await writeFile(
+  resolve(outputDir, 'holdings-risk-audit.json'),
+  JSON.stringify({ failed, results }, null, 2),
+  'utf8',
+)
 console.log(JSON.stringify({ failed, results }, null, 2))
 if (failed) process.exitCode = 1

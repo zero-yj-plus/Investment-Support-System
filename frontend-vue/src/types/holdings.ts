@@ -1,115 +1,36 @@
+export type HoldingRiskState =
+  | 'blue'
+  | 'yellow'
+  | 'orange'
+  | 'red'
+  | 'gray'
+  | 'unconfigured'
+  | 'quote_missing'
+  | 'quote_stale'
+  | 'normal'
+  | 'near_stop'
+  | 'near_target'
+  | 'stop_triggered'
+  | 'target_triggered'
+
 export interface HoldingRecord {
-  code?: string | null
-  name?: string | null
+  code?: string | number
+  name?: string
   cost?: number | null
   shares?: number | null
-  industry?: string | null
-  weight_pct?: number | null
+  industry?: string
   market_value?: number | null
-  note?: string | null
-  risk_plan?: HoldingRiskPlan | null
+  weight_pct?: number | null
+  stop_loss_price?: number | null
+  take_profit_price?: number | null
+  horizon?: HoldingHorizon
+  entry_type?: HoldingEntryType
+  entry_date?: string | null
+  note?: string
 }
 
-export type HoldingPeriod = 'ultra' | 'short' | 'swing'
-export type TargetMode = 'reminder' | 'ordinary_trigger'
-
-export interface HoldingRiskPlan {
-  schema_version?: string
-  version?: number
-  period: HoldingPeriod
-  buy_date: string
-  customer_risk_price?: number | null
-  customer_target_price?: number | null
-  target_mode: TargetMode
-  confirmed_reduction_pct?: number
-  created_at?: string
-  updated_at?: string
-}
-
-export interface RiskTrigger {
-  code?: string
-  label?: string
-}
-
-export interface HoldingRiskState {
-  code?: string
-  name?: string
-  plan_version?: number
-  period?: HoldingPeriod
-  period_label?: string
-  period_window?: string
-  state?: 'monitoring' | 'pending_adjustment' | 'completed_adjustment' | 'data_insufficient' | 'unsupported' | string
-  action?: string
-  target_reduction_pct?: number
-  retain_pct?: number
-  confirmed_reduction_pct?: number
-  ordinary_trigger_count?: number
-  ordinary_triggers?: RiskTrigger[]
-  decisive_triggers?: RiskTrigger[]
-  near_risk_line?: boolean
-  target_touched?: boolean
-  target_note?: string | null
-  time?: { trading_days_held?: number; max_days?: number; expired?: boolean }
-  price?: number | null
-  initial_risk_line?: number | null
-  current_risk_line?: number | null
-  customer_risk_price?: number | null
-  customer_target_price?: number | null
-  risk_distance_pct?: number | null
-  initial_r?: number | null
-  r_multiple?: number | null
-  highest_price?: number | null
-  atr?: { daily_14?: number | null; primary_14?: number | null; method?: string }
-  structure?: { support?: number | null; pressure?: number | null; support_basis?: string; pressure_basis?: string }
-  execution_constraints?: string[]
-  fresh?: boolean
-  stale?: boolean
-  missing?: string[]
-  evaluated_at?: string
-  data_as_of?: string
-  data_note?: string
-}
-
-export interface HoldingsResponse {
-  ok: boolean
-  error?: string
-  portfolio_total_asset?: number | null
-  holdings?: HoldingRecord[] | null
-  risk_states?: Record<string, HoldingRiskState> | null
-}
-
-export interface HoldingsRiskResponse {
-  ok: boolean
-  error?: string
-  states?: Record<string, HoldingRiskState> | null
-}
-
-export interface HoldingQuote {
-  code?: string | null
-  name?: string | null
-  price?: number | null
-  change_pct?: number | null
-  source?: string | null
-  stale?: boolean | null
-  as_of?: string | null
-  quote_note?: string | null
-}
-
-export interface QuotesResponse {
-  ok: boolean
-  quotes?: Record<string, HoldingQuote> | null
-  missing?: string[] | null
-  error?: string
-}
-
-export interface QuoteResponse {
-  ok: boolean
-  state?: 'complete' | 'not_found' | 'quote_unavailable' | string
-  recognized?: boolean | null
-  error?: string
-  identity?: { name?: string | null } | null
-  quote?: HoldingQuote | null
-}
+export type HoldingHorizon = 'general' | 'overnight' | 'ultra' | 'short' | 'swing' | 'trend'
+export type HoldingEntryType = 'general' | 'breakout' | 'pullback' | 'event'
 
 export interface HoldingDraft {
   clientKey: string
@@ -120,8 +41,23 @@ export interface HoldingDraft {
   industry: string
   storedMarketValue: number | null
   storedWeightPct: number | null
+  stopLossPrice: number | null
+  takeProfitPrice: number | null
+  horizon: HoldingHorizon
+  entryType: HoldingEntryType
+  entryDate: string
   note: string
-  riskPlan: HoldingRiskPlan | null
+}
+
+export interface HoldingQuote {
+  code?: string
+  name?: string
+  price?: number | null
+  change_pct?: number | null
+  as_of?: string
+  source?: string
+  stale?: boolean
+  quote_note?: string
 }
 
 export interface HoldingView extends HoldingDraft {
@@ -133,19 +69,22 @@ export interface HoldingView extends HoldingDraft {
   pnl: number | null
   pnlPct: number | null
   holdingSharePct: number | null
-  riskState: HoldingRiskState | null
+  riskState: HoldingRiskState
+  riskLabel: string
+  stopDistancePct: number | null
+  targetDistancePct: number | null
+  algorithmRisk: HoldingRiskCard | null
 }
 
 export interface NewHoldingInput {
   code: string
   cost: number
   shares: number
-  buyDate: string
-  period: HoldingPeriod
-  customerRiskPrice: number | null
-  customerTargetPrice: number | null
-  targetMode: TargetMode
-  fees: number | null
+  stopLossPrice: number | null
+  takeProfitPrice: number | null
+  horizon: HoldingHorizon
+  entryType: HoldingEntryType
+  entryDate: string
   note: string
 }
 
@@ -155,12 +94,96 @@ export interface SaveHoldingPayload {
   cost: number
   shares: number
   note: string
-  weight_pct: null
+  weight_pct: number | null
+  stop_loss_price: number | null
+  take_profit_price: number | null
+  horizon: HoldingHorizon
+  entry_type: HoldingEntryType
+  entry_date: string | null
   market_value?: number
-  risk_plan?: HoldingRiskPlan
 }
 
-export interface HoldingActionResponse extends HoldingsResponse {
-  states?: Record<string, HoldingRiskState> | null
-  ended?: boolean
+export interface HoldingRiskCard {
+  code: string
+  name?: string
+  rule_version: string
+  shadow_mode: boolean
+  push_eligible: boolean
+  state: 'blue' | 'yellow' | 'orange' | 'red' | 'gray'
+  action: string
+  signal_type?: 'data' | 'hold' | 'warning' | 'customer_line' | 'risk_reduce' | 'risk_exit' | 'trend_reduce' | 'profit_take' | 'event_review' | 'event_exit' | 'time_risk'
+  signal_type_label?: string
+  confidence?: 'low' | 'medium' | 'high'
+  sector?: {
+    name?: string | null
+    change_pct?: number | null
+    stock_change_pct?: number | null
+    relative_today_pct?: number | null
+    data_date?: string | null
+    source?: string | null
+  }
+  summary: string
+  reasons: string[]
+  horizon: HoldingHorizon
+  horizon_label: string
+  entry_type?: HoldingEntryType
+  entry_type_label?: string
+  as_of?: string | null
+  evaluated_at?: string | null
+  price_basis?: string
+  coverage?: number
+  fresh?: boolean
+  stale?: boolean
+  refresh_failed_at?: string | null
+  refresh_error?: string | null
+  metrics?: Record<string, number | string | null>
+  levels?: {
+    manual_stop?: number | null
+    manual_target?: number | null
+    support?: number | null
+    support_basis?: string | null
+    resistance?: number | null
+    resistance_basis?: string | null
+    initial_stop?: number | null
+    initial_stop_basis?: string | null
+    current_structure_stop?: number | null
+    trailing_stop?: number | null
+    algorithm_stop?: number | null
+    target1?: number | null
+    target2?: number | null
+    risk_unit?: number | null
+  }
+  missing?: string[]
+}
+
+export interface HoldingsRiskResponse {
+  ok?: boolean
+  error?: string
+  shadow_mode?: boolean
+  push_enabled?: boolean
+  rule_version?: string
+  market_context?: Record<string, unknown>
+  rows?: Record<string, HoldingRiskCard>
+}
+
+export interface HoldingsResponse {
+  ok?: boolean
+  error?: string
+  holdings?: HoldingRecord[]
+  portfolio_total_asset?: number | null
+}
+
+export interface QuotesResponse {
+  ok?: boolean
+  error?: string
+  quotes?: Record<string, HoldingQuote>
+  missing?: Array<string | number>
+}
+
+export interface QuoteResponse {
+  recognized?: boolean
+  state?: string
+  error?: string
+  quote?: HoldingQuote | null
+  identity?: { name?: string } | null
 }

@@ -13,6 +13,7 @@ import type {
   SettingsActionKey,
   SettingsRequestKey,
   SettingsResponse,
+  ScheduledPushKey,
   StatusResponse,
 } from '../types/settings'
 
@@ -245,6 +246,21 @@ export function useSystemSettings() {
     '设置已由服务端保存并热生效。',
     [loadSettings, loadReadiness, loadStatus],
   )
+  const saveScheduledPush = async (key: ScheduledPushKey, enabled: boolean) => {
+    const saved = await mutate(
+      'save',
+      (signal) => putJson<MutationResponse>('/settings', { scheduled_push: { [key]: enabled } }, signal),
+      `自动飞书推送已${enabled ? '开启' : '关闭'}并立即生效。`,
+      [],
+    )
+    if (saved && settings.value?.settings) {
+      settings.value.settings.scheduled_push = {
+        ...settings.value.settings.scheduled_push,
+        [key]: enabled,
+      }
+    }
+    return saved
+  }
   const testPush = () => mutate(
     'pushTest',
     (signal) => postJson<MutationResponse>('/push/test', {}, signal),
@@ -329,7 +345,7 @@ export function useSystemSettings() {
   return {
     settings, status, jobs, datasources, readiness, receipts, outbox, agentRuns, models,
     errors, pending, loading, settingsWritable, actionMessage, actionError, activeAction,
-    lastCheckedAt, refreshAll, saveSettings, testPush, testModel, saveModel, activateModel,
+    lastCheckedAt, refreshAll, saveSettings, saveScheduledPush, testPush, testModel, saveModel, activateModel,
     deleteModel, runJob, acknowledgeDelivery, retryDelivery, clearFeedback,
   }
 }

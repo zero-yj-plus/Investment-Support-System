@@ -56,6 +56,14 @@ schedule:
 push:
   enabled: false
   via: feishu
+  # 五类核心任务的自动推送独立开关；默认均为 true。关闭不停止任务生成，
+  # 也不影响报告页上的手动推送。
+  scheduled:
+    morning: true
+    tail: true
+    close: true
+    evening: true
+    archive: true
   gateway:
     targets: []
 

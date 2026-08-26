@@ -81,6 +81,7 @@ class _JobEngine:
     def __init__(self):
         self.store = _Store()
         self.calls: list[tuple[str, bool]] = []
+        self.archive_calls: list[bool] = []
         self.feishu = _ReadyPusher()
 
     async def generate_report(self, rtype: str, push: bool = False) -> dict:
@@ -88,7 +89,8 @@ class _JobEngine:
         return {"rtype": rtype, "content_md": "已定稿", "pushed": push}
 
     async def archive_today(self, push: bool = False) -> dict:
-        return {"pushed": push}
+        self.archive_calls.append(push)
+        return {"date": "2026-07-13", "reports": {}, "pushed": push}
 
 
 @pytest.mark.asyncio
@@ -103,6 +105,35 @@ async def test_midday_is_internal_draft_and_tail_is_only_customer_push() -> None
     assert engine.store.states["midday"]["last_push_ok"] is None
     assert engine.store.states["midday"]["last_push_time"] is None
     assert engine.store.states["tail"]["last_push_ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_scheduled_push_switches_are_independent_and_only_gate_delivery() -> None:
+    class PartialPushConfig(_Config):
+        scheduled_push = {
+            "morning": True,
+            "tail": False,
+            "close": True,
+            "evening": True,
+            "archive": False,
+        }
+
+    engine = _JobEngine()
+    scheduler = build_scheduler(PartialPushConfig(), engine)
+
+    morning = await scheduler.run_job("morning")
+    tail = await scheduler.run_job("tail")
+    archive = await scheduler.run_job("archive")
+
+    assert engine.calls == [("morning", True), ("tail", False)]
+    assert engine.archive_calls == [False]
+    assert morning["status"] == "ok"
+    assert tail["status"] == "ok"
+    assert tail["generated"] is True
+    assert tail["pushed"] is False
+    assert engine.store.states["tail"]["last_push_ok"] is None
+    assert archive["status"] == "ok"
+    assert archive["generated"] is True
 
 
 @pytest.mark.asyncio

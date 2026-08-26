@@ -1282,6 +1282,8 @@ class Store:
         # 静默跳过会让用户以为已保存、实际丢条目。
         if not isinstance(holdings, list):
             raise ValueError("持仓必须是列表")
+        if len(holdings) > 50:
+            raise ValueError("持仓最多 50 条")
         if total_asset not in (None, ""):
             try:
                 total_asset = float(total_asset)
@@ -1298,13 +1300,15 @@ class Store:
         }
         cleaned = []
         seen_codes: set[str] = set()
-        for h in holdings[:50]:
+        for h in holdings:
             if not isinstance(h, dict):
                 raise ValueError("持仓条目应为对象")
             code = str(h.get("code", "")).strip()
             if not code:
                 continue
             normalised_code = code.zfill(6)
+            if not re.fullmatch(r"\d{6}", normalised_code):
+                raise ValueError(f"持仓代码 {normalised_code} 应为 6 位数字")
             if normalised_code in seen_codes:
                 raise ValueError(f"持仓代码 {normalised_code} 重复")
             try:
@@ -1337,33 +1341,64 @@ class Store:
                 market_value = cost * shares
             if not math.isfinite(market_value) or market_value <= 0:
                 raise ValueError(f"持仓 {normalised_code} 的市值必须是正的有限数字")
+            risk_prices: dict[str, float | None] = {}
+            for field, label in (
+                ("stop_loss_price", "止损价"),
+                ("take_profit_price", "止盈价"),
+            ):
+                value = h.get(field)
+                if value in (None, ""):
+                    risk_prices[field] = None
+                    continue
+                try:
+                    value = float(value)
+                except (TypeError, ValueError):
+                    raise ValueError(f"持仓 {normalised_code} 的{label}不是有效数字") from None
+                if not math.isfinite(value) or value <= 0:
+                    raise ValueError(f"持仓 {normalised_code} 的{label}必须大于 0")
+                risk_prices[field] = value
+            stop_loss_price = risk_prices["stop_loss_price"]
+            take_profit_price = risk_prices["take_profit_price"]
+            if (
+                stop_loss_price is not None
+                and take_profit_price is not None
+                and stop_loss_price >= take_profit_price
+            ):
+                raise ValueError(f"持仓 {normalised_code} 的止损价必须低于止盈价")
+            horizon = str(h.get("horizon") or "general").strip().lower()
+            if horizon not in {"general", "overnight", "ultra", "short", "swing", "trend"}:
+                raise ValueError(f"持仓 {normalised_code} 的计划周期不合法")
+            entry_type = str(h.get("entry_type") or "general").strip().lower()
+            if entry_type not in {"general", "breakout", "pullback", "event"}:
+                raise ValueError(f"持仓 {normalised_code} 的买入逻辑不合法")
+            entry_date = str(h.get("entry_date") or "").strip()[:10] or None
+            if entry_date is not None:
+                try:
+                    datetime.strptime(entry_date, "%Y-%m-%d")
+                except ValueError:
+                    raise ValueError(
+                        f"持仓 {normalised_code} 的买入日期格式应为 YYYY-MM-DD"
+                    ) from None
             if weight_pct is None and total_asset is not None:
                 weight_pct = market_value / total_asset * 100
                 if weight_pct > 100:
                     raise ValueError(f"持仓 {normalised_code} 市值超过账户总资产")
             seen_codes.add(normalised_code)
-            previous_row = existing_by_code.get(normalised_code) or {}
-            previous_plan = previous_row.get("risk_plan") if isinstance(previous_row, dict) else None
-            if isinstance(previous_plan, dict):
-                previous_cost = float(previous_row.get("cost") or 0)
-                previous_shares = float(previous_row.get("shares") or 0)
-                if abs(cost - previous_cost) > 1e-9 or abs(shares - previous_shares) > 1e-9:
-                    raise ValueError(f"持仓 {normalised_code} 已建立风险计划，成本或数量变更请使用补仓/重规划")
-                risk_plan = dict(previous_plan)
-            else:
-                risk_plan = self._normalise_holding_risk_plan(h.get("risk_plan"), previous=None)
             cleaned_row = {
-                    "code": normalised_code,
-                    "name": str(h.get("name", ""))[:30],
-                    "cost": cost,
-                    "shares": shares,
-                    "industry": str(h.get("industry") or h.get("sector") or "")[:80],
-                    "weight_pct": weight_pct,
-                    "market_value": market_value,
-                    "note": str(h.get("note", ""))[:200],
+                "code": normalised_code,
+                "name": str(h.get("name", ""))[:30],
+                "cost": cost,
+                "shares": shares,
+                "industry": str(h.get("industry") or h.get("sector") or "")[:80],
+                "weight_pct": weight_pct,
+                "market_value": market_value,
+                "stop_loss_price": stop_loss_price,
+                "take_profit_price": take_profit_price,
+                "horizon": horizon,
+                "entry_type": entry_type,
+                "entry_date": entry_date,
+                "note": str(h.get("note", ""))[:200],
             }
-            if risk_plan is not None:
-                cleaned_row["risk_plan"] = risk_plan
             cleaned.append(cleaned_row)
         if total_asset is not None:
             total_market_value = sum(float(row.get("market_value") or 0) for row in cleaned)
@@ -1372,10 +1407,8 @@ class Store:
         self._write_json(self._holdings_path, cleaned)
         removed_codes = set(existing_by_code) - seen_codes
         for removed_code in sorted(removed_codes):
-            previous_plan = existing_by_code[removed_code].get("risk_plan") if isinstance(existing_by_code[removed_code], dict) else None
             self.append_holding_risk_event({
                 "type": "holding_ended", "code": removed_code,
-                "plan_version": int((previous_plan or {}).get("version") or 0),
                 "reason": "user_removed_from_holdings",
             })
         if total_asset is not None:

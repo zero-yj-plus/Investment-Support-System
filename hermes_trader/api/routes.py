@@ -62,7 +62,12 @@ from ..analysis import (sentiment as senti, features, timing as timing_mod, quan
                         watchlist_zones as watchlist_zones_mod,
                         holdings_risk as holdings_risk_mod,
                         technical_screener as technical_screener_mod)
-from ..jobs.scheduler import JOB_NAMES, apply_schedule, task_center_status  # noqa: E402
+from ..jobs.scheduler import (  # noqa: E402
+    JOB_NAMES,
+    SCHEDULED_PUSH_JOB_IDS,
+    apply_schedule,
+    task_center_status,
+)
 from ..product_state import build_market_context, route_lifecycle_contract  # noqa: E402
 from ..decision.risk_gate import evaluate_risk_gate  # noqa: E402
 from ..simulation import SimulationError  # noqa: E402
@@ -4423,11 +4428,9 @@ async def export_push(request: Request, file: UploadFile = File(...), caption: s
 async def get_holdings(request: Request):
     st = _state(request)
     store = st.store
-    service = getattr(st, "holding_risk", None)
     return {
         "ok": True,
         "holdings": store.holdings(),
-        "risk_states": service.snapshots() if service is not None else store.holdings_risk_states(),
         "portfolio_total_asset": store.portfolio_meta().get("total_asset"),
     }
 
@@ -4482,7 +4485,6 @@ async def put_holdings(request: Request):
     return {
         "ok": True,
         "holdings": st.store.holdings(),
-        "risk_states": service.snapshots() if service is not None else st.store.holdings_risk_states(),
     }
 
 
@@ -4490,12 +4492,25 @@ async def put_holdings(request: Request):
 async def get_holdings_risk(request: Request):
     st = _state(request)
     service = getattr(st, "holding_risk", None)
-    states = service.snapshots() if service is not None else st.store.holdings_risk_states()
+    if service is not None:
+        rows = service.snapshots()
+        market_context = service.market_context()
+    else:
+        rows = {
+            str(code).zfill(6): {
+                key: value for key, value in state.items() if key != "runtime_state"
+            }
+            for code, state in st.store.holdings_risk_states().items()
+            if isinstance(state, dict)
+        }
+        market_context = {}
     return {
         "ok": True,
-        "schema_version": holdings_risk_mod.SCHEMA_VERSION,
-        "algorithm_version": holdings_risk_mod.ALGORITHM_VERSION,
-        "states": states,
+        "shadow_mode": True,
+        "push_enabled": False,
+        "rule_version": holdings_risk_mod.RULE_VERSION,
+        "market_context": market_context,
+        "rows": rows,
     }
 
 
@@ -5874,8 +5889,27 @@ async def put_settings(request: Request):
     allowed = {
         "feishu_webhook", "feishu_secret", "push_enabled",
         "hermes_base_url", "hermes_model", "hermes_api_key", "schedule",
+        "scheduled_push",
     }
     patch = {k: v for k, v in body.items() if k in allowed}
+    if "scheduled_push" in patch:
+        scheduled_push = patch["scheduled_push"]
+        if not isinstance(scheduled_push, dict) or not scheduled_push:
+            return JSONResponse(
+                {"ok": False, "error": "定时飞书推送开关必须是非空对象"},
+                status_code=400,
+            )
+        unknown = set(scheduled_push) - SCHEDULED_PUSH_JOB_IDS
+        if unknown or any(not isinstance(value, bool) for value in scheduled_push.values()):
+            return JSONResponse(
+                {"ok": False, "error": "定时飞书推送开关包含未知任务或非布尔值"},
+                status_code=400,
+            )
+        patch["scheduled_push"] = {
+            key: scheduled_push[key]
+            for key in SCHEDULED_PUSH_JOB_IDS
+            if key in scheduled_push
+        }
     # 三类凭据留空="不修改"（GET 不回传明文），避免把脱敏占位写回。
     if not str(patch.get("feishu_webhook", "")).strip():
         patch.pop("feishu_webhook", None)

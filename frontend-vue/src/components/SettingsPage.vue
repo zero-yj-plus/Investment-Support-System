@@ -14,7 +14,7 @@ const emit = defineEmits<{ refreshState: [value: boolean] }>()
 const {
   settings, status, jobs, datasources, readiness, receipts, outbox, agentRuns, models,
   errors, pending, loading, settingsWritable, actionMessage, actionError, activeAction,
-  lastCheckedAt, refreshAll, saveSettings, testPush, testModel, saveModel, activateModel,
+  lastCheckedAt, refreshAll, saveSettings, saveScheduledPush, testPush, testModel, saveModel, activateModel,
   deleteModel, runJob, acknowledgeDelivery, retryDelivery, clearFeedback,
 } = useSystemSettings()
 
@@ -44,6 +44,10 @@ function primaryAction(target: string) {
 function retryAll() {
   clearFeedback()
   void refreshAll()
+}
+
+function updateScheduledPush(key: Parameters<typeof saveScheduledPush>[0], enabled: boolean, complete: (saved: boolean) => void) {
+  void saveScheduledPush(key, enabled).then(complete)
 }
 
 onBeforeUnmount(() => {
@@ -79,7 +83,7 @@ defineExpose({ refresh: refreshAll })
     <template v-else>
       <SettingsReadiness :settings="settings" :status="status" :jobs="jobs" :datasources="datasources" :readiness="readiness" :models="models" :errors="errors" :loading="loading" @primary="primaryAction" />
 
-      <SettingsTaskPanel v-if="props.section === 'tasks'" :jobs="jobs" :settings="settings?.settings || null" :status="status" :loading="pending.jobs || pending.settings" :error="errors.jobs" :writable="settingsWritable" :busy="activeAction === 'save' || activeAction === 'job'" @save="saveSettings" @run-job="runJob" @retry="retryAll" />
+      <SettingsTaskPanel v-if="props.section === 'tasks'" :jobs="jobs" :settings="settings?.settings || null" :status="status" :loading="pending.jobs || pending.settings" :error="errors.jobs" :writable="settingsWritable" :busy="activeAction === 'save' || activeAction === 'job'" @save="saveSettings" @save-scheduled-push="updateScheduledPush" @run-job="runJob" @retry="retryAll" />
 
       <SettingsDeliveryPanel
         v-else-if="props.section === 'delivery'"

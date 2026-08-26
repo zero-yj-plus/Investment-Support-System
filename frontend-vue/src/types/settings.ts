@@ -12,6 +12,16 @@ export interface ScheduleSettings {
   archive?: string | null
 }
 
+export interface ScheduledPushSettings {
+  morning?: boolean | null
+  tail?: boolean | null
+  close?: boolean | null
+  evening?: boolean | null
+  archive?: boolean | null
+}
+
+export type ScheduledPushKey = keyof ScheduledPushSettings
+
 export interface ModelConnection {
   id?: string | null
   name?: string | null
@@ -30,6 +40,7 @@ export interface SettingsView {
   push_enabled?: boolean | null
   push_via?: string | null
   schedule?: ScheduleSettings | null
+  scheduled_push?: ScheduledPushSettings | null
   active_model_connection_id?: string | null
   model_connections?: ModelConnection[] | null
   hermes_integration?: {

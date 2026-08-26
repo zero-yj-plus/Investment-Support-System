@@ -1,33 +1,54 @@
 <script setup lang="ts">
-import { nextTick, onMounted, ref } from 'vue'
-import type { HoldingDraft, HoldingPeriod, NewHoldingInput, TargetMode } from '../types/holdings'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import type { HoldingDraft, NewHoldingInput } from '../types/holdings'
 import { finiteNumber, formatMoney } from '../utils/holdingsFormat'
-import StockAutocomplete from './StockAutocomplete.vue'
 
 const props = defineProps<{
-  adding: boolean
+  open: boolean
+  mode: 'add' | 'edit'
+  holding: HoldingDraft | null
+  busy: boolean
   serverError: string
-  mode?: 'add' | 'replan'
-  initial?: HoldingDraft | null
 }>()
 
 const emit = defineEmits<{
   submit: [input: NewHoldingInput]
-  cancel: []
+  close: []
+  remove: []
 }>()
 
-const code = ref(props.initial?.code || '')
-const cost = ref(props.initial?.cost == null ? '' : String(props.initial.cost))
-const shares = ref(props.initial?.shares == null ? '' : String(props.initial.shares))
-const buyDate = ref(props.initial?.riskPlan?.buy_date || '')
-const period = ref<HoldingPeriod>(props.initial?.riskPlan?.period || 'short')
-const customerRiskPrice = ref(props.initial?.riskPlan?.customer_risk_price == null ? '' : String(props.initial.riskPlan.customer_risk_price))
-const customerTargetPrice = ref(props.initial?.riskPlan?.customer_target_price == null ? '' : String(props.initial.riskPlan.customer_target_price))
-const targetMode = ref<TargetMode>(props.initial?.riskPlan?.target_mode || 'reminder')
-const fees = ref('')
-const note = ref(props.initial?.note || '')
+const dialog = ref<HTMLDialogElement | null>(null)
+const codeInput = ref<HTMLInputElement | null>(null)
+const code = ref('')
+const cost = ref('')
+const shares = ref('')
+const horizon = ref<NewHoldingInput['horizon']>('swing')
+const entryType = ref<NewHoldingInput['entryType']>('general')
+const entryDate = ref('')
+const stopLossPrice = ref('')
+const takeProfitPrice = ref('')
+const note = ref('')
 const localError = ref('')
-const codeInput = ref<InstanceType<typeof StockAutocomplete> | null>(null)
+const confirmDelete = ref(false)
+let editorOpener: HTMLElement | null = null
+
+const isEdit = computed(() => props.mode === 'edit' && props.holding != null)
+const title = computed(() => isEdit.value ? `编辑持仓 · ${props.holding?.name || props.holding?.code}` : '添加持仓')
+
+function resetForm() {
+  const row = isEdit.value ? props.holding : null
+  code.value = row?.code || ''
+  cost.value = row?.cost == null ? '' : String(row.cost)
+  shares.value = row?.shares == null ? '' : String(row.shares)
+  horizon.value = row?.horizon || 'swing'
+  entryType.value = row?.entryType || 'general'
+  entryDate.value = row?.entryDate || ''
+  stopLossPrice.value = row?.stopLossPrice == null ? '' : String(row.stopLossPrice)
+  takeProfitPrice.value = row?.takeProfitPrice == null ? '' : String(row.takeProfitPrice)
+  note.value = row?.note || ''
+  localError.value = ''
+  confirmDelete.value = false
+}
 
 function expectedCost(): string {
   const parsedCost = finiteNumber(cost.value)
@@ -37,159 +58,251 @@ function expectedCost(): string {
     : '—'
 }
 
+function requestClose() {
+  if (!props.busy) emit('close')
+}
+
+function handleClosed() {
+  emit('close')
+  void nextTick(() => editorOpener?.focus())
+  editorOpener = null
+}
+
 function submit() {
   localError.value = ''
   const normalizedCode = code.value.replace(/\D/g, '')
   const parsedCost = finiteNumber(cost.value)
   const parsedShares = finiteNumber(shares.value)
-  const parsedRiskPrice = finiteNumber(customerRiskPrice.value)
-  const parsedTargetPrice = finiteNumber(customerTargetPrice.value)
-  const parsedFees = finiteNumber(fees.value)
+  const parsedStopLoss = finiteNumber(stopLossPrice.value)
+  const parsedTakeProfit = finiteNumber(takeProfitPrice.value)
+
   if (!/^\d{6}$/.test(normalizedCode)) {
     localError.value = '股票代码必须是 6 位数字。'
     void nextTick(() => codeInput.value?.focus())
     return
   }
   if (parsedCost == null || parsedCost <= 0) {
-    localError.value = '成本价必须是大于 0 的有效金额。'
+    localError.value = '持仓成本必须是大于 0 的有效金额。'
     return
   }
   if (parsedShares == null || parsedShares <= 0 || !Number.isInteger(parsedShares)) {
-    localError.value = '股数必须是大于 0 的整数。'
+    localError.value = '持仓数量必须是大于 0 的整数。'
     return
   }
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(buyDate.value)) {
-    localError.value = '请选择买入日期。'
+  if (stopLossPrice.value.trim() && parsedStopLoss == null) {
+    localError.value = '客户风险线必须是有效数字，或留空。'
     return
   }
-  if (parsedRiskPrice != null && parsedRiskPrice <= 0) {
+  if (parsedStopLoss != null && parsedStopLoss <= 0) {
     localError.value = '客户风险线必须大于 0，或留空。'
     return
   }
-  if (parsedTargetPrice != null && parsedTargetPrice <= 0) {
+  if (takeProfitPrice.value.trim() && parsedTakeProfit == null) {
+    localError.value = '客户目标价必须是有效数字，或留空。'
+    return
+  }
+  if (parsedTakeProfit != null && parsedTakeProfit <= 0) {
     localError.value = '客户目标价必须大于 0，或留空。'
     return
   }
-  if (parsedFees != null && parsedFees < 0) {
-    localError.value = '费用不能小于 0，或留空。'
+  if (parsedStopLoss != null && parsedTakeProfit != null && parsedStopLoss >= parsedTakeProfit) {
+    localError.value = '客户风险线必须低于客户目标价。'
     return
   }
+
   emit('submit', {
-    code: normalizedCode, cost: parsedCost, shares: parsedShares,
-    buyDate: buyDate.value, period: period.value,
-    customerRiskPrice: parsedRiskPrice, customerTargetPrice: parsedTargetPrice,
-    targetMode: targetMode.value, fees: parsedFees, note: note.value.trim(),
+    code: normalizedCode,
+    cost: parsedCost,
+    shares: parsedShares,
+    horizon: horizon.value,
+    entryType: entryType.value,
+    entryDate: entryDate.value,
+    stopLossPrice: parsedStopLoss,
+    takeProfitPrice: parsedTakeProfit,
+    note: note.value.trim(),
   })
 }
 
-onMounted(() => codeInput.value?.focus())
+function requestRemove() {
+  if (!confirmDelete.value) {
+    confirmDelete.value = true
+    return
+  }
+  emit('remove')
+}
+
+watch(
+  () => [props.open, props.mode, props.holding?.code] as const,
+  async ([open]) => {
+    if (!open) {
+      if (dialog.value?.open) dialog.value.close()
+      return
+    }
+    editorOpener = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    resetForm()
+    await nextTick()
+    if (dialog.value && !dialog.value.open) dialog.value.showModal()
+    await nextTick()
+    ;(isEdit.value ? dialog.value?.querySelector<HTMLElement>('input:not([disabled]), select') : codeInput.value)?.focus()
+  },
+  { immediate: true },
+)
+
+onBeforeUnmount(() => {
+  if (dialog.value?.open) dialog.value.close()
+})
 </script>
 
 <template>
-  <section class="panel holding-editor" aria-labelledby="holding-editor-title">
-    <header>
-      <div><p class="eyebrow">{{ props.mode === 'replan' ? '重置风险计划' : '新增账本条目' }}</p><h2 id="holding-editor-title">{{ props.mode === 'replan' ? '重新规划持仓' : '添加持仓' }}</h2></div>
-      <button type="button" class="secondary-button" :disabled="adding" @click="emit('cancel')">取消</button>
-    </header>
+  <Teleport to="body">
+  <dialog
+    ref="dialog"
+    class="holding-dialog"
+    aria-modal="true"
+    aria-labelledby="holding-dialog-title"
+    @cancel.prevent="requestClose"
+    @close="handleClosed"
+  >
     <form @submit.prevent="submit">
-      <div class="holding-editor__fields">
-        <div class="holding-editor__stock-field">
-          <StockAutocomplete
-            ref="codeInput"
-            v-model="code"
-            input-id="holding-stock-code"
-            label="股票代码"
-            placeholder="代码 / 中文 / 拼音 / 首字母"
-            required
-            :readonly="props.mode === 'replan'"
-            :display-name="props.initial?.name || ''"
-            :aria-invalid="Boolean(localError && !/^\d{6}$/.test(code))"
-            aria-describedby="holding-code-hint"
-          />
-          <small id="holding-code-hint">提交前通过真实单票接口核验</small>
+      <header class="holding-dialog__header">
+        <div>
+          <p class="eyebrow">{{ isEdit ? '持仓信息与监控方案' : '建立新的持仓监控' }}</p>
+          <h2 id="holding-dialog-title">{{ title }}</h2>
         </div>
-        <label>
-          <span>成本价（元/股）</span>
-          <input v-model="cost" required inputmode="decimal" autocomplete="off" />
-          <small>必须大于 0</small>
-        </label>
-        <label>
-          <span>持有股数（股）</span>
-          <input v-model="shares" required inputmode="numeric" autocomplete="off" />
-          <small>必须为正整数</small>
-        </label>
-        <label>
-          <span>买入日期</span>
-          <input v-model="buyDate" required type="date" autocomplete="off" />
-          <small>买入日计为第1个交易日</small>
-        </label>
-        <label>
-          <span>持仓周期</span>
-          <select v-model="period" required>
-            <option value="ultra">超短（1–3个交易日）</option>
-            <option value="short">短线（3–5个交易日）</option>
-            <option value="swing">波段（5–10个交易日）</option>
-          </select>
-          <small>默认短线；到期后持续显示</small>
-        </label>
-        <label>
-          <span>止损线（可选）</span>
-          <input v-model="customerRiskPrice" inputmode="decimal" autocomplete="off" />
-          <small>实时触及会建议降低100%</small>
-        </label>
-        <label>
-          <span>止盈线（可选）</span>
-          <input v-model="customerTargetPrice" inputmode="decimal" autocomplete="off" />
-          <small>默认只提醒</small>
-        </label>
-        <label>
-          <span>目标价处理</span>
-          <select v-model="targetMode">
-            <option value="reminder">只提醒，不计入触发</option>
-            <option value="ordinary_trigger">计入一次普通触发</option>
-          </select>
-          <small>单独触发时建议降低25%</small>
-        </label>
-        <label v-if="props.mode !== 'replan'">
-          <span>本次费用（可选）</span>
-          <input v-model="fees" inputmode="decimal" autocomplete="off" />
-          <small>重复代码补仓时计入综合成本</small>
-        </label>
-        <label class="holding-editor__note">
-          <span>备注（可选）</span>
-          <input v-model="note" maxlength="200" autocomplete="off" />
-          <small>只保存用户输入</small>
-        </label>
+        <button type="button" class="holding-dialog__close" :disabled="busy" @click="requestClose">关闭</button>
+      </header>
+
+      <div class="holding-dialog__body">
+        <fieldset>
+          <legend>持仓信息</legend>
+          <div class="holding-form-grid">
+            <label>
+              <span>股票代码 <b>必填</b></span>
+              <input ref="codeInput" v-model="code" inputmode="numeric" maxlength="6" autocomplete="off" :disabled="isEdit" />
+              <small>{{ isEdit ? '已添加持仓不支持更换股票代码' : '保存前将核验股票代码' }}</small>
+            </label>
+            <label>
+              <span>持仓成本（元/股）<b>必填</b></span>
+              <input v-model="cost" inputmode="decimal" autocomplete="off" />
+              <small>用于计算浮动盈亏和风险单位</small>
+            </label>
+            <label>
+              <span>持仓数量（股）<b>必填</b></span>
+              <input v-model="shares" inputmode="numeric" autocomplete="off" />
+              <small>必须为正整数</small>
+            </label>
+            <label>
+              <span>买入日期</span>
+              <input v-model="entryDate" type="date" autocomplete="off" />
+              <small>选填，用于时间止损和盈利保护</small>
+            </label>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>监控方案</legend>
+          <div class="holding-form-grid">
+            <label>
+              <span>持仓周期</span>
+              <select v-model="horizon">
+                <option value="general">通用监控</option><option value="overnight">隔日</option>
+                <option value="ultra">超短</option><option value="short">短线</option>
+                <option value="swing">波段</option><option value="trend">趋势</option>
+              </select>
+              <small>修改后会重新计算算法风险线</small>
+            </label>
+            <label>
+              <span>买入逻辑</span>
+              <select v-model="entryType">
+                <option value="general">未指定</option><option value="breakout">突破</option>
+                <option value="pullback">回踩</option><option value="event">事件</option>
+              </select>
+              <small>突破失败规则仅对突破型持仓启用</small>
+            </label>
+            <label>
+              <span>客户风险线</span>
+              <input v-model="stopLossPrice" inputmode="decimal" autocomplete="off" placeholder="选填" />
+              <small>达到或跌破时优先提示</small>
+            </label>
+            <label>
+              <span>客户目标价</span>
+              <input v-model="takeProfitPrice" inputmode="decimal" autocomplete="off" placeholder="选填" />
+              <small>达到或突破时优先提示</small>
+            </label>
+            <label class="holding-form-grid__wide">
+              <span>备注</span>
+              <textarea v-model="note" maxlength="200" rows="2" placeholder="选填，例如：等待业绩确认后再决定是否加仓"></textarea>
+              <small>最多 200 字</small>
+            </label>
+          </div>
+        </fieldset>
+
+        <div class="holding-dialog__summary">
+          <span>预计持仓成本</span><strong class="mono">{{ expectedCost() }}</strong>
+          <em>保存后，组合统计与算法风险卡会自动更新。</em>
+        </div>
+        <p v-if="localError || serverError" class="holding-dialog__error" role="alert">{{ localError || serverError }}</p>
       </div>
-      <div class="holding-editor__footer">
-        <p>预计持仓成本：<strong class="mono">{{ expectedCost() }}</strong></p>
-        <button type="submit" class="primary-button" :disabled="adding">{{ adding ? '处理中' : props.mode === 'replan' ? '确认重置计划' : '核验并加入' }}</button>
-      </div>
-      <p v-if="localError || serverError" class="holding-editor__error" role="alert">{{ localError || serverError }}</p>
+
+      <footer class="holding-dialog__footer">
+        <div>
+          <button v-if="isEdit" type="button" class="danger-button" :class="{ 'is-confirming': confirmDelete }" :disabled="busy" @click="requestRemove">
+            {{ confirmDelete ? '再次点击确认删除' : '删除持仓' }}
+          </button>
+        </div>
+        <div class="holding-dialog__actions">
+          <button type="button" class="secondary-button" :disabled="busy" @click="requestClose">取消</button>
+          <button type="submit" class="primary-button" :disabled="busy">
+            {{ busy ? '保存中…' : isEdit ? '保存修改' : '核验并添加' }}
+          </button>
+        </div>
+      </footer>
     </form>
-  </section>
+  </dialog>
+  </Teleport>
 </template>
 
 <style scoped>
-.holding-editor { overflow: hidden; }
-.holding-editor > header { display: flex; min-height: 68px; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
-.holding-editor h2 { margin: 0; font-size: 18px; }
-.holding-editor form { padding: 14px; }
-.holding-editor__fields { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
-.holding-editor label, .holding-editor__stock-field { display: grid; min-width: 0; align-content: start; gap: 5px; color: var(--text-2); font-size: 13px; font-weight: 680; }
-.holding-editor input, .holding-editor select { width: 100%; min-height: 44px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); color: var(--text); }
-.holding-editor input:focus, .holding-editor select:focus { border-color: var(--focus); }
-.holding-editor small, .holding-editor__stock-field > small { color: var(--text-3); font-size: 12px; font-weight: 500; }
-.holding-editor__footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
-.holding-editor__footer p { margin: 0; color: var(--text-2); }
-.holding-editor__footer strong { color: var(--text); font-size: 17px; }
-.holding-editor__error { margin: 10px 0 0; color: var(--danger); }
-@media (max-width: 900px) {
-  .holding-editor__fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.holding-dialog { width: min(760px, calc(100vw - 32px)); max-height: min(840px, calc(100dvh - 32px)); padding: 0; overflow: hidden; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); color: var(--text); }
+.holding-dialog::backdrop { background: rgb(5 11 20 / 60%); }
+.holding-dialog form { display: grid; max-height: min(840px, calc(100dvh - 32px)); grid-template-rows: auto minmax(0, 1fr) auto; }
+.holding-dialog__header, .holding-dialog__footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 18px; }
+.holding-dialog__header { border-bottom: 1px solid var(--border); }
+.holding-dialog__header h2 { margin: 1px 0 0; font-size: 20px; }
+.holding-dialog__close { min-width: 64px; min-height: 44px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); color: var(--text-2); font-size: 14px; cursor: pointer; }
+.holding-dialog__body { display: grid; gap: 14px; min-height: 0; overflow-y: auto; padding: 16px 18px; }
+.holding-dialog fieldset { min-width: 0; margin: 0; padding: 13px 14px 14px; border: 1px solid var(--border); border-radius: 10px; }
+.holding-dialog legend { padding: 0 7px; color: var(--text); font-size: 14px; font-weight: 800; }
+.holding-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px 14px; }
+.holding-form-grid label { display: grid; min-width: 0; gap: 5px; }
+.holding-form-grid label > span { color: var(--text-2); font-size: 13px; font-weight: 700; }
+.holding-form-grid label > span b { margin-left: 5px; color: var(--danger); font-size: 11px; }
+.holding-form-grid input, .holding-form-grid select, .holding-form-grid textarea { width: 100%; min-height: 44px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); color: var(--text); }
+.holding-form-grid input:focus, .holding-form-grid select:focus, .holding-form-grid textarea:focus { border-color: var(--focus); outline: 2px solid color-mix(in srgb, var(--focus) 22%, transparent); outline-offset: 1px; }
+.holding-form-grid input:disabled { color: var(--text-3); cursor: not-allowed; }
+.holding-form-grid textarea { resize: vertical; line-height: 1.5; }
+.holding-form-grid small { color: var(--text-3); font-size: 11px; }
+.holding-form-grid__wide { grid-column: 1 / -1; }
+.holding-dialog__summary { display: grid; grid-template-columns: auto auto minmax(0, 1fr); align-items: baseline; gap: 6px 10px; padding: 10px 12px; border-radius: 8px; background: var(--surface-2); color: var(--text-2); font-size: 12px; }
+.holding-dialog__summary strong { color: var(--text); font-size: 16px; }
+.holding-dialog__summary em { justify-self: end; color: var(--text-3); font-style: normal; }
+.holding-dialog__error { margin: 0; padding: 9px 11px; border-left: 3px solid var(--danger); background: color-mix(in srgb, var(--danger) 7%, var(--surface)); color: var(--danger); font-size: 13px; font-weight: 650; }
+.holding-dialog__footer { border-top: 1px solid var(--border); background: var(--surface); }
+.holding-dialog__actions { display: flex; gap: 8px; }
+.holding-dialog__footer button { min-height: 44px; }
+.holding-dialog button:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.danger-button.is-confirming { border-color: var(--danger); background: var(--danger); color: white; }
+@media (max-width: 620px) {
+  .holding-dialog { width: calc(100vw - 16px); max-height: calc(100dvh - 16px); }
+  .holding-dialog form { max-height: calc(100dvh - 16px); }
+  .holding-form-grid { grid-template-columns: minmax(0, 1fr); }
+  .holding-form-grid__wide { grid-column: auto; }
+  .holding-dialog__summary { grid-template-columns: auto 1fr; }
+  .holding-dialog__summary em { grid-column: 1 / -1; justify-self: start; }
+  .holding-dialog__footer { align-items: stretch; flex-direction: column-reverse; }
+  .holding-dialog__actions, .holding-dialog__actions button, .holding-dialog__footer > div:first-child button { width: 100%; }
 }
-@media (max-width: 520px) {
-  .holding-editor__fields { grid-template-columns: minmax(0, 1fr); }
-  .holding-editor__footer { align-items: stretch; flex-direction: column; }
-  .holding-editor__footer .primary-button { width: 100%; }
+@media (prefers-reduced-motion: reduce) {
+  .holding-dialog, .holding-dialog * { scroll-behavior: auto !important; }
 }
 </style>

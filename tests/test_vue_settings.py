@@ -149,6 +149,24 @@ def test_vue_settings_uses_safe_nodes_and_native_interactions() -> None:
     assert "填写核验依据后再确认或重试" in delivery
 
 
+def test_vue_settings_has_five_immediate_persistent_scheduled_push_switches() -> None:
+    task_panel = read(VUE / "src/components/SettingsTaskPanel.vue")
+    page = read(PAGE)
+    types = read(TYPES)
+
+    assert "const scheduledPushKeys: ScheduledPushKey[] = ['morning', 'tail', 'close', 'evening', 'archive']" in task_panel
+    assert "scheduled_push?: ScheduledPushSettings | null" in types
+    assert 'type="checkbox"' in task_panel
+    assert 'role="switch"' in task_panel
+    assert "emit('saveScheduledPush', key, next" in task_panel
+    assert "if (!saved) scheduledPush[key] = previous" in task_panel
+    assert "飞书开关切换后立即生效并单独持久化" in task_panel
+    assert "关闭只跳过自动推送，不停止任务生成" in task_panel
+    assert "const saveScheduledPush = async" in read(COMPOSABLE)
+    assert "function updateScheduledPush" in page
+    assert '@save-scheduled-push="updateScheduledPush"' in page
+
+
 def test_vue_settings_has_responsive_containment_and_accessible_targets() -> None:
     source = production_source()
     page = read(PAGE)
