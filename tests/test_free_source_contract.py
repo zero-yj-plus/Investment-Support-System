@@ -363,13 +363,36 @@ def test_free_limit_pool_distinguishes_empty_market_from_source_failure(monkeypa
     assert free_source.limit_list.__wrapped__("20260715", "U") is None
 
 
-def test_auction_is_explicitly_unavailable_without_a_dedicated_source(monkeypatch) -> None:
+def test_auction_uses_dedicated_source_and_never_fakes_closing_auction(monkeypatch) -> None:
     monkeypatch.setattr(
         free_source.tc,
         "quote",
         lambda _code: pytest.fail("不得用普通实时行情伪造集合竞价"),
     )
-    assert free_source.auction.__wrapped__("600004") is None
+    monkeypatch.setattr(
+        free_source._financial_api,
+        "auction_snapshot",
+        lambda _codes, _stage: {
+            "ok": True,
+            "item": [{"ticker": "600004", "auction_price": 11.2, "auction_volume": 35}],
+            "auction_phase": "final",
+            "data_status": "final",
+            "data_timestamp_ms": 123,
+            "timestamp_semantics": "response_assembly_time",
+            "field_units": {"auction_volume": "lot"},
+            "source": "同花顺金融数据服务",
+            "fetched_at": "2026-08-27T01:25:00Z",
+            "request_id": "auction-test",
+            "missing_semantics": "never_zero_fill",
+        },
+    )
+
+    result = free_source.auction.__wrapped__("600004")
+
+    assert result["auction_price"] == 11.2
+    assert result["auction_volume"] == 35
+    assert result["field_units"]["auction_volume"] == "lot"
+    assert result["source"] == "同花顺金融数据服务"
     assert free_source.auction_oc.__wrapped__("600004") is None
 
 
@@ -435,6 +458,89 @@ def test_ths_limit_reason_respects_page_limit_and_china_timezone(monkeypatch) ->
     assert reasons["000001"]["suc_rate_pct"] == 75.0
     assert reasons["000001"]["high_days"] == "2天2板"
     assert reasons["000001"]["seal_amount"] == 12_000_000
+
+
+def test_ths_limit_pool_all_zero_seals_do_not_enter_offhours_long_cache() -> None:
+    zero_snapshot = {
+        "ok": True,
+        "stocks": [
+            {"code": "000001", "seal_amount": 0},
+            {"code": "000002", "seal_amount": None},
+        ],
+    }
+    final_snapshot = {
+        "ok": True,
+        "stocks": [
+            {"code": "000001", "seal_amount": 0},
+            {"code": "000002", "seal_amount": 12_000_000},
+        ],
+    }
+
+    assert free_source._ths_limit_up_pool_long_cache_ok(zero_snapshot) is False
+    assert free_source._ths_limit_up_pool_long_cache_ok(final_snapshot) is True
+    assert free_source._ths_limit_up_pool_long_cache_ok({"ok": False, "stocks": []}) is False
+
+
+def test_ths_limit_pool_enriches_current_amounts_with_one_batch_quote(monkeypatch) -> None:
+    current = datetime(2026, 7, 10, 10, 31, 18, tzinfo=ZoneInfo("Asia/Shanghai"))
+    base_pool = {
+        "ok": True,
+        "date": "20260710",
+        "data_date": "2026-07-10",
+        "missing": [],
+        "notes": ["同花顺公开池口径"],
+        "stocks": [
+            {"code": "000001", "name": "平安银行"},
+            {"code": "000002", "name": "万科A"},
+        ],
+    }
+    requested: list[list[str]] = []
+
+    monkeypatch.setattr(free_source, "now_cn", lambda: current)
+    monkeypatch.setattr(free_source, "ths_limit_up_pool", lambda _dc: base_pool)
+
+    def fake_quotes(codes: list[str]) -> dict[str, dict]:
+        requested.append(codes)
+        return {
+            "000001": {"amount": 980_000_000, "as_of": "20260710103116"},
+            # 日期不匹配时禁止把今天行情拼到目标数据日。
+            "000002": {"amount": 880_000_000, "as_of": "20260709150000"},
+        }
+
+    monkeypatch.setattr(free_source.tc, "quotes", fake_quotes)
+
+    pool = free_source.ths_limit_up_pool_with_amounts("20260710")
+    rows = {row["code"]: row for row in pool["stocks"]}
+
+    assert requested == [["000001", "000002"]]
+    assert rows["000001"]["amount"] == 980_000_000
+    assert rows["000001"]["amount_as_of"] == "20260710103116"
+    assert rows["000001"]["amount_source"] == "腾讯财经批量行情"
+    assert rows["000002"]["amount"] is None
+    assert any("成交额批量行情覆盖 1/2" in item for item in pool["missing"])
+    assert any("10:31:16" in item and "累计成交额" in item for item in pool["notes"])
+    assert "amount" not in base_pool["stocks"][0]
+
+
+def test_ths_limit_pool_historical_date_does_not_use_current_quote(monkeypatch) -> None:
+    current = datetime(2026, 7, 11, 10, 31, 18, tzinfo=ZoneInfo("Asia/Shanghai"))
+    monkeypatch.setattr(free_source, "now_cn", lambda: current)
+    monkeypatch.setattr(
+        free_source,
+        "ths_limit_up_pool",
+        lambda _dc: {"ok": True, "missing": [], "notes": [], "stocks": [{"code": "000001"}]},
+    )
+    monkeypatch.setattr(
+        free_source.tc,
+        "quotes",
+        lambda _codes: pytest.fail("历史涨停池不得拼接当前实时成交额"),
+    )
+
+    pool = free_source.ths_limit_up_pool_with_amounts("20260710")
+
+    assert pool["stocks"][0]["amount"] is None
+    assert pool["stocks"][0]["amount_as_of"] is None
+    assert pool["stocks"][0]["amount_source"] is None
 
 
 def test_zero_open_count_and_amount_units_are_not_lost_or_doubled(monkeypatch) -> None:

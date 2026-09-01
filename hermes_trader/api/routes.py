@@ -25,6 +25,7 @@ from ..integrity import summary as _core_summary, core_fingerprint as _core_fp_c
 from ..data import (market, stock, news, capital_tracker, xverify as xverify_mod,
                     overseas_source as overseas, deriv_source, mainforce_source as mainforce,
                     free_source as public_data, tdx_api_source as tdx_api,
+                    financial_api_source as financial_api,
                     official_disclosure, official_interaction, official_longhu_source,
                     etf as etf_data, stock_search as stock_search_mod)
 from ..data.base import (
@@ -1699,7 +1700,7 @@ async def limitup():
 
 @router.get("/market/limitup/themes")
 async def limitup_themes(date: str = ""):
-    """涨停题材明细：同花顺公开池独立口径，不与主涨停池数字混算。"""
+    """涨停题材明细：同花顺公开池独立口径；今天的成交额由腾讯批量行情补充。"""
     dc = str(date or "").strip() or public_data.quote_data_date().replace("-", "")
     if not (len(dc) == 8 and dc.isdigit()):
         return {
@@ -1709,7 +1710,7 @@ async def limitup_themes(date: str = ""):
             "missing": ["日期格式应为 YYYYMMDD"],
             "stocks": [],
         }
-    return await asyncio.to_thread(public_data.ths_limit_up_pool, dc)
+    return await asyncio.to_thread(public_data.ths_limit_up_pool_with_amounts, dc)
 
 
 @router.get("/market/limitup-tracker/dates")
@@ -1793,6 +1794,69 @@ async def limitup_tracker_backfill_status(request: Request, job_id: str):
 @router.get("/market/sectors")
 async def sectors():
     return await asyncio.to_thread(market.market_sectors)
+
+
+def _financial_api_input_error(exc: ValueError) -> JSONResponse:
+    return JSONResponse(
+        status_code=400,
+        content={"ok": False, "state": "invalid_request", "error_code": "invalid_parameter", "error": str(exc)},
+    )
+
+
+@router.get("/market/auction")
+async def market_auction(codes: str, stage: str = "final"):
+    """批量集合竞价快照；codes 为 1—100 个六位代码或完整 thscode。"""
+    try:
+        values = tuple(part.strip() for part in str(codes or "").split(","))
+        return await asyncio.to_thread(financial_api.auction_snapshot, values, stage)
+    except financial_api.FinancialAPIInputError as exc:
+        return _financial_api_input_error(exc)
+
+
+@router.get("/market/auction/benchmark")
+async def market_auction_benchmark(date: str | None = None):
+    """指定日期的竞价短线基准；显式非交易日不自动回退。"""
+    try:
+        return await asyncio.to_thread(financial_api.auction_benchmark, date)
+    except financial_api.FinancialAPIInputError as exc:
+        return _financial_api_input_error(exc)
+
+
+@router.get("/market/sector-catalog")
+async def market_sector_catalog(tag: str = "cn_concept"):
+    """同花顺板块目录；tag 支持概念、区域、特色和行业。"""
+    try:
+        return await asyncio.to_thread(financial_api.sector_catalog, tag)
+    except financial_api.FinancialAPIInputError as exc:
+        return _financial_api_input_error(exc)
+
+
+@router.get("/market/sector/{thscode}/constituents")
+async def market_sector_constituents(thscode: str):
+    """板块/指数当前成分；不是历史调入调出序列。"""
+    try:
+        return await asyncio.to_thread(financial_api.sector_constituents, thscode)
+    except financial_api.FinancialAPIInputError as exc:
+        return _financial_api_input_error(exc)
+
+
+@router.get("/market/sector/{thscode}/history")
+async def market_sector_history(thscode: str, start_ms: int, end_ms: int):
+    """板块/指数未复权历史日线，窗口最长十年。"""
+    try:
+        return await asyncio.to_thread(financial_api.sector_history, thscode, start_ms, end_ms)
+    except financial_api.FinancialAPIInputError as exc:
+        return _financial_api_input_error(exc)
+
+
+@router.get("/market/valuations")
+async def market_valuations(codes: str):
+    """批量扩展估值：PE TTM/MRQ、PB MRQ、PS TTM、PCF TTM。"""
+    try:
+        values = tuple(part.strip() for part in str(codes or "").split(","))
+        return await asyncio.to_thread(financial_api.valuation_snapshot, values)
+    except financial_api.FinancialAPIInputError as exc:
+        return _financial_api_input_error(exc)
 
 
 @router.get("/market/mainlines")
@@ -2206,13 +2270,65 @@ async def stock_charts(code: str):
 
 @router.get("/stock/{code}/enrichment")
 async def stock_enrichment(code: str):
-    """个股增强：行业概念、资金流、基础财务；失败不影响首屏。"""
+    """个股增强：行业概念、资金流、基础财务与集合竞价；失败不影响首屏。"""
     if not _CODE_RE.match(code):
         return JSONResponse(
             {"ok": False, "error_code": "invalid_code", "error": "股票代码应为 6 位数字"},
             status_code=400,
         )
     return await asyncio.to_thread(stock.stock_enrichment, code)
+
+
+@router.get("/stock/{code}/financials")
+async def stock_financials(
+    code: str,
+    period: str = "annual",
+    limit: int = 4,
+    start_ms: int | None = None,
+    end_ms: int | None = None,
+):
+    """利润表、资产负债表、现金流量表的多期完整序列。"""
+    if not _CODE_RE.match(code):
+        return JSONResponse(
+            {"ok": False, "error_code": "invalid_code", "error": "股票代码应为 6 位数字"},
+            status_code=400,
+        )
+    try:
+        return await asyncio.to_thread(
+            financial_api.financial_statements,
+            code,
+            period,
+            limit,
+            start_ms,
+            end_ms,
+        )
+    except financial_api.FinancialAPIInputError as exc:
+        return _financial_api_input_error(exc)
+
+
+@router.get("/stock/{code}/financial-indicators")
+async def stock_financial_indicators(code: str, report: str):
+    """指定报告期的成长、盈利、偿债、运营和现金流指标。"""
+    if not _CODE_RE.match(code):
+        return JSONResponse(
+            {"ok": False, "error_code": "invalid_code", "error": "股票代码应为 6 位数字"},
+            status_code=400,
+        )
+    try:
+        return await asyncio.to_thread(financial_api.financial_indicators, code, report)
+    except financial_api.FinancialAPIInputError as exc:
+        return _financial_api_input_error(exc)
+
+
+@router.get("/stock/{code}/valuation")
+async def stock_valuation(code: str):
+    """单股扩展估值快照。"""
+    if not _CODE_RE.match(code):
+        return JSONResponse(
+            {"ok": False, "error_code": "invalid_code", "error": "股票代码应为 6 位数字"},
+            status_code=400,
+        )
+    return await asyncio.to_thread(financial_api.valuation_snapshot, (code,))
 
 
 @router.get("/stock/{code}/research-enrichment")

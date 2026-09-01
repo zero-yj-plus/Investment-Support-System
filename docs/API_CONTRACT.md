@@ -433,7 +433,10 @@ indexes 至少含：上证指数、深证成指、创业板指、科创50（拿�
 ### GET /api/market/limitup/themes
 独立的同花顺公开涨停池口径，用于“涨停题材”页面；可选查询参数 `date=YYYYMMDD`。
 该接口保留题材、板型、几天几板、封板成功率、回封、首封与封单额，不把数字字段回填到
-`/api/market/limitup` 的东财/腾讯主口径。
+`/api/market/limitup` 的东财/腾讯主口径。仅当查询日期为今天时，按代码一次批量合并腾讯行情的
+当日累计成交额；`amount` 单位为元，`amount_as_of` 是腾讯行情时间 `YYYYMMDDHHMMSS`，
+`amount_source=腾讯财经批量行情`。历史日期、行情日期不匹配或批量行情失败时保持 `null`，禁止用
+换手率、市值或现价估算。涨停池与成交额分别缓存，成交额随页面刷新重新批量读取。
 ```json
 {
   "ok": true, "date": "20260714", "data_date": "2026-07-14", "missing": [],
@@ -443,7 +446,9 @@ indexes 至少含：上证指数、深证成指、创业板指、科创50（拿�
      "high_days": "3天3板", "is_again": true, "suc_rate_pct": 80.0,
      "open_num_ths": 1, "first_time": "09:42", "last_time": "09:42",
      "seal_amount": 110000000.0, "seal_volume": 27000000.0,
-     "turnover_rate": 6.5, "circ_mv": 9500000000.0}
+     "turnover_rate": 6.5, "circ_mv": 9500000000.0,
+     "amount": 1830000000.0, "amount_as_of": "20260714103116",
+     "amount_source": "腾讯财经批量行情"}
   ],
   "notes": ["同花顺公开池口径：沪深、创业板、科创板，不含北交所"]
 }
@@ -564,6 +569,39 @@ indexes 至少含：上证指数、深证成指、创业板指、科创50（拿�
 同花顺当日行业一览表。该表的 `amount/main_flow` 裸数值按官方亿元口径校验后统一换算为 CNY，
 TDX 行业关系仍用于涨停股到行业的精确映射。任何源失败都返回缺失/降级，不跨日补值。
 
+### GET /api/market/auction?codes={codes}&stage=final
+
+从同花顺金融数据服务批量读取 1—100 只 A 股的集合竞价专用快照。`codes` 接受六位代码或带
+`.SH/.SZ/.BJ` 后缀的 `thscode`，`stage=live|final`。响应保留 `auction_phase`、
+`data_status`、上游 `request_id`、UTC `fetched_at`、`data_timestamp_ms` 和 `field_units`；
+其中 `auction_volume` 单位为手，百分比字段均为百分数原值。上游 `null`、`not_ready` 或
+`suspended` 保持原状，不用普通成交量或 0 补齐。
+
+### GET /api/market/auction/benchmark?date=YYYY-MM-DD
+
+返回指定日期的竞价短线基准及上游标签。显式指定非交易日时不自动改查前一交易日。
+
+### GET /api/market/sector-catalog?tag={tag}
+
+返回同花顺板块目录。`tag` 仅支持 `cn_concept | region | tszs | industry`。单类别为全量结果；
+调用方应按目标匹配，不应在普通交互页轮询全量目录。
+
+### GET /api/market/sector/{thscode}/constituents
+
+返回 `.TI/.SH/.SZ` 板块或指数的**当前**成分股。该结果不是历史调入调出记录，不得据此回写历史成分。
+
+### GET /api/market/sector/{thscode}/history?start_ms={ms}&end_ms={ms}
+
+返回单个板块/指数的未复权历史日线，固定 `1d`，窗口最长 10 年。字段含
+`date_ms/open_price/high_price/low_price/close_price/volume/turnover`，响应声明各字段单位和
+上游最新数据时间。
+
+### GET /api/market/valuations?codes={codes}
+
+批量返回最多 100 只 A 股的 `pe_ttm/pe_mrq/pb_mrq/ps_ttm/pcf_ttm`。负数是合法业务值，
+`null` 表示上游无有效值；均不得取绝对值或补 0。`data_timestamp_ms` 是返回指标中的最新有效
+上游时间，不代表五项指标在同一时点更新。
+
 ### GET /api/market/top
 前 30 涨幅股：`{"ok":true,"ts":"...","missing":[],"stocks":[{"code","name","price","change_pct","amount","turnover_rate","speed"(涨速,可缺)}]}`
 
@@ -656,6 +694,32 @@ code 为 6 位数字（自动识别沪深）。
 }
 ```
 `minute` 为当日分时（约 240 点）；`daily` 为最近 120 个交易日 K 线。
+
+### GET /api/stock/{code}/enrichment
+
+渐进式个股增强返回行业/概念、资金流、基础财务和集合竞价四个独立区块。集合竞价只读专用
+Financial-API；未配置 `HITHINK_FINANCE_API_KEY` 时 `sections.auction` 为
+`state=missing,reason=source_not_configured`，不影响其余区块和首屏。
+
+### GET /api/stock/{code}/financials
+
+固定并行读取利润表、资产负债表、现金流量表三张合并报表，不做逐行 N+1。参数：
+`period=annual|quarterly`；最近期模式使用 `limit=1..20`（默认 4）；区间模式同时提供
+`start_ms/end_ms`，最长 10 年，此时不向上游发送 `limit`。响应的
+`statements.income/balance/cash_flow` 各自独立标记状态并保留报告期、发布日期、币种、单位、
+上游 `request_id` 与 `null` 未披露语义；部分报表失败时总状态为 `partial`。
+
+### GET /api/stock/{code}/financial-indicators?report=YYYY-[1-4]
+
+返回指定报告期的成长、盈利、偿债、运营、现金流五类指标。`abilities` 是有序数组；指标
+`value` 保留上游字符串或 `null`，不擅自转数值或补零。
+
+### GET /api/stock/{code}/valuation
+
+单股扩展估值，字段和缺失语义与 `/api/market/valuations` 相同。
+
+上述新接口均只在服务端读取环境变量 `HITHINK_FINANCE_API_KEY`，凭据不会进入响应、日志或
+配置视图。第三方交叉校验不在本次接入范围；现有 TDX/腾讯主行情与身份判定链保持不变。
 
 ## 5. 统一对话（SSE 流式；个股问股为确定性规则）
 

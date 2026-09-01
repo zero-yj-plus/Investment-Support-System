@@ -9,6 +9,7 @@ import time
 from .base import is_trade_day, now_cn, prev_trade_day, to_float, to_int, ts_str, ttl_cache
 from .market import _spot_all, relay_staleness_notes, _relay_api
 from . import free_source as tx
+from . import financial_api_source as financial_api
 from . import tdx_api_source as tdxapi
 from . import tencent_source as tc
 
@@ -542,10 +543,10 @@ def stock_charts(code: str) -> dict:
 
 @ttl_cache(60, fail_seconds=10)
 def stock_enrichment(code: str) -> dict:
-    """个股增强：行业概念、资金流和基础财务各自独立失败。
+    """个股增强：行业概念、资金流、基础财务和集合竞价各自独立失败。
 
-    公开 F10 已从热链删除；板块只使用远程 TDX relation。当前没有可验证的
-    竞价专用源，所以竞价明确返回 unavailable，绝不用普通成交量伪造。
+    公开 F10 已从热链删除；板块只使用远程 TDX relation。集合竞价只使用
+    同花顺金融 API 专用端点，绝不用普通成交量伪造。
     """
     normalized = code.strip().zfill(6)
     results, pending, busy = _run_segment_jobs(
@@ -553,12 +554,14 @@ def stock_enrichment(code: str) -> dict:
             "board": (_tdx_board, (normalized,)),
             "flow": (tx.moneyflow, (normalized,)),
             "financial": (tdxapi.basic_financial, (normalized,)),
+            "auction": (tx.auction, (normalized,)),
         },
         4.5,
     )
     board = results.get("board") if isinstance(results.get("board"), dict) else None
     flow = results.get("flow") if isinstance(results.get("flow"), dict) else None
     financial = results.get("financial") if isinstance(results.get("financial"), dict) else None
+    auction = results.get("auction") if isinstance(results.get("auction"), dict) else None
     flow_date = None
     if flow:
         raw_date = str(flow.get("trade_date") or "")
@@ -573,16 +576,18 @@ def stock_enrichment(code: str) -> dict:
         missing.append("个股资金流")
     if "financial" not in pending and not financial:
         missing.append("基础财务")
+    if "auction" not in pending and not auction:
+        missing.append("集合竞价")
     if flow_date and flow_date != now_cn().strftime("%Y-%m-%d"):
         missing.append(f"个股资金流为上一交易日({flow_date})数据")
-    completed = sum(bool(value) for value in (board, flow, financial))
+    completed = sum(bool(value) for value in (board, flow, financial, auction))
     return {
         "ok": bool(completed),
-        "state": "complete" if completed == 3 else ("partial" if completed or pending else "missing"),
+        "state": "complete" if completed == 4 else ("partial" if completed or pending else "missing"),
         "data_mode": "stock_enrichment",
         "layer_contract": _layer_contract(
             "enrichment",
-            blocks=("industry", "concepts", "fund_flow", "financial"),
+            blocks=("industry", "concepts", "fund_flow", "financial", "auction"),
             independent_from=("quote", "minute", "daily"),
         ),
         "ts": ts_str(),
@@ -590,16 +595,19 @@ def stock_enrichment(code: str) -> dict:
         "flow": flow,
         "flow_date": flow_date,
         "financial": financial,
-        "auction": None,
+        "auction": auction,
         "sections": {
             "board": {"state": "pending" if "board" in pending else ("complete" if board else "missing")},
             "flow": {"state": "pending" if "flow" in pending else ("complete" if flow else "missing")},
             "financial": {"state": "pending" if "financial" in pending else ("complete" if financial else "missing")},
-            "auction": {"state": "unavailable", "reason": "authoritative_source_not_integrated"},
+            "auction": {
+                "state": "pending" if "auction" in pending else ("complete" if auction else "missing"),
+                **({"reason": "source_not_configured"} if not auction and not financial_api.configured() else {}),
+            },
         },
         "pending": sorted(pending),
         "busy": busy,
-        "missing": missing + ["集合竞价(暂无可验证专用源)"],
+        "missing": missing,
     }
 
 

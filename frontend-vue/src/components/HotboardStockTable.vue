@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import type { HotboardStock } from '../types/hotboard'
 
-type SortKey = 'price' | 'boardCount' | 'limit_up_type' | 'suc_rate_pct' | 'seal_amount'
+type SortKey = 'price' | 'boardCount' | 'limit_up_type' | 'suc_rate_pct' | 'turnover_rate' | 'amount' | 'seal_amount'
 type SortValue = number | string
 
 const props = defineProps<{ stocks: HotboardStock[]; theme: string }>()
@@ -122,6 +122,8 @@ function diagnosisHref(code: string | undefined): string {
             <th scope="col" :aria-sort="ariaSort('limit_up_type')"><button type="button" class="hotboard-sort-button" :class="{ 'is-active': sortKey === 'limit_up_type' }" :aria-label="sortLabel('limit_up_type', '板型')" @click="sortBy('limit_up_type')">板型 <span class="hotboard-sort-icon" aria-hidden="true">{{ sortKey === 'limit_up_type' ? sortDirection === 'descending' ? '↓' : '↑' : '↕' }}</span></button></th>
             <th scope="col" :aria-sort="ariaSort('suc_rate_pct')"><button type="button" class="hotboard-sort-button" :class="{ 'is-active': sortKey === 'suc_rate_pct' }" :aria-label="sortLabel('suc_rate_pct', '封板率')" @click="sortBy('suc_rate_pct')">封板率 <span class="hotboard-sort-icon" aria-hidden="true">{{ sortKey === 'suc_rate_pct' ? sortDirection === 'descending' ? '↓' : '↑' : '↕' }}</span></button></th>
             <th scope="col">首封</th>
+            <th scope="col" :aria-sort="ariaSort('turnover_rate')"><button type="button" class="hotboard-sort-button" :class="{ 'is-active': sortKey === 'turnover_rate' }" :aria-label="sortLabel('turnover_rate', '换手率')" @click="sortBy('turnover_rate')">换手率 <span class="hotboard-sort-icon" aria-hidden="true">{{ sortKey === 'turnover_rate' ? sortDirection === 'descending' ? '↓' : '↑' : '↕' }}</span></button></th>
+            <th scope="col" :aria-sort="ariaSort('amount')"><button type="button" class="hotboard-sort-button" :class="{ 'is-active': sortKey === 'amount' }" :aria-label="sortLabel('amount', '成交额')" @click="sortBy('amount')">成交额 <span class="hotboard-sort-icon" aria-hidden="true">{{ sortKey === 'amount' ? sortDirection === 'descending' ? '↓' : '↑' : '↕' }}</span></button></th>
             <th scope="col" :aria-sort="ariaSort('seal_amount')"><button type="button" class="hotboard-sort-button" :class="{ 'is-active': sortKey === 'seal_amount' }" :aria-label="sortLabel('seal_amount', '封单额')" @click="sortBy('seal_amount')">封单额 <span class="hotboard-sort-icon" aria-hidden="true">{{ sortKey === 'seal_amount' ? sortDirection === 'descending' ? '↓' : '↑' : '↕' }}</span></button></th>
             <th scope="col">题材</th>
           </tr>
@@ -135,6 +137,8 @@ function diagnosisHref(code: string | undefined): string {
             <td data-label="板型" :aria-label="!stock.limit_up_type ? '板型：数据缺失' : undefined">{{ stock.limit_up_type || '—' }}</td>
             <td data-label="封板率" class="mono" :aria-label="stock.suc_rate_pct == null ? '封板率：数据缺失' : undefined">{{ plainPercent(stock.suc_rate_pct) }}</td>
             <td data-label="首封" class="mono" :aria-label="!stock.first_time ? '首封：数据缺失' : undefined">{{ stock.first_time || '—' }}</td>
+            <td data-label="换手率" class="mono" :aria-label="stock.turnover_rate == null ? '换手率：数据缺失' : undefined">{{ plainPercent(stock.turnover_rate) }}</td>
+            <td data-label="成交额" class="mono" :aria-label="stock.amount == null ? '成交额：数据缺失' : undefined">{{ amount(stock.amount) }}</td>
             <td data-label="封单额" class="mono" :aria-label="stock.seal_amount == null ? '封单额：数据缺失' : undefined">{{ amount(stock.seal_amount) }}</td>
             <td data-label="题材" class="hotboard-reason" :aria-label="!stock.reason_type ? '题材：数据缺失' : undefined">{{ stock.reason_type || '—' }}</td>
           </tr>
@@ -150,7 +154,7 @@ function diagnosisHref(code: string | undefined): string {
 .hotboard-stock-heading h2 { margin: 0; font-size: 18px; }
 .hotboard-stock-heading > span { color: var(--text-3); font-size: 13px; }
 .hotboard-table-wrap { max-width: 100%; overflow-x: auto; }
-.hotboard-table { width: 100%; min-width: 940px; table-layout: fixed; border-collapse: collapse; font-size: 14px; line-height: 1.45; }
+.hotboard-table { width: 100%; min-width: 1150px; table-layout: fixed; border-collapse: collapse; font-size: 14px; line-height: 1.45; }
 .hotboard-table th, .hotboard-table td { min-width: 0; padding: 10px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: middle; }
 .hotboard-table td { min-height: 58px; color: var(--text-2); font-weight: 570; }
 .hotboard-table td.mono { color: var(--text); font-size: 14px; font-weight: 730; letter-spacing: .015em; }
@@ -161,7 +165,9 @@ function diagnosisHref(code: string | undefined): string {
 .hotboard-table th:nth-child(5) { width: 76px; }
 .hotboard-table th:nth-child(6) { width: 94px; }
 .hotboard-table th:nth-child(7) { width: 76px; }
-.hotboard-table th:nth-child(8) { width: 108px; }
+.hotboard-table th:nth-child(8) { width: 92px; }
+.hotboard-table th:nth-child(9) { width: 108px; }
+.hotboard-table th:nth-child(10) { width: 108px; }
 .hotboard-table th { background: var(--surface-2); color: var(--text-3); font-weight: 700; white-space: nowrap; }
 .hotboard-sort-button { display: inline-flex; min-width: 100%; min-height: 44px; align-items: center; justify-content: space-between; gap: 4px; margin: -5px 0; padding: 5px 7px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--surface-3); color: var(--text); font-weight: 750; cursor: pointer; }
 .hotboard-sort-button:hover { border-color: var(--accent); color: var(--accent); }

@@ -17,6 +17,9 @@ export interface HotboardStock {
   seal_volume?: number | null
   turnover_rate?: number | null
   circ_mv?: number | null
+  amount?: number | null
+  amount_as_of?: string | null
+  amount_source?: string | null
 }
 
 export interface HotboardResponse extends ApiResponseState {

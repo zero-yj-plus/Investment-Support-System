@@ -379,6 +379,150 @@ async def test_deepseek_daily_reports_and_governed_stock_chat_use_task_specific_
 
 
 @pytest.mark.asyncio
+async def test_kimi_k26_uses_non_thinking_vendor_compatible_payload(
+    monkeypatch, tmp_path: Path,
+) -> None:
+    client = _direct_client(tmp_path)
+    client.config.hermes_base_url = "https://api.moonshot.cn/v1"
+    client.config.hermes_model = "kimi-k2.6"
+    client.config.model_provider = "kimi"
+    client.config.model_connection_custom = True
+    client.config.model_uses_hermes_gateway = False
+    _FakeClient.post_count = 0
+    _FakeClient.payloads = []
+    _FakeClient.lines = [
+        'data: {"choices":[{"delta":{"content":"ok"},"finish_reason":null}]}',
+        'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}',
+        "data: [DONE]",
+    ]
+    monkeypatch.setattr("hermes_trader.agent.hermes_client.httpx.AsyncClient", _FakeClient)
+
+    assert await client.chat(
+        [{"role": "user", "content": "diagnose"}],
+        temperature=0.2,
+        max_tokens=1500,
+        purpose="diagnosis:stock",
+        thinking_mode="enabled",
+    ) == "ok"
+
+    payload = _FakeClient.payloads[0]
+    assert payload["thinking"] == {"type": "disabled"}
+    assert payload["max_completion_tokens"] == 1500
+    assert "temperature" not in payload
+    assert "max_tokens" not in payload
+    assert "reasoning_effort" not in payload
+
+
+def test_kimi_k3_compat_requires_exact_model_and_vendor_identity(tmp_path: Path) -> None:
+    client = _direct_client(tmp_path)
+    client.config.hermes_base_url = "https://compatible.example/v1"
+    client.config.model_provider = "custom"
+
+    assert client._uses_kimi_k3_compat("kimi-k3") is False
+
+    client.config.model_provider = "moonshot"
+    assert client._uses_kimi_k3_compat("kimi-k3") is True
+    assert client._uses_kimi_k3_compat("kimi-k3-preview") is False
+
+    client.config.model_provider = "openai-compatible"
+    client.config.hermes_base_url = "https://api.moonshot.cn/v1"
+    assert client._uses_kimi_k3_compat(" KIMI-K3 ") is True
+
+
+@pytest.mark.asyncio
+async def test_kimi_k3_uses_official_default_vendor_compatible_payload_and_stream(
+    monkeypatch, tmp_path: Path,
+) -> None:
+    client = _direct_client(tmp_path)
+    client.config.hermes_base_url = "https://api.moonshot.cn/v1"
+    client.config.hermes_model = "kimi-k3"
+    client.config.model_provider = "openai-compatible"
+    client.config.model_connection_custom = True
+    client.config.model_uses_hermes_gateway = False
+    _FakeClient.post_count = 0
+    _FakeClient.payloads = []
+    _FakeClient.lines = [
+        'data: {"choices":[{"delta":{"reasoning_content":"private reasoning"},"finish_reason":null}]}',
+        'data: {"choices":[{"delta":{"content":"OK"},"finish_reason":null}]}',
+        'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}',
+        "data: [DONE]",
+    ]
+    monkeypatch.setattr("hermes_trader.agent.hermes_client.httpx.AsyncClient", _FakeClient)
+
+    messages = [{"role": "user", "content": "only reply OK"}]
+    meta: dict = {}
+    assert await client.chat(
+        messages,
+        temperature=0.2,
+        max_tokens=1500,
+        meta=meta,
+        purpose="diagnosis:stock",
+        thinking_mode="disabled",
+    ) == "OK"
+
+    assert _FakeClient.payloads[0] == {
+        "model": "kimi-k3",
+        "messages": messages,
+        "stream": True,
+        "max_completion_tokens": 1500,
+    }
+    assert meta["finish_reason"] == "stop"
+
+
+@pytest.mark.asyncio
+async def test_kimi_k3_requires_done_after_stop(monkeypatch, tmp_path: Path) -> None:
+    client = _direct_client(tmp_path)
+    client.config.hermes_base_url = "https://api.moonshot.cn/v1"
+    client.config.hermes_model = "kimi-k3"
+    client.config.model_provider = "kimi"
+    client.config.model_connection_custom = True
+    client.config.model_uses_hermes_gateway = False
+    _FakeClient.post_count = 0
+    _FakeClient.payloads = []
+    _FakeClient.lines = [
+        'data: {"choices":[{"delta":{"content":"partial"},"finish_reason":null}]}',
+        'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}',
+    ]
+    monkeypatch.setattr("hermes_trader.agent.hermes_client.httpx.AsyncClient", _FakeClient)
+
+    with pytest.raises(HermesError, match=r"\[DONE\]"):
+        await client.chat([{"role": "user", "content": "x"}], purpose="test:k3-done")
+
+
+@pytest.mark.asyncio
+async def test_kimi_k3_upstream_error_body_is_not_logged(
+    monkeypatch, caplog, tmp_path: Path,
+) -> None:
+    class ErrorResponse:
+        status_code = 400
+
+        async def aread(self):
+            return b'{"error":{"message":"prompt=private; key=sk-sensitive"}}'
+
+    class ErrorClient(_FakeClient):
+        def stream(self, *_args, **_kwargs):
+            return _FakeStream(ErrorResponse())
+
+    client = _direct_client(tmp_path)
+    client.config.hermes_base_url = "https://api.moonshot.cn/v1"
+    client.config.hermes_model = "kimi-k3"
+    client.config.model_provider = "kimi"
+    client.config.model_connection_custom = True
+    client.config.model_uses_hermes_gateway = False
+    monkeypatch.setattr("hermes_trader.agent.hermes_client.httpx.AsyncClient", ErrorClient)
+
+    with caplog.at_level("WARNING"):
+        with pytest.raises(HermesError, match="网关返回 400"):
+            await client.chat(
+                [{"role": "user", "content": "private"}], purpose="test:k3-error"
+            )
+
+    assert "Kimi K3 上游返回 HTTP 400" in caplog.text
+    assert "prompt=private" not in caplog.text
+    assert "sk-sensitive" not in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_complete_stop_stream_is_safe_and_audited(monkeypatch, tmp_path: Path) -> None:
     client = _direct_client(tmp_path)
     _FakeClient.post_count = 0

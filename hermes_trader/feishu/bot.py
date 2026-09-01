@@ -212,15 +212,15 @@ class FeishuBot:
     def _reply(self, message_id: str, text: str) -> None:
         try:
             from lark_oapi.api.im.v1 import (  # noqa: PLC0415
-                CreateMessageReplyRequest,
-                CreateMessageReplyRequestBody,
+                ReplyMessageRequest,
+                ReplyMessageRequestBody,
             )
 
             req = (
-                CreateMessageReplyRequest.builder()
+                ReplyMessageRequest.builder()
                 .message_id(message_id)
                 .request_body(
-                    CreateMessageReplyRequestBody.builder()
+                    ReplyMessageRequestBody.builder()
                     .content(json.dumps({"text": text[:9500]}, ensure_ascii=False))
                     .msg_type("text")
                     .build()

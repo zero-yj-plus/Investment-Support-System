@@ -614,6 +614,7 @@ def test_vue_hotboard_route_uses_only_the_real_independent_contract() -> None:
     for field in (
         "reason_type", "limit_up_type", "high_days", "is_again", "suc_rate_pct",
         "first_time", "last_time", "seal_amount", "seal_volume", "turnover_rate", "circ_mv",
+        "amount", "amount_as_of", "amount_source",
     ):
         assert field in types
     assert "不与驾驶舱主涨停池数字互相回填" not in _read("src/components/HotboardThemeFilter.vue")
@@ -633,8 +634,12 @@ def test_vue_hotboard_preserves_missing_empty_degraded_and_failure_semantics() -
     assert "stock.price != null" in table
     assert "stock.suc_rate_pct == null" in table
     assert "stock.seal_amount == null" in table
+    assert "stock.turnover_rate == null" in table
+    assert "stock.amount == null" in table
     assert "stock.price || 0" not in table
     assert "stock.seal_amount || 0" not in table
+    assert "stock.turnover_rate || 0" not in table
+    assert "stock.amount || 0" not in table
     assert "页面不会用历史或示例数据补位" in page
     assert 'class="hotboard-stamp__coverage"' in page
     assert "hotboard-quality" not in page
@@ -660,6 +665,14 @@ def test_vue_hotboard_cleans_lifecycle_and_uses_native_safe_interactions() -> No
     assert 'aria-sort' in table
     assert ':aria-sort="ariaSort(\'limit_up_type\')"' in table
     assert "@click=\"sortBy('limit_up_type')\"" in table
+    assert ':aria-sort="ariaSort(\'turnover_rate\')"' in table
+    assert "@click=\"sortBy('turnover_rate')\"" in table
+    assert 'data-label="换手率"' in table
+    assert "plainPercent(stock.turnover_rate)" in table
+    assert ':aria-sort="ariaSort(\'amount\')"' in table
+    assert "@click=\"sortBy('amount')\"" in table
+    assert 'data-label="成交额"' in table
+    assert "amount(stock.amount)" in table
     assert "String(leftValue).localeCompare(String(rightValue), 'zh-CN')" in table
     assert "key === 'limit_up_type' ? '按名称倒序'" in table
     assert '<th scope="col">回封</th>' not in table
@@ -696,6 +709,7 @@ def test_vue_hotboard_has_responsive_accessible_layout_and_audit_scenarios() -> 
     assert "hotboardLoadingStateComplete" in audit
     assert "hotboardEmptyStateComplete" in audit
     assert "hotboardFailureStateComplete" in audit
+    assert "成交额来自腾讯财经批量行情" in audit
 
 
 def test_vue_timing_route_uses_real_server_decision_and_timing_contracts() -> None:

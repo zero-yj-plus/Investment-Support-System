@@ -270,6 +270,7 @@ flowchart LR
 | `data/stock.py` | 个股实时盘口、快速报价、分时、日 K、板块和资金的渐进式详情。 |
 | `data/etf.py` | ETF 公开名录核验、基金档案/净值申赎低频快照，以及基于真实日线的 5/20/60 日收益、波动、回撤和均线趋势。 |
 | `data/free_source.py` | 免费数据兼容层；统一腾讯、TDX、AkShare/新浪/同花顺等常用能力；TDX `instruments_a` 是唯一可产生完整 A 股身份结论的主名录。 |
+| `data/financial_api_source.py` | 同花顺官方 Financial-API 增强适配；只读 `HITHINK_FINANCE_API_KEY`，有界请求集合竞价、板块目录/当前成分/历史日线、三张财报、财务指标与扩展估值；不替换主行情链，也不做跨源校验。 |
 | `data/stock_search.py` | 基于本地 A 股主名录派生代码、中文、全拼与首字母搜索索引；不触发网络刷新，也不替代业务接口的身份/行情核验。 |
 | `data/tdx_api_source.py` | 客户授权 TDX Data API v2.8 适配；代码表、行情、板块、资金和盘后研究；全量名录严格校验 cursor、可选 total、代码唯一性和市场后缀。 |
 | `data/tdx_local_daily.py` | 直接解析本机 `vipdoc/*/lday/*.day`；仅用 TQ 读取本地权息事件并计算前复权，不调用 TQ K 线接口。 |

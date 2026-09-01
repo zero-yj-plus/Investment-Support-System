@@ -16,6 +16,10 @@ from .deployment import source_route_policy
 # 供应商混合在标签中的调用。一个源状态只说明“最近一次相关调用”结果，
 # 不表示它已覆盖所有字段；前端同时展示 feeds 和 role，避免把备用源误读成全量主源。
 CATALOG = [
+    {"key": "hithink_finance_api", "name": "同花顺金融数据服务", "provider": "HiThink Financial-API",
+     "feeds": "集合竞价、板块目录与当前成分、板块历史日线、三张财务报表、财务指标、PE/PB/PS/PCF 估值",
+     "role": "显式配置后的增强源；不替换现有主行情链，不做跨供应商一致性校验；失败保持缺失",
+     "match_contains": ["同花顺金融API:"]},
     {"key": "tdx_api", "name": "TDX 数据 API", "provider": "客户授权 TDX API v2.8",
      "feeds": "秒级价量与买一/卖一、全市场宽度、行业/概念关系、板块资金排名、K线与基础财务",
      "role": "客户授权主行情与行业关系源；板块资金原值单位未核验，只用排名/方向；失败退腾讯/公开板块源",
@@ -91,6 +95,7 @@ MODE_LABEL = {
     "tdx_api": "TDX API",
     "tencent": "腾讯直连",
     "global_direct": "海外直连",
+    "hithink_finance_api": "同花顺金融 API",
 }
 
 

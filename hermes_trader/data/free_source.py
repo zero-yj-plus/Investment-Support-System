@@ -14,6 +14,7 @@
 """
 from __future__ import annotations
 
+import copy
 from datetime import datetime
 import json
 import math
@@ -46,6 +47,7 @@ from .base import (
 from . import tencent_source as tc
 from . import akshare_isolated
 from . import bootstrap_universe
+from . import financial_api_source as _financial_api
 from . import tdx_api_source as _tdx_research
 
 _UA = {
@@ -1013,16 +1015,32 @@ def moneyflow_ind_dc(
 
 @ttl_cache(60)
 def auction(code: str) -> dict | None:
-    """当前 TDX HTTP API 不提供可验证的竞价匹配量/未匹配量。
-
-    不得用普通实时成交量冒充集合竞价；未接入独立竞价源前诚实返回 None。
-    """
-    return None
+    """同花顺金融 API 的开盘集合竞价终态；普通成交量不参与回退。"""
+    c6 = _code6(code)
+    payload = _financial_api.auction_snapshot((c6,), "final")
+    if not payload.get("ok"):
+        return None
+    rows = payload.get("item") if isinstance(payload.get("item"), list) else []
+    row = next((item for item in rows if str(item.get("ticker") or "") == c6), None)
+    if not isinstance(row, dict):
+        return None
+    return {
+        **row,
+        "auction_phase": payload.get("auction_phase"),
+        "data_status": payload.get("data_status"),
+        "data_timestamp_ms": payload.get("data_timestamp_ms"),
+        "timestamp_semantics": payload.get("timestamp_semantics"),
+        "field_units": payload.get("field_units") or {},
+        "source": payload.get("source"),
+        "fetched_at": payload.get("fetched_at"),
+        "request_id": payload.get("request_id"),
+        "missing_semantics": payload.get("missing_semantics"),
+    }
 
 
 @ttl_cache(300)
 def auction_oc(code: str) -> dict | None:
-    """当前 API 无开/收盘竞价专用数据集，不从普通 K 线倒推。"""
+    """上游只覆盖开盘集合竞价，不把开盘终态冒充收盘竞价。"""
     return None
 
 
@@ -1148,7 +1166,31 @@ def forecast_list(period: str) -> list[dict] | None:
     return sorted(by_code.values(), key=lambda x: x.get("ann_date") or "", reverse=True)
 
 
-@ttl_cache(120, fail_seconds=600, offhours_seconds=6 * 3600)
+def _ths_limit_up_pool_long_cache_ok(result: object) -> bool:
+    """只把已有有效封单额的收盘快照提升为盘外长缓存。
+
+    同花顺在 15:00 附近可能短暂返回整池 ``order_amount=0``；这类过渡快照仍可
+    供页面短时展示，但必须维持基础 TTL，等待上游完成收盘结算。单只股票的真实 0
+    不在这里改写；只阻止“整池无任一正封单额”的结果进入六小时缓存。
+    """
+    if not isinstance(result, dict) or result.get("ok") is not True:
+        return False
+    stocks = result.get("stocks")
+    if not isinstance(stocks, list) or not stocks:
+        return False
+    return any(
+        isinstance(stock, dict)
+        and (to_float(stock.get("seal_amount")) or 0) > 0
+        for stock in stocks
+    )
+
+
+@ttl_cache(
+    120,
+    fail_seconds=600,
+    offhours_seconds=6 * 3600,
+    long_ok=_ths_limit_up_pool_long_cache_ok,
+)
 def ths_limit_up_pool(date_compact: str) -> dict:
     """同花顺公开涨停池的独立明细口径。
 
@@ -1246,6 +1288,76 @@ def ths_limit_up_pool(date_compact: str) -> dict:
         out["missing"].append("当日公开涨停池为空（非交易日、尚未开盘或当日无涨停）")
     out["notes"] = ["同花顺公开池口径：沪深、创业板、科创板，不含北交所"]
     return out
+
+
+def ths_limit_up_pool_with_amounts(date_compact: str) -> dict:
+    """为今天的同花顺涨停池补充腾讯批量行情累计成交额。
+
+    涨停池本身不提供成交额。这里只做一次批量行情请求，并且必须同时满足：目标日期是
+    今天、腾讯 ``as_of`` 也属于今天、成交额为非负有限数。历史日期、错日行情和失败项
+    一律保持 ``None``，不以换手率或市值估算。基础涨停池仍由 ``ths_limit_up_pool`` 独立
+    缓存；成交额随页面刷新重新批量读取，不被两分钟涨停池缓存冻结。
+    """
+    dc = str(date_compact or "").strip()
+    pool = copy.deepcopy(ths_limit_up_pool(dc))
+    stocks = pool.get("stocks") if isinstance(pool, dict) else None
+    if not isinstance(stocks, list):
+        return pool
+    for stock in stocks:
+        if not isinstance(stock, dict):
+            continue
+        stock.setdefault("amount", None)
+        stock.setdefault("amount_as_of", None)
+        stock.setdefault("amount_source", None)
+    if not stocks or dc != now_cn().strftime("%Y%m%d"):
+        return pool
+
+    codes = [str(stock.get("code") or "") for stock in stocks if isinstance(stock, dict)]
+    codes = [code for code in codes if len(code) == 6 and code.isdigit()]
+    try:
+        quotes = tc.quotes(codes) or {}
+    except Exception as exc:  # noqa: BLE001
+        log.warning("涨停题材成交额批量行情失败: %s", exc)
+        quotes = {}
+
+    covered = 0
+    amount_asofs: list[str] = []
+    for stock in stocks:
+        if not isinstance(stock, dict):
+            continue
+        quote = quotes.get(str(stock.get("code") or ""))
+        if not isinstance(quote, dict):
+            continue
+        as_of = str(quote.get("as_of") or "").strip()
+        if not re.fullmatch(rf"{re.escape(dc)}\d{{6}}", as_of):
+            continue
+        amount = to_float(quote.get("amount"))
+        if amount is None or amount < 0:
+            continue
+        stock["amount"] = amount
+        stock["amount_as_of"] = as_of
+        stock["amount_source"] = "腾讯财经批量行情"
+        covered += 1
+        amount_asofs.append(as_of)
+
+    missing = pool.setdefault("missing", [])
+    notes = pool.setdefault("notes", [])
+    if covered < len(stocks) and isinstance(missing, list):
+        missing.append(f"当日成交额批量行情覆盖 {covered}/{len(stocks)} 只；缺失项保持空值")
+    if amount_asofs and isinstance(notes, list):
+        first_asof, last_asof = min(amount_asofs), max(amount_asofs)
+
+        def _hms(value: str) -> str:
+            return f"{value[8:10]}:{value[10:12]}:{value[12:14]}"
+
+        time_label = _hms(first_asof)
+        if last_asof != first_asof:
+            time_label = f"{time_label}–{_hms(last_asof)}"
+        notes.append(
+            "成交额来自腾讯财经批量行情，为当日截至各股行情时点累计成交额"
+            f"（行情时点 {time_label}，单位元）"
+        )
+    return pool
 
 
 def _ths_limit_reasons(date_compact: str) -> dict[str, dict]:

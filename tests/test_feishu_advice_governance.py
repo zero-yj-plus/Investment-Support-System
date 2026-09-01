@@ -16,6 +16,37 @@ def _bot() -> FeishuBot:
     )
 
 
+def test_feishu_reply_uses_installed_lark_sdk_request_types() -> None:
+    bot = _bot()
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        code = 0
+        msg = "ok"
+
+        @staticmethod
+        def success() -> bool:
+            return True
+
+    class FakeMessageApi:
+        @staticmethod
+        def reply(request):
+            captured["request"] = request
+            return FakeResponse()
+
+    bot._api_client = SimpleNamespace(
+        im=SimpleNamespace(v1=SimpleNamespace(message=FakeMessageApi()))
+    )
+
+    bot._reply("om_test_message", "回复测试")
+
+    request = captured["request"]
+    assert request.message_id == "om_test_message"
+    assert request.request_body.msg_type == "text"
+    assert request.request_body.content == '{"text": "回复测试"}'
+    bot.loop.close()
+
+
 @pytest.mark.asyncio
 async def test_feishu_stock_code_uses_governed_stock_path(monkeypatch) -> None:
     bot = _bot()

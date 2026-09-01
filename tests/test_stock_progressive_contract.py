@@ -293,25 +293,25 @@ def test_stock_enrichment_never_uses_public_f10_and_isolates_failures(monkeypatc
             "board": {"industry": "白酒", "concepts": ["高股息"], "source": "TDX relation"},
             "flow": None,
             "financial": {"roe": 20.0, "source": "TDX stock_info"},
+            "auction": {"auction_price": 1501.0, "source": "同花顺金融数据服务"},
         }, set(), False
 
     monkeypatch.setattr(stock, "_run_segment_jobs", run)
 
     result = stock.stock_enrichment.__wrapped__("600519")
 
-    assert tasks_seen == {"board", "flow", "financial"}
+    assert tasks_seen == {"board", "flow", "financial", "auction"}
     assert result["ok"] is True
     assert result["state"] == "partial"
     assert result["board"]["source"] == "TDX relation"
     assert result["sections"]["flow"]["state"] == "missing"
-    assert result["sections"]["auction"] == {
-        "state": "unavailable", "reason": "authoritative_source_not_integrated"
-    }
+    assert result["sections"]["auction"] == {"state": "complete"}
+    assert result["auction"]["auction_price"] == 1501.0
     assert "个股资金流" in result["missing"]
     assert result["layer_contract"] == {
         "version": "stock-progressive-v1",
         "layer": "enrichment",
-        "blocks": ["industry", "concepts", "fund_flow", "financial"],
+        "blocks": ["industry", "concepts", "fund_flow", "financial", "auction"],
         "independent_from": ["quote", "minute", "daily"],
     }
 

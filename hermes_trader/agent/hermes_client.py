@@ -161,6 +161,33 @@ class HermesClient:
             controls["reasoning_effort"] = "low"
         return controls
 
+    def _uses_kimi_k26_compat(self, model: str) -> bool:
+        """Whether this request needs the bounded Kimi K2.6 compatibility profile."""
+        if str(model or "").strip().lower() != "kimi-k2.6":
+            return False
+        provider = str(getattr(self.config, "model_provider", "") or "")
+        provider = provider.strip().lower().replace("_", "-")
+        try:
+            host = (urlsplit(self.base_url).hostname or "").lower()
+        except Exception:
+            host = ""
+        return provider in {"kimi", "moonshot", "moonshot-ai"} or host in {
+            "api.moonshot.cn",
+            "api.moonshot.ai",
+        }
+
+    def _uses_kimi_k3_compat(self, model: str) -> bool:
+        """Match Kimi K3 only for the official API or an explicit vendor provider."""
+        if str(model or "").strip().lower() != "kimi-k3":
+            return False
+        provider = str(getattr(self.config, "model_provider", "") or "")
+        provider = provider.strip().lower().replace("_", "-")
+        try:
+            host = (urlsplit(self.base_url).hostname or "").lower()
+        except Exception:
+            host = ""
+        return provider in {"kimi", "moonshot", "moonshot-ai"} or host == "api.moonshot.cn"
+
     def _is_local_gateway(self) -> bool:
         # A user-selected localhost OpenAI-compatible provider is a direct
         # model connection, not implicitly a Hermes Agent gateway.
@@ -546,10 +573,23 @@ class HermesClient:
             "model": selected_model,
             "messages": messages,
             "stream": True,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
         }
-        payload.update(request_controls)
+        if self._uses_kimi_k26_compat(selected_model):
+            # Kimi K2.6 fixes sampling parameters by thinking mode and rejects
+            # arbitrary values such as this client's 0.2/0.4 defaults.  The
+            # minimal compatibility profile stays non-thinking so existing
+            # content-only conversation history remains valid and bounded.
+            payload["thinking"] = {"type": "disabled"}
+            payload["max_completion_tokens"] = max_tokens
+        elif self._uses_kimi_k3_compat(selected_model):
+            # Kimi K3 always reasons and fixes its sampling parameters.  Omit
+            # thinking/temperature and reasoning_effort; omission deliberately
+            # selects the documented default reasoning effort (max).
+            payload["max_completion_tokens"] = max_tokens
+        else:
+            payload["temperature"] = temperature
+            payload["max_tokens"] = max_tokens
+            payload.update(request_controls)
         timeout_budget = self._timeout_budget(purpose, timeout_sec)
         timeout = httpx.Timeout(timeout_budget, connect=min(15.0, timeout_budget))
 
@@ -610,7 +650,13 @@ class HermesClient:
                         ) as resp:
                             if resp.status_code != 200:
                                 body = (await resp.aread()).decode("utf-8", "replace")[:300]
-                                log.warning("Hermes 上游 %s 响应体: %s", resp.status_code, body)
+                                if self._uses_kimi_k3_compat(selected_model):
+                                    # K3 errors may echo request details.  Keep
+                                    # the status for diagnosis without logging
+                                    # the raw upstream body or any credentials.
+                                    log.warning("Kimi K3 上游返回 HTTP %s", resp.status_code)
+                                else:
+                                    log.warning("Hermes 上游 %s 响应体: %s", resp.status_code, body)
                                 if resp.status_code >= 500 or resp.status_code == 429:
                                     raise _RetryStream(f"上游 {resp.status_code}")
                                 if resp.status_code in (401, 403):
@@ -713,6 +759,10 @@ class HermesClient:
                                     output_hasher.update(encoded)
                                     output_bytes += len(encoded)
                                     yield str(content)
+                    if self._uses_kimi_k3_compat(selected_model):
+                        # Kimi's SSE contract requires the explicit [DONE]
+                        # sentinel; finish_reason=stop alone is not completion.
+                        raise HermesError("Kimi K3 流结束但未收到 [DONE] 完整终态")
                     if finish_reason != "stop":
                         raise HermesError("Hermes Agent 流结束但未返回可采信的 stop 终态")
                     if not produced:
