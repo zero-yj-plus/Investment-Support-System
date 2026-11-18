@@ -56,3 +56,9 @@ desktop.ini
 /.codex/
 /.github/workflows/
 /.pytest-tmp/
+
+# Local reviews, report exports and generated release manifests
+/.codex-review-*/
+/ask_stock_report_*.html
+/ask_stock_report_*.json
+/RELEASE_FILES.sha256

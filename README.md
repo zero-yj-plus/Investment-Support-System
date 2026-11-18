@@ -1,120 +1,134 @@
-# Hermes Trader 白标 A 股决策支持源码包
+# Hermes Trader
 
-Hermes Trader 是共享产品内核，`W.U.D.I.` 是示例配置中的默认客户品牌。部署给其他客户时只修改 `config.yaml` 的 `client` 段，不重命名 Python 包、不修改前端源码或业务逻辑。
+可本地部署的 A 股研究与决策支持工作台，使用 FastAPI、Vue 3 和 TypeScript 构建。
 
-本包是母版当前工作树的隔离源码快照，不含任何现有客户目录、客户配置、运行数据、历史报告、日志、数据库、密钥或 Git 历史。
+项目聚合行情与金融数据，提供个股诊断、持仓风险评估、条件筛选、研究报告和本地模拟交易。分析与风控规则在服务端计算，取不到的数据会显示缺失或降级状态。AI 可用于问答和报告解释，需要自行配置模型连接。
 
-## 包含内容
+`W.U.D.I.` 是示例配置中的显示品牌。实例名称和品牌可通过 `config.yaml` 的 `client` 段调整。
 
-- `hermes_trader/`：FastAPI 后端、确定性分析、数据契约、任务与可选 AI 网关。
-- `frontend-vue/`：Vue 3 + TypeScript 正式工作台；构建产物是默认生产入口。
-- `frontend/`：默认关闭的原生 JavaScript 旧版对照，仅在 `ui.legacy_enabled: true` 时挂载到 `/legacy/`。
-- `design-system/`：重构页面的设计令牌、组件规则和页面级约束。
-- `scripts/`：数据探测、备份恢复、受限模型网关与生产验收脚本。
-- `tests/`：不依赖任何现有客户扩展的母版测试。
-- `docs/`：通用 API、MCP 与审计说明。
-- `config.example.yaml`、`.env.example`：无凭据的中性启动模板。
+## 功能
 
-本产品不接券商自动交易。行情、分析和风险闸门可独立于 AI 运行；AI 仅作可选解释增强。
+- 多源行情与数据质量展示，支持可选的本地通达信只读桥接。
+- 个股诊断、技术面筛选、ETF 观察和市场研究。
+- 持仓风险评估、观察池与研究报告留存。
+- 本地模拟订单与成交记录。
+- 可配置的模型连接、飞书报告推送和只读 MCP 工具。
 
-## 快速启动
+## 从源码启动
+
+准备 64 位 Python 3.10+、[uv](https://docs.astral.sh/uv/getting-started/installation/) 和 Node.js 22.12+。以下命令在仓库根目录执行。
+
+### macOS / Linux
+
+复制配置并构建前端。
 
 ```bash
 cp config.example.yaml config.yaml
 cp .env.example .env
 chmod 600 config.yaml .env
-./run.sh
+
+cd frontend-vue
+npm ci
+npm run build
+cd ..
 ```
 
-默认访问地址：`http://127.0.0.1:18869`。
+编辑 `config.yaml`，将 `data_source.deployment_profile` 设置为实际部署环境。
 
-### Windows 部署包
+| 配置值 | 部署环境 |
+| --- | --- |
+| `cn_home` | 中国大陆家庭电脑 |
+| `cn_server` | 中国大陆服务器 |
+| `overseas_server` | 中国大陆以外的服务器 |
 
-Windows 部署包已包含 `frontend-vue/dist/`，目标机不需要安装 Node.js 或运行 npm。
-使用 64 位 Python 3.10+，在命令提示符或 PowerShell 中依次运行：
+按需在 `.env` 中填写模型、数据源或飞书凭据，然后启动服务。
+
+```bash
+bash run.sh
+```
+
+`run.sh` 使用现有 `.venv`，或通过 uv 加载 `requirements.txt` 中的依赖，同时启动 API 与后台 Worker。首次运行需要下载 Python 依赖。使用 Ctrl+C 结束前台进程。
+
+浏览器打开 [本地工作台](http://127.0.0.1:18869)。
+
+### Windows
+
+使用命令提示符复制配置并构建前端。
+
+```bat
+copy config.example.yaml config.yaml
+copy .env.example .env
+cd frontend-vue
+npm ci
+npm run build
+cd ..
+```
+
+按上面的部署环境说明编辑配置，再运行安装和启动脚本。
 
 ```bat
 install.bat
-start.bat
+start.bat --foreground
 ```
 
-`start.bat` 默认同时启动 API 进程和独立重型后台 Worker，不保留 CMD 窗口；输出分别写入
-`data\logs\hermes-start-*.log` 与 `data\logs\hermes-worker-start-*.log`。技术全市场刷新和
-新闻观察只在 Worker 中执行。需要在当前窗口查看实时输出并用 Ctrl+C 同时停止两者时，运行
-`start.bat --foreground`。
+`install.bat` 创建 Python 虚拟环境并安装依赖。`start.bat --foreground` 启动 API 与后台 Worker，日志写入 `data\logs\`。浏览器访问同一个本地工作台地址，运行 `check.bat` 检查服务。
 
-如使用本机通达信 TQ HTTP 服务，先在 `.env` 中配置桥接密钥和地址，再在独立
-后台运行 `start-tdx-bridge.bat`，其日志写入 `data\logs\tdx-bridge-start-*.log`；
-需要常驻窗口时运行 `start-tdx-bridge.bat --foreground`。服务启动后运行 `check.bat`
-检查首页、核心 API 和已配置的本地桥。
+由 `package-windows.ps1` 生成的部署包自带前端构建产物，使用该部署包时可直接从安装和启动脚本开始。升级与回滚由 `upgrade.bat` 和对应发布包配合完成。
 
-已有 Windows 客户升级时，把新版部署 ZIP、同名 `.sha256` 和打包时生成的
-`WUDI-版本-Windows-upgrade-时间.bat` 放到原安装目录，双击升级 BAT。升级器
-会从已校验的新版 ZIP 中加载最新升级助手，只替换程序、预构建前端和部署文件，保留现有
-`config.yaml`、`.env`、`data/` 与 `.venv`；它会先校验压缩包、停止属于当前
-安装目录的服务、备份客户状态，升级后执行 HTTP 健康检查，失败则恢复旧程序。
-如目录中有多个部署 ZIP，应显式指定新版文件：
+## 配置
 
-```bat
-upgrade.bat WUDI-1.5.1-Windows-deploy-YYYYMMDD-HHMMSS.zip
-```
+| 文件或配置项 | 用途 |
+| --- | --- |
+| `config.example.yaml` | 服务、实例、数据源和任务配置模板 |
+| `.env.example` | 凭据及外部服务地址模板 |
+| `client.name` / `client.id` | 实例显示名称与稳定标识 |
+| `client.brand` / `client.brand_sub` | 工作台主品牌与副标题 |
+| `server.host` / `server.port` | 服务监听地址，默认 `127.0.0.1:18869` |
+| `server.data_dir` | 运行数据目录，默认 `./data` |
 
-### 客户品牌配置
+真实凭据保存在本地 `.env` 中。配置示例使用空值或环境变量引用。`.env`、`config.yaml`、运行数据和数据库已加入 `.gitignore`。
 
-```yaml
-client:
-  name: "客户甲默认实例"       # 实例名称、报告和推送署名
-  id: "customer-a"            # 稳定客户标识，不使用中文或显示名
-  brand: "客户甲投研"          # 页面主品牌
-  brand_sub: "A 股决策支持"    # 页面品牌副标题
-```
+模型可通过设置页管理，也可配置 `hermes` 段连接 OpenAI 兼容接口。默认网关地址为 `http://127.0.0.1:8874/v1`。启用 AI 功能前，需要配置可用的模型服务。
 
-`brand` 和 `brand_sub` 可按客户修改；`hermes_trader` 是稳定的内部包名，不随客户重命名。浏览器标题和 Vue 侧栏从 `/api/shell-status` 读取品牌配置；接口不可用时回退为通用内核名 `Hermes Trader`。
+如使用 Windows 本地通达信，先配置并启动只读桥接服务，再启动工作台。桥接密钥应由部署者生成，并在客户端和桥接服务中设置一致。详细步骤见 [TQ 桥接说明](docs/TQ_TDX_BRIDGE.md) 和 [Windows 登录守护说明](docs/WINDOWS_TDX_LOGIN_GUARD.md)。
 
-### Vue 正式工作台开发
+## 开发与测试
 
-先启动 FastAPI 后端，再在另一个终端运行：
+启动后端后，在另一个终端运行前端开发服务器。
 
 ```bash
 cd frontend-vue
-npm install
+npm ci
 npm run dev
 ```
 
-开发地址为 `http://127.0.0.1:5173`，Vite 会把 `/api` 代理到
-`http://127.0.0.1:18869`。正式部署由 FastAPI 在 `/` 挂载 `frontend-vue/dist/`。
+开发服务器位于 [localhost:5173](http://127.0.0.1:5173)，Vite 将 `/api` 代理到本地 `18869` 端口。生产构建由 FastAPI 从 `frontend-vue/dist/` 提供。
+
+前端构建包含 TypeScript 类型检查。
 
 ```bash
+cd frontend-vue
 npm run build
-npm run audit:ui
 ```
 
-### Windows 本地通达信 TQ 桥接
-
-如果本机通达信已开启 TQ HTTP 服务 `http://127.0.0.1:17709/`，可运行独立的
-只读兼容桥，让现有 TDX API 适配器复用本地实时行情、股票池、板块关系和基础财务，
-无需修改业务数据链路。配置、启动和能力边界见
-[`docs/TQ_TDX_BRIDGE.md`](docs/TQ_TDX_BRIDGE.md)。
-
-全 A 股身份主名录使用 TDX `instruments_a`；只有完成全部 cursor 分页、通过沪深京覆盖
-校验并写入当前权威缓存后，系统才会把未命中代码判定为不存在。旧缓存和内置启动快照
-只作降级展示，不具有负向身份判定权。
-
-部署前必须按真实位置把 `data_source.deployment_profile` 明确设置为：
-
-- `cn_home`：国内家庭机。
-- `cn_server`：国内服务器。
-- `overseas_server`：海外服务器；需要境内中继时再填写中继变量。
-
-不要通过公网 IP 自动猜测地域。
-
-## 测试
+在仓库根目录运行后端与契约测试。
 
 ```bash
-uv run --with pytest --with pytest-asyncio \
-  --with-requirements requirements.txt \
-  --with-requirements requirements-dev.txt \
-  python -m pytest -q
+uv run --with-requirements requirements-dev.txt python -m pytest -q
 ```
 
-文件完整性使用 `RELEASE_FILES.sha256` 校验；压缩包校验值见同目录的 `.sha256` 文件。
+UI 审计脚本位于 `frontend-vue/scripts/`，需要已启动的工作台与本机浏览器环境。具体命令见 `frontend-vue/package.json`。
+
+## 代码结构
+
+| 目录 | 内容 |
+| --- | --- |
+| `hermes_trader/` | FastAPI 服务、数据适配、确定性分析、调度与模型网关 |
+| `frontend-vue/` | Vue 3 正式工作台 |
+| `frontend/` | 旧版前端，启用 `ui.legacy_enabled` 后可通过 `/legacy/` 访问 |
+| `scripts/` | 数据探测、部署、备份恢复与验收工具 |
+| `tests/` | 后端、接口与前端契约测试 |
+| `docs/` | API 契约与集成说明 |
+| `design-system/` | 工作台视觉与组件规范 |
+
+架构、模块职责和阅读顺序见 [项目导读](PROJECT_GUIDE.md)。接口字段与降级语义见 [API 契约](docs/API_CONTRACT.md)。

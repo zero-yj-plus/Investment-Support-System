@@ -1,6 +1,6 @@
 # Hermes Trader 白标母版项目导读（人类 / AI 共读版）
 
-> 当前源码版本：`1.5.1`；最近正式发布标签为 `v1.4.1`。上一正式归档为 `V1.4.0`，基线提交 `4c16135a58084c569b24030d1e3e75df16f77213`（2026-07-31T10:32:02+08:00）。
+> 当前源码版本：`1.5.1`；历史发布可通过仓库标签查看。
 >
 > 本文依据当前工作区静态源码生成。它描述“代码现在是什么”，不是产品宣传稿，也不替代 `docs/API_CONTRACT.md` 的接口契约。
 >
@@ -147,7 +147,7 @@ flowchart LR
 | 文件 | 说明 |
 | --- | --- |
 | `README.md` | 交付包简介、Unix 快速启动、部署地域配置和测试命令。 |
-| `SOURCE_DELIVERY.txt` | 版本、生成时间、基线提交、隔离范围和“不含真实客户数据/实盘交易”的交付声明。 |
+| `SOURCE_DELIVERY.txt` | 源码版本、品牌配置约定和部署包范围说明。 |
 | `config.example.yaml` | 无凭据的完整启动模板：客户、服务、Hermes、Agent 权限、MCP、飞书、调度、数据源及功能开关。 |
 | `config.yaml` | 当前启动配置；本快照中 SHA-256 与 `config.example.yaml` 完全一致，仍是中性模板。 |
 | `.env.example` | 环境变量模板。 |
@@ -163,7 +163,7 @@ flowchart LR
 | `upgrade.bat` | Windows 原目录升级入口：校验新版 ZIP 后调用升级助手，保留客户配置、密钥、运行数据和虚拟环境。 |
 | `scripts/windows_deploy.py` | BAT 共用的标准库部署助手；负责环境创建、依赖安装、`.env` 载入、API/Worker 双进程启动和 HTTP 验收。 |
 | `scripts/windows_upgrade.py` | Windows 无感升级助手；安全识别并停止本实例 API/Worker、备份状态、完整替换、更新依赖、健康检查并在失败时恢复双进程。 |
-| `RELEASE_FILES.sha256` | 交付文件完整性清单，用于发现缺失或篡改。 |
+| `RELEASE_FILES.sha256` | 打包流程在交付目录中生成的完整性清单。 |
 
 ## 7. 后端 `hermes_trader/`
 
@@ -528,7 +528,6 @@ ETF观察页读取独立 `/api/etf-watch`，将批量 TDX/腾讯行情和显式�
 | --- | --- |
 | `docs/API_CONTRACT.md` | 前后端唯一接口事实来源；详细记录字段、枚举、降级语义、模拟执行和运维契约。 |
 | `docs/MCP_READ_ONLY_CAPABILITIES.md` | MCP 工具目录、只读边界、默认禁用写能力和诚实降级。 |
-| `docs/审计流程.md` | 部署、时区、任务、数据真实性、前端、安全和仓库卫生的完整 SOP。 |
 | `docs/design-assets/shared-product-mark/` | 白标共享产品标记的生成探索稿、确定性 SVG/PNG/ICO 候选和小尺寸验收图；正式接入前需由用户选定方向。 |
 | `examples/data/.gitkeep` | 保留空示例数据目录。 |
 
